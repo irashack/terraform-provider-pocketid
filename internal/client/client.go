@@ -375,7 +375,17 @@ func (c *Client) UpdateClientAllowedUserGroups(clientID string, groupIDs []strin
 
 // GenerateClientSecret generates a new client secret for an OIDC client
 func (c *Client) GenerateClientSecret(clientID string) (string, error) {
-	body, err := c.doRequest("POST", fmt.Sprintf("/api/oidc/clients/%s/secret", clientID), nil)
+	version, err := c.GetCurrentVersion()
+	if err != nil {
+		return "", err
+	}
+
+	url := fmt.Sprintf("/api/oidc/clients/%s/secret", clientID)
+	if version >= "2.14.0" {
+		url += "s"
+	}
+
+	body, err := c.doRequest("POST", url, nil)
 	if err != nil {
 		return "", err
 	}
@@ -726,4 +736,20 @@ func (c *Client) DeleteScimServiceProvider(id string) error {
 func (c *Client) SyncLdap() error {
 	_, err := c.doRequest("POST", "/api/application-configuration/sync-ldap", nil)
 	return err
+}
+
+// Version methods
+
+func (c *Client) GetCurrentVersion() (string, error) {
+	body, err := c.doRequest("GET", "/api/version/current", nil)
+	if err != nil {
+		return "", err
+	}
+
+	var version CurrentVersion
+	if err := json.Unmarshal(body, &version); err != nil {
+		return "", fmt.Errorf("error unmarshaling response: %w", err)
+	}
+
+	return version.Current, nil
 }

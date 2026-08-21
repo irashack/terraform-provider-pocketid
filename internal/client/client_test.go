@@ -260,23 +260,66 @@ func TestClient_ListClients(t *testing.T) {
 func TestClient_GenerateClientSecret(t *testing.T) {
 	expectedSecret := "new-client-secret-123"
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/api/oidc/clients/test-client-id/secret", r.URL.Path)
+	testCases := []struct {
+		currentVersion   string
+		expectedEndpoint string
+	}{
+		{
+			"1.0",
+			"/secret",
+		},
+		{
+			"2.13",
+			"/secret",
+		},
+		{
+			"2.13.9",
+			"/secret",
+		},
+		{
+			"2.14.0",
+			"/secrets",
+		},
+		{
+			"2.14.1",
+			"/secrets",
+		},
+	}
 
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(map[string]string{"secret": expectedSecret}); err != nil {
-			t.Fatalf("Failed to encode response: %v", err)
-		}
-	}))
-	defer server.Close()
+	for _, tc := range testCases {
+		t.Run(tc.currentVersion, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				expectedCreateUrl := "/api/oidc/clients/test-client-id" + tc.expectedEndpoint
 
-	c, err := client.NewClient(server.URL, "test-token", false, 30)
-	require.NoError(t, err)
+				switch r.URL.Path {
+				case "/api/version/current":
+					assert.Equal(t, "GET", r.Method)
 
-	secret, err := c.GenerateClientSecret("test-client-id")
-	assert.NoError(t, err)
-	assert.Equal(t, expectedSecret, secret)
+					w.Header().Set("Content-Type", "application/json")
+					if err := json.NewEncoder(w).Encode(map[string]string{"currentVersion": tc.currentVersion}); err != nil {
+						t.Fatalf("Failed to encode response: %v", err)
+					}
+					return
+				case expectedCreateUrl:
+					assert.Equal(t, "POST", r.Method)
+					w.Header().Set("Content-Type", "application/json")
+					if err := json.NewEncoder(w).Encode(map[string]string{"secret": expectedSecret}); err != nil {
+						t.Fatalf("Failed to encode response: %v", err)
+					}
+				default:
+					t.Fatalf("Unexpected request path: %s", r.URL.Path)
+				}
+			}))
+			defer server.Close()
+
+			c, err := client.NewClient(server.URL, "test-token", false, 30)
+			require.NoError(t, err)
+
+			secret, err := c.GenerateClientSecret("test-client-id")
+			assert.NoError(t, err)
+			assert.Equal(t, expectedSecret, secret)
+		})
+	}
 }
 
 func TestClient_ErrorHandling(t *testing.T) {

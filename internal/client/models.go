@@ -239,3 +239,7 @@ type ScimServiceProviderCreateRequest struct {
 	Token        string `json:"token,omitempty"`
 	OidcClientID string `json:"oidcClientId"`
 }
+
+type CurrentVersion struct {
+	Current string `json:"currentVersion"`
+}
