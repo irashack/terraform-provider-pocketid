@@ -260,7 +260,7 @@ func TestClient_ListClients(t *testing.T) {
 func TestClient_GenerateClientSecret(t *testing.T) {
 	expectedSecret := "new-client-secret-123"
 
-	testCases := []struct {
+	tests := []struct {
 		currentVersion   string
 		expectedEndpoint string
 	}{
@@ -288,19 +288,23 @@ func TestClient_GenerateClientSecret(t *testing.T) {
 			"2.14.1",
 			"/secrets",
 		},
+		{
+			"invalid-version",
+			"/secret",
+		},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.currentVersion, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.currentVersion, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				expectedCreateUrl := "/api/oidc/clients/test-client-id" + tc.expectedEndpoint
+				expectedCreateUrl := "/api/oidc/clients/test-client-id" + tt.expectedEndpoint
 
 				switch r.URL.Path {
 				case "/api/version/current":
 					assert.Equal(t, "GET", r.Method)
 
 					w.Header().Set("Content-Type", "application/json")
-					if err := json.NewEncoder(w).Encode(map[string]string{"currentVersion": tc.currentVersion}); err != nil {
+					if err := json.NewEncoder(w).Encode(map[string]string{"currentVersion": tt.currentVersion}); err != nil {
 						t.Fatalf("Failed to encode response: %v", err)
 					}
 					return
@@ -324,6 +328,34 @@ func TestClient_GenerateClientSecret(t *testing.T) {
 			assert.Equal(t, expectedSecret, secret)
 		})
 	}
+
+	t.Run("uses /secret endpoint if /version/current endpoint doesn't exist", func(t *testing.T) {
+		// The /api/version/current endpoint was added in v2.3.0, so if not found, assume an older version
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/version/current":
+				assert.Equal(t, "GET", r.Method)
+				w.WriteHeader(http.StatusNotFound)
+				return
+			case "/api/oidc/clients/test-client-id/secret":
+				assert.Equal(t, "POST", r.Method)
+				w.Header().Set("Content-Type", "application/json")
+				if err := json.NewEncoder(w).Encode(map[string]string{"secret": expectedSecret}); err != nil {
+					t.Fatalf("Failed to encode response: %v", err)
+				}
+			default:
+				t.Fatalf("Unexpected request path: %s", r.URL.Path)
+			}
+		}))
+		defer server.Close()
+
+		c, err := client.NewClient(server.URL, "test-token", false, 30)
+		require.NoError(t, err)
+
+		secret, err := c.GenerateClientSecret("test-client-id")
+		assert.NoError(t, err)
+		assert.Equal(t, expectedSecret, secret)
+	})
 }
 
 func TestClient_ErrorHandling(t *testing.T) {
@@ -945,4 +977,46 @@ func TestClient_DeleteScimServiceProvider(t *testing.T) {
 
 	err = c.DeleteScimServiceProvider("scim-1")
 	assert.NoError(t, err)
+}
+
+func TestClient_GetCurrentVersion(t *testing.T) {
+	t.Run("returns the version if endpoint exists", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "GET", r.Method)
+			assert.Equal(t, "/api/version/current", r.URL.Path)
+
+			w.Header().Set("Content-Type", "application/json")
+			// API only returns the token
+			response := map[string]string{
+				"currentVersion": "1.2.3",
+			}
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				t.Fatalf("Failed to encode response: %v", err)
+			}
+		}))
+		defer server.Close()
+
+		c, err := client.NewClient(server.URL, "test-token", false, 30)
+		require.NoError(t, err)
+
+		version, err := c.GetCurrentVersion()
+		assert.NoError(t, err)
+		assert.Equal(t, "1.2.3", version)
+	})
+
+	t.Run("returns an empty string if endpoint doesn't exist", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "GET", r.Method)
+			assert.Equal(t, "/api/version/current", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer server.Close()
+
+		c, err := client.NewClient(server.URL, "test-token", false, 30)
+		require.NoError(t, err)
+
+		version, err := c.GetCurrentVersion()
+		assert.NoError(t, err)
+		assert.Empty(t, version)
+	})
 }

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"golang.org/x/mod/semver"
 )
 
 // Client represents a Pocket-ID API client
@@ -381,7 +382,7 @@ func (c *Client) GenerateClientSecret(clientID string) (string, error) {
 	}
 
 	url := fmt.Sprintf("/api/oidc/clients/%s/secret", clientID)
-	if version >= "2.14.0" {
+	if semver.Compare("v"+version, "v2.14.0") >= 0 { // the semver package requires a `v` prefix.
 		url += "s"
 	}
 
@@ -743,6 +744,11 @@ func (c *Client) SyncLdap() error {
 func (c *Client) GetCurrentVersion() (string, error) {
 	body, err := c.doRequest("GET", "/api/version/current", nil)
 	if err != nil {
+		// The /version/curent endpoint was added in v2.3.0. If it doesn't exist, return an empty string.
+		if strings.HasPrefix(err.Error(), "HTTP 404") {
+			return "", nil
+		}
+
 		return "", err
 	}
 
