@@ -269,6 +269,10 @@ func TestClient_GenerateClientSecret(t *testing.T) {
 			"/secret",
 		},
 		{
+			"2.2.0",
+			"/secret",
+		},
+		{
 			"2.13",
 			"/secret",
 		},
