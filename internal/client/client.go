@@ -5,9 +5,11 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"reflect"
 	"strconv"
 	"strings"
@@ -60,8 +62,9 @@ func NewClient(baseURL, apiToken string, skipTLSVerify bool, timeout int64) (*Cl
 		baseURL:  baseURL,
 		apiToken: apiToken,
 		httpClient: &http.Client{
-			Timeout:   time.Duration(timeout) * time.Second,
-			Transport: transport,
+			Timeout:       time.Duration(timeout) * time.Second,
+			Transport:     transport,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse },
 		},
 	}, nil
 }
@@ -116,7 +119,7 @@ func (c *Client) doRequestWithContext(ctx context.Context, method, endpoint stri
 		lastErr = err
 
 		// Determine if error is retryable
-		if !isRetryableError(err) {
+		if method != http.MethodGet || !isRetryableError(err) {
 			return nil, err
 		}
 
@@ -170,14 +173,12 @@ func isRetryableError(err error) bool {
 // doSingleRequest performs a single HTTP request without retries
 func (c *Client) doSingleRequest(ctx context.Context, method, endpoint string, body interface{}) ([]byte, error) {
 	var reqBody io.Reader
-	var reqBodyLog []byte
 	if body != nil {
 		jsonBody, err := json.Marshal(body)
 		if err != nil {
 			return nil, fmt.Errorf("error marshaling request body: %w", err)
 		}
 		reqBody = bytes.NewBuffer(jsonBody)
-		reqBodyLog = jsonBody
 	}
 
 	url := fmt.Sprintf("%s%s", c.baseURL, endpoint)
@@ -202,12 +203,6 @@ func (c *Client) doSingleRequest(ctx context.Context, method, endpoint string, b
 			"X-API-KEY":    "[REDACTED]",
 		},
 	})
-
-	if reqBodyLog != nil {
-		tflog.Debug(ctx, "Request Body", map[string]interface{}{
-			"body": string(reqBodyLog),
-		})
-	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -237,43 +232,16 @@ func (c *Client) doSingleRequest(ctx context.Context, method, endpoint string, b
 		"url":         url,
 	})
 
-	tflog.Trace(ctx, "Response Body", map[string]interface{}{
-		"body": string(respBody),
-	})
-
-	// Check for errors
-	if resp.StatusCode >= 400 {
-		var errResp ErrorResponse
-		if err := json.Unmarshal(respBody, &errResp); err != nil {
-			tflog.Error(ctx, "API Error Response", map[string]interface{}{
-				"status_code": resp.StatusCode,
-				"raw_body":    string(respBody),
-			})
-			// Handle rate limit errors with Retry-After header
-			if resp.StatusCode == 429 {
-				retryAfter := resp.Header.Get("Retry-After")
-				return nil, &RateLimitError{
-					StatusCode: resp.StatusCode,
-					Message:    string(respBody),
-					RetryAfter: retryAfter,
-				}
-			}
-			return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+	// Error bodies can echo tokens or secrets. Preserve status, never their contents.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var payload struct {
+			Error string `json:"error"`
 		}
-		tflog.Error(ctx, "API Error", map[string]interface{}{
-			"status_code": resp.StatusCode,
-			"error":       errResp.Error,
-		})
-		// Handle rate limit errors with Retry-After header
+		missing := resp.StatusCode == 404 && json.Unmarshal(respBody, &payload) == nil && payload.Error == "API endpoint not found"
 		if resp.StatusCode == 429 {
-			retryAfter := resp.Header.Get("Retry-After")
-			return nil, &RateLimitError{
-				StatusCode: resp.StatusCode,
-				Message:    errResp.Error,
-				RetryAfter: retryAfter,
-			}
+			return nil, &RateLimitError{StatusCode: http.StatusTooManyRequests, Message: http.StatusText(http.StatusTooManyRequests), RetryAfter: resp.Header.Get("Retry-After")}
 		}
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, errResp.Error)
+		return nil, &HTTPError{StatusCode: resp.StatusCode, MissingEndpoint: missing}
 	}
 
 	return respBody, nil
@@ -313,12 +281,15 @@ func (c *Client) CreateClient(createReq *OIDCClientCreateRequest) (*OIDCClient, 
 		return nil, fmt.Errorf("error unmarshaling response: %w", err)
 	}
 
+	if result.ID == "" {
+		return nil, fmt.Errorf("client creation returned no ID; inspect clients before recovery")
+	}
 	return &result, nil
 }
 
 // GetClient retrieves an OIDC client by ID
 func (c *Client) GetClient(clientID string) (*OIDCClient, error) {
-	body, err := c.doRequest("GET", fmt.Sprintf("/api/oidc/clients/%s", clientID), nil)
+	body, err := c.doRequest("GET", fmt.Sprintf("/api/oidc/clients/%s", url.PathEscape(clientID)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -333,7 +304,7 @@ func (c *Client) GetClient(clientID string) (*OIDCClient, error) {
 
 // UpdateClient updates an existing OIDC client
 func (c *Client) UpdateClient(clientID string, updateReq *OIDCClientCreateRequest) (*OIDCClient, error) {
-	body, err := c.doRequest("PUT", fmt.Sprintf("/api/oidc/clients/%s", clientID), updateReq)
+	body, err := c.doRequest("PUT", fmt.Sprintf("/api/oidc/clients/%s", url.PathEscape(clientID)), updateReq)
 	if err != nil {
 		return nil, err
 	}
@@ -348,7 +319,7 @@ func (c *Client) UpdateClient(clientID string, updateReq *OIDCClientCreateReques
 
 // DeleteClient deletes an OIDC client
 func (c *Client) DeleteClient(clientID string) error {
-	_, err := c.doRequest("DELETE", fmt.Sprintf("/api/oidc/clients/%s", clientID), nil)
+	_, err := c.doRequest("DELETE", fmt.Sprintf("/api/oidc/clients/%s", url.PathEscape(clientID)), nil)
 	return err
 }
 
@@ -370,7 +341,7 @@ func (c *Client) ListClients() (*PaginatedResponse[OIDCClient], error) {
 // UpdateClientAllowedUserGroups updates the allowed user groups for an OIDC client
 func (c *Client) UpdateClientAllowedUserGroups(clientID string, groupIDs []string) error {
 	req := UpdateAllowedUserGroupsRequest{UserGroupIDs: groupIDs}
-	_, err := c.doRequest("PUT", fmt.Sprintf("/api/oidc/clients/%s/allowed-user-groups", clientID), req)
+	_, err := c.doRequest("PUT", fmt.Sprintf("/api/oidc/clients/%s/allowed-user-groups", url.PathEscape(clientID)), req)
 	return err
 }
 
@@ -381,7 +352,7 @@ func (c *Client) GenerateClientSecret(clientID string) (string, error) {
 		return "", err
 	}
 
-	url := fmt.Sprintf("/api/oidc/clients/%s/secret", clientID)
+	url := fmt.Sprintf("/api/oidc/clients/%s/secret", url.PathEscape(clientID))
 	if semver.Compare("v"+version, "v2.14.0") >= 0 { // the semver package requires a `v` prefix.
 		url += "s"
 	}
@@ -395,9 +366,12 @@ func (c *Client) GenerateClientSecret(clientID string) (string, error) {
 		Secret string `json:"secret"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
-		return "", fmt.Errorf("error unmarshaling response: %w", err)
+		return "", fmt.Errorf("error unmarshaling secret response; result uncertain, inspect before recovery")
 	}
 
+	if result.Secret == "" {
+		return "", fmt.Errorf("secret creation returned no secret; result uncertain, inspect the client before recovery")
+	}
 	return result.Secret, nil
 }
 
@@ -744,8 +718,9 @@ func (c *Client) SyncLdap() error {
 func (c *Client) GetCurrentVersion() (string, error) {
 	body, err := c.doRequest("GET", "/api/version/current", nil)
 	if err != nil {
-		// The /version/curent endpoint was added in v2.3.0. If it doesn't exist, return an empty string.
-		if strings.HasPrefix(err.Error(), "HTTP 404") {
+		// The /version/current endpoint was added in v2.3.0. If it doesn't exist, return an empty string.
+		var status *HTTPError
+		if errors.As(err, &status) && status.MissingEndpoint {
 			return "", nil
 		}
 
@@ -754,8 +729,32 @@ func (c *Client) GetCurrentVersion() (string, error) {
 
 	var version CurrentVersion
 	if err := json.Unmarshal(body, &version); err != nil {
-		return "", fmt.Errorf("error unmarshaling response: %w", err)
+		return "", fmt.Errorf("invalid Pocket ID version response")
 	}
 
-	return version.Current, nil
+	normalized := "v" + strings.TrimPrefix(version.Current, "v")
+	if !semver.IsValid(normalized) {
+		return "", fmt.Errorf("invalid or missing Pocket ID currentVersion; refusing to select a secret endpoint")
+	}
+	return strings.TrimPrefix(normalized, "v"), nil
+}
+
+// HTTPError exposes status without leaking an API error body.
+type HTTPError struct {
+	StatusCode      int
+	MissingEndpoint bool
+}
+
+func (e *HTTPError) Error() string {
+	return fmt.Sprintf("HTTP %d: %s", e.StatusCode, http.StatusText(e.StatusCode))
+}
+
+// CheckSecretAPI validates compatibility before a confidential client is created.
+func (c *Client) CheckSecretAPI() error { _, err := c.GetCurrentVersion(); return err }
+
+// IsDefiniteRejection excludes transport failures and server errors: they may
+// occur after a mutation committed. Such results require read-only inspection.
+func IsDefiniteRejection(err error) bool {
+	var status *HTTPError
+	return errors.As(err, &status) && status.StatusCode >= 400 && status.StatusCode < 500 && status.StatusCode != 408
 }

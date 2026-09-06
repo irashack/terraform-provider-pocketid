@@ -86,6 +86,10 @@ func TestClient_ListClients_UnmarshalError(t *testing.T) {
 
 func TestClient_GenerateClientSecret_UnmarshalError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/version/current" {
+			_, _ = fmt.Fprint(w, `{"currentVersion":"2.14.0"}`)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		if _, err := fmt.Fprint(w, `{"secret": 123}`); err != nil { // secret should be string
@@ -99,7 +103,7 @@ func TestClient_GenerateClientSecret_UnmarshalError(t *testing.T) {
 
 	_, err = c.GenerateClientSecret("test-id")
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "error unmarshaling response")
+	assert.Contains(t, err.Error(), "error unmarshaling secret response")
 }
 
 func TestClient_CreateUser_UnmarshalError(t *testing.T) {

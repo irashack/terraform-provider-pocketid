@@ -398,7 +398,7 @@ func TestAccResourceUser_duplicateUsername(t *testing.T) {
 			// Attempt to create duplicate user
 			{
 				Config:      testAccResourceUserConfig_duplicate(username, "user2@example.com", "second"),
-				ExpectError: regexp.MustCompile("Username is already in use"),
+				ExpectError: regexp.MustCompile("HTTP 409: Conflict"),
 			},
 		},
 	})

@@ -289,7 +289,7 @@ func TestClient_GenerateClientSecret(t *testing.T) {
 			"/secrets",
 		},
 		{
-			"invalid-version",
+			"2.9.0",
 			"/secret",
 		},
 	}
@@ -336,6 +336,7 @@ func TestClient_GenerateClientSecret(t *testing.T) {
 			case "/api/version/current":
 				assert.Equal(t, "GET", r.Method)
 				w.WriteHeader(http.StatusNotFound)
+				_, _ = fmt.Fprint(w, `{"error":"API endpoint not found"}`)
 				return
 			case "/api/oidc/clients/test-client-id/secret":
 				assert.Equal(t, "POST", r.Method)
@@ -369,31 +370,31 @@ func TestClient_ErrorHandling(t *testing.T) {
 			name:           "400 Bad Request",
 			statusCode:     http.StatusBadRequest,
 			responseBody:   `{"error": "Invalid request"}`,
-			expectedErrMsg: "HTTP 400: Invalid request",
+			expectedErrMsg: "HTTP 400: Bad Request",
 		},
 		{
 			name:           "401 Unauthorized",
 			statusCode:     http.StatusUnauthorized,
 			responseBody:   `{"error": "Invalid API key"}`,
-			expectedErrMsg: "HTTP 401: Invalid API key",
+			expectedErrMsg: "HTTP 401: Unauthorized",
 		},
 		{
 			name:           "404 Not Found",
 			statusCode:     http.StatusNotFound,
 			responseBody:   `{"error": "Client not found"}`,
-			expectedErrMsg: "HTTP 404: Client not found",
+			expectedErrMsg: "HTTP 404: Not Found",
 		},
 		{
 			name:           "500 Internal Server Error",
 			statusCode:     http.StatusInternalServerError,
 			responseBody:   `{"error": "Internal server error"}`,
-			expectedErrMsg: "HTTP 500: Internal server error",
+			expectedErrMsg: "HTTP 500: Internal Server Error",
 		},
 		{
 			name:           "Invalid JSON response",
 			statusCode:     http.StatusBadRequest,
 			responseBody:   `invalid json`,
-			expectedErrMsg: "HTTP 400: invalid json",
+			expectedErrMsg: "HTTP 400: Bad Request",
 		},
 	}
 
@@ -478,6 +479,7 @@ func TestClient_NonRetryableError(t *testing.T) {
 		attempts++
 		// Return 404 which is not retryable
 		w.WriteHeader(http.StatusNotFound)
+		_, _ = fmt.Fprint(w, `{"error":"API endpoint not found"}`)
 		if _, err := fmt.Fprint(w, `{"error": "Not found"}`); err != nil {
 			t.Fatalf("Failed to write response: %v", err)
 		}
@@ -489,7 +491,7 @@ func TestClient_NonRetryableError(t *testing.T) {
 
 	_, err = c.GetClient("test-client-id")
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "HTTP 404: Not found")
+	assert.Contains(t, err.Error(), "HTTP 404: Not Found")
 	assert.Equal(t, 1, attempts, "Should have made only 1 attempt (no retries for 404)")
 }
 
@@ -857,7 +859,7 @@ func TestClient_CreateOneTimeAccessToken_Error(t *testing.T) {
 
 	_, err = c.CreateOneTimeAccessToken("test-user-id", &client.OneTimeAccessTokenRequest{TTL: "1s"})
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid ttl")
+	assert.Contains(t, err.Error(), "HTTP 400")
 }
 
 func TestClient_CreateScimServiceProvider(t *testing.T) {
@@ -1009,6 +1011,7 @@ func TestClient_GetCurrentVersion(t *testing.T) {
 			assert.Equal(t, "GET", r.Method)
 			assert.Equal(t, "/api/version/current", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
+			_, _ = fmt.Fprint(w, `{"error":"API endpoint not found"}`)
 		}))
 		defer server.Close()
 

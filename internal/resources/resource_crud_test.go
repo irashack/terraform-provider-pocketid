@@ -313,25 +313,25 @@ func TestClientResource_APIErrors(t *testing.T) {
 			name:          "BadRequest",
 			statusCode:    http.StatusBadRequest,
 			responseBody:  `{"error": "Invalid client name"}`,
-			expectedError: "Invalid client name",
+			expectedError: "HTTP 400",
 		},
 		{
 			name:          "Unauthorized",
 			statusCode:    http.StatusUnauthorized,
 			responseBody:  `{"error": "Invalid API token"}`,
-			expectedError: "Invalid API token",
+			expectedError: "HTTP 401",
 		},
 		{
 			name:          "NotFound",
 			statusCode:    http.StatusNotFound,
 			responseBody:  `{"error": "Client not found"}`,
-			expectedError: "Client not found",
+			expectedError: "HTTP 404",
 		},
 		{
 			name:          "InternalServerError",
 			statusCode:    http.StatusInternalServerError,
 			responseBody:  `{"error": "Internal server error"}`,
-			expectedError: "Internal server error",
+			expectedError: "HTTP 500",
 		},
 	}
 
@@ -372,7 +372,7 @@ func TestUserResource_APIErrors(t *testing.T) {
 	})
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "Username already exists")
+	assert.Contains(t, err.Error(), "HTTP 409")
 }
 
 // Test Group Resource API errors
@@ -391,5 +391,5 @@ func TestGroupResource_APIErrors(t *testing.T) {
 	})
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "Group name already exists")
+	assert.Contains(t, err.Error(), "HTTP 409")
 }

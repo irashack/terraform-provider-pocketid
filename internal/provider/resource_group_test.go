@@ -120,7 +120,7 @@ func TestAccResourceGroup_duplicateName(t *testing.T) {
 			// Attempt to create duplicate group
 			{
 				Config:      testAccResourceGroupConfig_duplicate(groupName, friendlyName, "second"),
-				ExpectError: regexp.MustCompile("(?s).*HTTP 400: Name is already in.*use.*"),
+				ExpectError: regexp.MustCompile("HTTP 409: Conflict"),
 			},
 		},
 	})
