@@ -46,6 +46,11 @@ type applicationConfigDataSourceModel struct {
 	AccentColor               types.String `tfsdk:"accent_color"`
 	RequireUserEmail          types.String `tfsdk:"require_user_email"`
 
+	WebauthnUserVerification        types.String `tfsdk:"webauthn_user_verification"`
+	WebauthnAllowSyncedPasskeys     types.String `tfsdk:"webauthn_allow_synced_passkeys"`
+	WebauthnAuthenticatorAttachment types.String `tfsdk:"webauthn_authenticator_attachment"`
+	CIMDURLAllowlist                types.String `tfsdk:"cimd_url_allowlist"`
+
 	SmtpHost           types.String `tfsdk:"smtp_host"`
 	SmtpPort           types.String `tfsdk:"smtp_port"`
 	SmtpFrom           types.String `tfsdk:"smtp_from"`
@@ -116,6 +121,11 @@ func (d *applicationConfigDataSource) Schema(_ context.Context, _ datasource.Sch
 			"signup_default_custom_claims":  computedString("JSON object of custom claims assigned to users created via signup.", false),
 			"accent_color":                  computedString("Accent color used in the UI.", false),
 			"require_user_email":            computedString("Whether a user email is required.", false),
+
+			"webauthn_user_verification":        computedString("Passkey user verification: required or preferred.", false),
+			"webauthn_allow_synced_passkeys":    computedString("Whether synced passkeys are allowed (true or false).", false),
+			"webauthn_authenticator_attachment": computedString("Authenticator attachment: any, platform, or cross-platform.", false),
+			"cimd_url_allowlist":                computedString("JSON array of allowed Client ID Metadata Document URLs.", false),
 
 			"smtp_host":             computedString("SMTP server host.", false),
 			"smtp_port":             computedString("SMTP server port.", false),
@@ -200,6 +210,11 @@ func (d *applicationConfigDataSource) Read(ctx context.Context, _ datasource.Rea
 		SignupDefaultCustomClaims: types.StringValue(cfg.SignupDefaultCustomClaims),
 		AccentColor:               types.StringValue(cfg.AccentColor),
 		RequireUserEmail:          types.StringValue(cfg.RequireUserEmail),
+
+		WebauthnUserVerification:        types.StringValue(cfg.WebauthnUserVerification),
+		WebauthnAllowSyncedPasskeys:     types.StringValue(cfg.WebauthnAllowSyncedPasskeys),
+		WebauthnAuthenticatorAttachment: types.StringValue(cfg.WebauthnAuthenticatorAttachment),
+		CIMDURLAllowlist:                types.StringValue(cfg.CIMDURLAllowlist),
 
 		SmtpHost:           types.StringValue(cfg.SmtpHost),
 		SmtpPort:           types.StringValue(cfg.SmtpPort),

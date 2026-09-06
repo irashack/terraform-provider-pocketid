@@ -35,6 +35,7 @@ output "ldap_enabled" {
 - `allow_own_account_edit` (String) Whether users can edit their own account.
 - `allow_user_signups` (String) User signup mode.
 - `app_name` (String) The name of the application.
+- `cimd_url_allowlist` (String) JSON array of allowed Client ID Metadata Document URLs.
 - `disable_animations` (String) Whether UI animations are disabled.
 - `email_api_key_expiration_enabled` (String) Whether API key expiration emails are enabled.
 - `email_login_notification_enabled` (String) Whether login notification emails are enabled.
@@ -75,3 +76,6 @@ output "ldap_enabled" {
 - `smtp_skip_cert_verify` (String) Whether SMTP certificate verification is skipped.
 - `smtp_tls` (String) SMTP TLS mode.
 - `smtp_user` (String) SMTP authentication user.
+- `webauthn_allow_synced_passkeys` (String) Whether synced passkeys are allowed (true or false).
+- `webauthn_authenticator_attachment` (String) Authenticator attachment: any, platform, or cross-platform.
+- `webauthn_user_verification` (String) Passkey user verification: required or preferred.

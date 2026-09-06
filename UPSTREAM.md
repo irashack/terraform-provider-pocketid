@@ -46,15 +46,16 @@ versioned and need manual version review; Dependabot does not update those pins.
 Removed unused Codecov configuration, CI-comment scripts, old fixed-port fixture,
 tracked scan cache and redundant validators. The disposable fixture is canonical.
 
+Application-config HTTP 400 failures are fixed in candidate 2.3.2 by preserving
+the required WebAuthn fields and CIMD allowlist. Both supported server versions
+now run application-config acceptance; the full 2.14 suite has no exclusion.
+
 ## Remaining work
 
 1. Resolve #92 with an explicit compatibility decision and migration evidence.
-2. Diagnose `TestAccResourceApplicationConfig_basic` and `_dataSource` HTTP 400
-   failures. CI explicitly excludes application-config acceptance rather than
-   presenting a completely passing provider suite.
-3. Register/sign the fork if continued independent distribution is warranted;
+2. Register/sign the fork if continued independent distribution is warranted;
    until then the verified filesystem mirror remains the supported install path.
-4. Evaluate #90 as separate user-ID and multi-secret lifecycle changes.
+3. Evaluate #90 as separate user-ID and multi-secret lifecycle changes.
 
 Return to upstream when a stable upstream release passes the old/new API and
 native lifecycle tests, then rehearse supported state-provider replacement with

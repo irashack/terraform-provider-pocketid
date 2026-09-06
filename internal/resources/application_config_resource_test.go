@@ -55,7 +55,7 @@ func TestApplicationConfigResource_Schema(t *testing.T) {
 	assert.False(t, idAttr.Optional)
 
 	// Writable attributes are optional + computed.
-	for _, name := range []string{"app_name", "session_duration", "ldap_enabled"} {
+	for _, name := range []string{"app_name", "webauthn_user_verification", "webauthn_allow_synced_passkeys", "webauthn_authenticator_attachment", "cimd_url_allowlist", "session_duration", "ldap_enabled"} {
 		attr, ok := resp.Schema.Attributes[name].(schema.StringAttribute)
 		require.True(t, ok, "attribute %s should exist", name)
 		assert.True(t, attr.Optional, "attribute %s should be optional", name)

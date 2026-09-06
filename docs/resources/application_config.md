@@ -55,6 +55,7 @@ resource "pocketid_application_config" "with_smtp" {
 - `allow_own_account_edit` (String) Whether users can edit their own account ("true" or "false").
 - `allow_user_signups` (String) User signup mode: "disabled", "withToken", or "open".
 - `app_name` (String) The name of the application.
+- `cimd_url_allowlist` (String) JSON array of allowed Client ID Metadata Document URLs. When omitted, retains the current server value.
 - `disable_animations` (String) Whether to disable UI animations ("true" or "false").
 - `email_api_key_expiration_enabled` (String) Whether API key expiration emails are enabled ("true" or "false").
 - `email_login_notification_enabled` (String) Whether login notification emails are enabled ("true" or "false").
@@ -94,6 +95,9 @@ resource "pocketid_application_config" "with_smtp" {
 - `smtp_skip_cert_verify` (String) Whether to skip SMTP certificate verification ("true" or "false").
 - `smtp_tls` (String) SMTP TLS mode: "none", "starttls", or "tls".
 - `smtp_user` (String) SMTP authentication user.
+- `webauthn_allow_synced_passkeys` (String) Whether synced passkeys are allowed (true or false). When omitted, retains the current server value.
+- `webauthn_authenticator_attachment` (String) Authenticator attachment: any, platform, or cross-platform. When omitted, retains the current server value.
+- `webauthn_user_verification` (String) Passkey user verification: required or preferred. When omitted, retains the current server value.
 
 ### Read-Only
 

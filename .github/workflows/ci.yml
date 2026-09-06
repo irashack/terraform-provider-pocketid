@@ -31,8 +31,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - pocketid: '2.9.0'
-            target: test-acc
           - pocketid: '2.13.0'
             target: test-acc
           - pocketid: '2.14.0'
@@ -45,7 +43,7 @@ jobs:
         with:
           go-version-file: go.mod
       # Disposable credentials only; never upload acceptance output or state.
-      # The broader 2.14 suite includes clients; see TESTING.md for exclusions.
+      # The full 2.14 suite includes clients and application configuration.
       - run: make "$TEST_TARGET" POCKETID_VERSION="$POCKETID_VERSION"
         env:
           TEST_TARGET: ${{ matrix.target }}

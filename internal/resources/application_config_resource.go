@@ -55,6 +55,11 @@ type applicationConfigModel struct {
 	AccentColor               types.String `tfsdk:"accent_color"`
 	RequireUserEmail          types.String `tfsdk:"require_user_email"`
 
+	WebauthnUserVerification        types.String `tfsdk:"webauthn_user_verification"`
+	WebauthnAllowSyncedPasskeys     types.String `tfsdk:"webauthn_allow_synced_passkeys"`
+	WebauthnAuthenticatorAttachment types.String `tfsdk:"webauthn_authenticator_attachment"`
+	CIMDURLAllowlist                types.String `tfsdk:"cimd_url_allowlist"`
+
 	// Email / SMTP
 	SmtpHost           types.String `tfsdk:"smtp_host"`
 	SmtpPort           types.String `tfsdk:"smtp_port"`
@@ -109,6 +114,11 @@ func applicationConfigToModel(cfg *client.ApplicationConfig, m *applicationConfi
 	m.SignupDefaultCustomClaims = types.StringValue(cfg.SignupDefaultCustomClaims)
 	m.AccentColor = types.StringValue(cfg.AccentColor)
 	m.RequireUserEmail = types.StringValue(cfg.RequireUserEmail)
+
+	m.WebauthnUserVerification = types.StringValue(cfg.WebauthnUserVerification)
+	m.WebauthnAllowSyncedPasskeys = types.StringValue(cfg.WebauthnAllowSyncedPasskeys)
+	m.WebauthnAuthenticatorAttachment = types.StringValue(cfg.WebauthnAuthenticatorAttachment)
+	m.CIMDURLAllowlist = types.StringValue(cfg.CIMDURLAllowlist)
 
 	m.SmtpHost = types.StringValue(cfg.SmtpHost)
 	m.SmtpPort = types.StringValue(cfg.SmtpPort)
@@ -172,6 +182,11 @@ func modelToApplicationConfig(plan *applicationConfigModel, current *client.Appl
 		SignupDefaultCustomClaims: mergedString(plan.SignupDefaultCustomClaims, current.SignupDefaultCustomClaims),
 		AccentColor:               mergedString(plan.AccentColor, current.AccentColor),
 		RequireUserEmail:          mergedString(plan.RequireUserEmail, current.RequireUserEmail),
+
+		WebauthnUserVerification:        mergedString(plan.WebauthnUserVerification, current.WebauthnUserVerification),
+		WebauthnAllowSyncedPasskeys:     mergedString(plan.WebauthnAllowSyncedPasskeys, current.WebauthnAllowSyncedPasskeys),
+		WebauthnAuthenticatorAttachment: mergedString(plan.WebauthnAuthenticatorAttachment, current.WebauthnAuthenticatorAttachment),
+		CIMDURLAllowlist:                mergedString(plan.CIMDURLAllowlist, current.CIMDURLAllowlist),
 
 		SmtpHost:           mergedString(plan.SmtpHost, current.SmtpHost),
 		SmtpPort:           mergedString(plan.SmtpPort, current.SmtpPort),
@@ -249,6 +264,11 @@ func (r *applicationConfigResource) Schema(_ context.Context, _ resource.SchemaR
 			"signup_default_custom_claims":  optionalComputedString("JSON object of custom claims assigned to users created via signup.", false),
 			"accent_color":                  optionalComputedString("Accent color used in the UI.", false),
 			"require_user_email":            optionalComputedString("Whether a user email is required (\"true\" or \"false\").", false),
+
+			"webauthn_user_verification":        optionalComputedString("Passkey user verification: required or preferred. When omitted, retains the current server value.", false),
+			"webauthn_allow_synced_passkeys":    optionalComputedString("Whether synced passkeys are allowed (true or false). When omitted, retains the current server value.", false),
+			"webauthn_authenticator_attachment": optionalComputedString("Authenticator attachment: any, platform, or cross-platform. When omitted, retains the current server value.", false),
+			"cimd_url_allowlist":                optionalComputedString("JSON array of allowed Client ID Metadata Document URLs. When omitted, retains the current server value.", false),
 
 			"smtp_host":             optionalComputedString("SMTP server host.", false),
 			"smtp_port":             optionalComputedString("SMTP server port.", false),

@@ -1,6 +1,26 @@
 # Changelog
 
-## Unreleased
+## 2.3.2 — 2026-09-06
+
+- Add `webauthn_user_verification`, `webauthn_allow_synced_passkeys`,
+  `webauthn_authenticator_attachment`, and `cimd_url_allowlist` to the application
+  configuration resource, data source, and API mappings.
+- Preserve current server values when attributes are omitted or unknown; no
+  security defaults are invented. Explicit values, including clearing the CIMD
+  allowlist, remain intentional configuration changes.
+- Fix HTTP 400 application-configuration updates on Pocket ID 2.13.0 and 2.14.0.
+  Regression tests prove old-payload rejection and SMTP-only updates preserve
+  every unrelated returned server setting, including secret values.
+- Verify import, refresh, data-source values, attribute removal and no-change
+  plans with native Terraform and OpenTofu; verify enforced OpenTofu state,
+  backup and saved-plan encryption in disposable fixtures.
+- Adopt current/prior minor-series support, pinned to tested Pocket ID 2.14.0 and
+  2.13.0 for this release. Drop 2.9.0 from support, CI and disposable fixtures.
+- Preserve the OIDC client-secret compatibility implementation.
+
+Release preparation and publication commands: [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md).
+
+### Maintenance cleanup included in 2.3.2
 
 - Consolidate upstream dependency updates (#87, #98, #99) and selected Actions pins (#94).
 - Rewrite installation and contributor guidance for the fork; correct MIT license

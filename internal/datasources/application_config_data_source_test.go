@@ -46,7 +46,7 @@ func TestApplicationConfigDataSource_Schema(t *testing.T) {
 	assert.NotEmpty(t, resp.Schema.Description)
 
 	// All attributes are computed.
-	for _, name := range []string{"id", "app_name", "ldap_enabled"} {
+	for _, name := range []string{"id", "app_name", "webauthn_user_verification", "webauthn_allow_synced_passkeys", "webauthn_authenticator_attachment", "cimd_url_allowlist", "ldap_enabled"} {
 		attr, ok := resp.Schema.Attributes[name].(schema.StringAttribute)
 		require.True(t, ok, "attribute %s should exist", name)
 		assert.True(t, attr.Computed, "attribute %s should be computed", name)

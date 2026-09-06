@@ -19,7 +19,7 @@ import uuid
 
 
 def run(version, command):
-    if version not in ("2.9.0", "2.13.0", "2.14.0"):
+    if version not in ("2.13.0", "2.14.0"):
         raise ValueError("version must be in the tested matrix")
     os.umask(0o077)
     with tempfile.TemporaryDirectory(prefix="pocketid-fixture-") as tmp:

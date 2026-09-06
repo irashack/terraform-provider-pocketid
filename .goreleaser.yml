@@ -90,6 +90,8 @@ release:
   # Release notes
   header: |
     Independent maintenance fork of Trozz/terraform-provider-pocketid.
+    Fixes SMTP updates while preserving WebAuthn policy and CIMD settings.
+    Supported Pocket ID versions: 2.14.0 and 2.13.0 (current/prior minor series).
     See README.md, INSTALL.md, TESTING.md and CHANGELOG.md in this release's source.
     Registry publication is pending. Use the fork identity and native filesystem mirror.
     Archives and SHA256SUMS are published without a registry signing key.

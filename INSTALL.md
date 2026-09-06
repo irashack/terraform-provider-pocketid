@@ -10,14 +10,14 @@ terraform {
   required_providers {
     pocketid = {
       source  = "registry.terraform.io/irashack/pocketid"
-      version = "2.3.1"
+      version = "2.3.2"
     }
   }
 }
 ```
 
-Download the exact version's archive and SHA256SUMS from
-[release v2.3.1](https://github.com/irashack/terraform-provider-pocketid/releases/tag/v2.3.1).
+After publication (currently pending), download the exact version's archive and SHA256SUMS from
+[release v2.3.2](https://github.com/irashack/terraform-provider-pocketid/releases/tag/v2.3.2).
 Verify the SHA256SUMS file against the immutable digest recorded in the release
 notes, then verify the selected archive against that file. Checksums detect
 content changes; they are not a registry GPG signature. This release is unsigned.
@@ -25,14 +25,14 @@ content changes; they are not a registry GPG signature. This release is unsigned
 For example, for `darwin_arm64` (use `linux_amd64` or `linux_arm64` as appropriate):
 
 ```sh
-version=2.3.1
+version=2.3.2
 platform=darwin_arm64
 archive=terraform-provider-pocketid_${version}_${platform}.zip
 sums=terraform-provider-pocketid_${version}_SHA256SUMS
 release=https://github.com/irashack/terraform-provider-pocketid/releases/download/v${version}
 curl --fail --location --output "$archive" "$release/$archive"
 curl --fail --location --output "$sums" "$release/$sums"
-# Set this to the literal SHA256SUMS digest from the v2.3.1 release notes:
+# Set this to the literal SHA256SUMS digest from the v2.3.2 release notes:
 expected_manifest_sha256=REPLACE_WITH_RELEASE_DIGEST
 printf '%s  %s\n' "$expected_manifest_sha256" "$sums" | shasum -a 256 -c -
 awk -v file="$archive" '$2 == file { print }' "$sums" | shasum -a 256 -c -
@@ -67,6 +67,31 @@ tofu providers lock -fs-mirror="$mirror" \
 ```
 
 Keep the exact version and checksum pins; do not silently select a newer tag.
+
+## Upgrade from fork 2.3.1
+
+After v2.3.2 is published, verify and add its archive to the existing native mirror,
+leaving v2.3.1 intact. Change only the exact version pin to `2.3.2`, keep the source
+address unchanged, run `tofu init -upgrade` using the root's normal credential and
+CLI configuration entry point, and commit the resulting lockfile. Review any other
+provider selections before accepting the lockfile. No `state replace-provider`
+is needed for this same-address patch upgrade. Require an empty baseline plan
+before adding application-configuration ownership.
+
+For SMTP adoption, import `application-configuration` into exactly one
+`pocketid_application_config` resource with an initially empty body, refresh, and
+require an empty plan. Then set only the SMTP attributes. Omitted fields inherit
+the server's existing values, including WebAuthn policy and `cimd_url_allowlist`.
+Read SMTP credentials from the existing secret authority, mark inputs sensitive,
+and retain enforced encryption for state, backups and any saved plan. Neither
+sensitive marking nor provider installation enables encryption by itself.
+
+The API update replaces the full modeled configuration and is not atomic with
+its preceding read. Avoid concurrent administrators/configuration writers.
+Future server fields outside the tested matrix are not guaranteed to be preserved.
+Rollback the provider version and lockfile to 2.3.1 if needed, but do not use that
+version to update application configuration on 2.13/2.14: the original HTTP 400
+returns. Do not restore a stale state backup over later changes.
 
 ## Existing upstream-managed resources
 

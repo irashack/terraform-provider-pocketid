@@ -155,6 +155,11 @@ type ApplicationConfig struct {
 	AccentColor               string `json:"accentColor"`
 	RequireUserEmail          string `json:"requireUserEmail"`
 
+	WebauthnUserVerification        string `json:"webauthnUserVerification"`
+	WebauthnAllowSyncedPasskeys     string `json:"webauthnAllowSyncedPasskeys"`
+	WebauthnAuthenticatorAttachment string `json:"webauthnAuthenticatorAttachment"`
+	CIMDURLAllowlist                string `json:"cimdUrlAllowlist"`
+
 	// Email / SMTP
 	SmtpHost           string `json:"smtpHost"`
 	SmtpPort           string `json:"smtpPort"`

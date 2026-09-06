@@ -4,7 +4,7 @@ Keep fixes small, reproducible and independently reviewable. Run `make check`,
 `make actionlint` for workflow changes, and `make docs` for schema or example changes.
 Make downloads pinned lint, documentation and vulnerability tools through Go on first use.
 Use `make test-acc-matrix` for client changes and `make test-acc-provider` for broader checks.
-See TESTING.md for the known application-config exceptions and native migration tests. Never attach tokens, client
+See TESTING.md for application-config regression coverage and native migration tests. Never attach tokens, client
 secrets, state, raw plans, private deployment configuration, or production logs.
 
 This fork follows upstream's MIT license. Retain authorship when cherry-picking.
