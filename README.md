@@ -1,353 +1,55 @@
-# Terraform Provider for Pocket-ID
-
-[![Terraform Registry](https://img.shields.io/badge/Terraform%20Registry-v0.1.0-blue)](https://registry.terraform.io/providers/trozz/pocketid/latest)
-[![CI](https://github.com/Trozz/terraform-provider-pocketid/actions/workflows/ci.yml/badge.svg)](https://github.com/Trozz/terraform-provider-pocketid/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/Trozz/terraform-provider-pocketid/branch/main/graph/badge.svg)](https://codecov.io/gh/Trozz/terraform-provider-pocketid)
-[![Go Report Card](https://goreportcard.com/badge/github.com/Trozz/terraform-provider-pocketid)](https://goreportcard.com/report/github.com/Trozz/terraform-provider-pocketid)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-
-The Terraform Provider for [Pocket-ID](https://github.com/pocket-id/pocket-id) enables you to manage OIDC clients,
-users, and groups in your Pocket-ID instance using Infrastructure as Code.
-
-## What is Pocket-ID?
-
-Pocket-ID is a simple, self-hosted OpenID Connect (OIDC) provider that uses passkeys for authentication instead of
-passwords. This makes it more secure and user-friendly than traditional authentication methods.
-
-## Features
-
-- 🔐 **OIDC Client Management**: Create and manage OAuth2/OIDC client applications
-- 👥 **User Management**: Manage user accounts (passkey registration via UI)
-- 👨‍👩‍👦‍👦 **Group Management**: Organize users and control access with groups
-- 🔑 **Secure Authentication**: API token-based provider authentication
-- 🚀 **Easy to Use**: Simple, intuitive resource definitions
-- 📚 **Well Documented**: Comprehensive documentation and examples
-
-## Requirements
-
-- [Terraform](https://www.terraform.io/downloads.html) >= 1.0
-- [Go](https://golang.org/doc/install) >= 1.20 (for development)
-- A running [Pocket-ID](https://github.com/pocket-id/pocket-id) instance
-- An API token from your Pocket-ID instance
-
-## Installation
-
-### Terraform Registry
-
-```hcl
-terraform {
-  required_providers {
-    pocketid = {
-      source  = "trozz/pocketid"
-      version = "~> 1.0"
-    }
-  }
-}
-```
-
-### Manual Installation
-
-1. Download the latest release from the [releases page](https://github.com/Trozz/terraform-provider-pocketid/releases)
-2. Extract the archive
-3. Move the binary to `~/.terraform.d/plugins/registry.terraform.io/trozz/pocketid/${VERSION}/${OS_ARCH}/`
-
-#### Verifying Release Attestations
-
-All release artifacts include build attestations for supply chain security. To verify the authenticity of a release:
-
-```bash
-# Using GitHub CLI
-gh attestation verify terraform-provider-pocketid_v1.0.0_darwin_amd64.zip \
-  --owner Trozz \
-  --repo terraform-provider-pocketid
-```
-
-For more information about attestations, see our [attestations documentation](docs/ATTESTATIONS.md).
-
-## Quick Start
-
-### 1. Configure the Provider
-
-```hcl
-# Using provider configuration
-provider "pocketid" {
-  base_url  = "https://auth.example.com"
-  api_token = var.pocketid_api_token
-}
-
-# Or using environment variables
-# export POCKETID_BASE_URL="https://auth.example.com"
-# export POCKETID_API_TOKEN="your-api-token"
-```
-
-### 2. Create an OIDC Client
-
-```hcl
-resource "pocketid_client" "web_app" {
-  name = "My Web Application"
-  callback_urls = [
-    "https://app.example.com/callback",
-    "http://localhost:3000/callback"
-  ]
-  is_public    = false
-  pkce_enabled = true
-}
-
-output "client_id" {
-  value = pocketid_client.web_app.id
-}
-
-output "client_secret" {
-  value     = pocketid_client.web_app.client_secret
-  sensitive = true
-}
-```
-
-### 3. Create Groups and Users
-
-```hcl
-# Create a group
-resource "pocketid_group" "developers" {
-  name          = "developers"
-  friendly_name = "Development Team"
-}
-
-# Create a user
-resource "pocketid_user" "john_doe" {
-  username   = "johndoe"
-  email      = "john@example.com"
-  first_name = "John"
-  last_name  = "Doe"
-  groups     = [pocketid_group.developers.id]
-}
-```
-
-## Resources
-
-### Available Resources
-
-- `pocketid_client` - Manages OIDC client applications
-- `pocketid_user` - Manages user accounts
-- `pocketid_group` - Manages user groups
-
-### Available Data Sources
-
-- `pocketid_client` - Queries a single OIDC client
-- `pocketid_clients` - Lists all OIDC clients
-- `pocketid_user` - Queries a single user by ID or username
-- `pocketid_users` - Lists users with optional filtering
-
-## Documentation
-
-Full documentation is available on the [Terraform Registry](https://registry.terraform.io/providers/trozz/pocketid/latest/docs).
-
-### Quick Links
-
-- [Provider Configuration](https://registry.terraform.io/providers/trozz/pocketid/latest/docs)
-- [Resource: pocketid_client](https://registry.terraform.io/providers/trozz/pocketid/latest/docs/resources/client)
-- [Resource: pocketid_user](https://registry.terraform.io/providers/trozz/pocketid/latest/docs/resources/user)
-- [Resource: pocketid_group](https://registry.terraform.io/providers/trozz/pocketid/latest/docs/resources/group)
-
-## Examples
-
-See the [examples](examples/) directory for complete working examples:
-
-- [Basic Provider Setup](examples/provider/)
-- [Complete Example](examples/complete/) - Full setup with clients, users, and groups
-- [Resource Examples](examples/resources/) - Individual resource examples
-
-## Development
-
-### Prerequisites
-
-- Go 1.20+
-- Terraform 1.0+
-- A Pocket-ID instance for testing
-
-### Building the Provider
-
-```bash
-# Clone the repository
-git clone https://github.com/Trozz/terraform-provider-pocketid.git
-cd terraform-provider-pocketid
-
-# Install dependencies
-make deps
-
-# Build the provider
-make build
-
-# Install locally for testing
-make install
-```
-
-### Running Tests
-
-**Important Note**: Due to Pocket-ID's security model, acceptance tests cannot be run in CI/CD pipelines. Pocket-ID requires:
-
-- Manual passkey registration through the web UI
-- Manual API key generation through the admin interface
-- No programmatic way to bootstrap an instance
-
-#### Unit Tests (Automated)
-
-```bash
-# Run unit tests - these run in CI
-make test
-```
-
-#### Acceptance Tests (Manual)
-
-Acceptance tests require a manually configured Pocket-ID instance:
-
-1. Start a Pocket-ID instance
-2. Register a user with a passkey through the web UI
-3. Generate an API key in the admin interface
-4. Set environment variables:
-
-   ```bash
-   export POCKETID_BASE_URL="https://your-pocket-id-instance.com"
-   export POCKETID_API_TOKEN="your-api-token"
-   ```
-
-5. Run acceptance tests:
-
-   ```bash
-   make test-acc
-   ```
-
-See [TESTING.md](TESTING.md) for detailed testing instructions and strategies.
-
-### Test Analytics
-
-This project uses [Codecov](https://codecov.io) for code coverage and test analytics:
-
-[![codecov](https://codecov.io/gh/Trozz/terraform-provider-pocketid/branch/main/graph/badge.svg)](https://codecov.io/gh/Trozz/terraform-provider-pocketid)
-
-#### Features
-
-- **Code Coverage**: Track test coverage across all packages
-- **Test Analytics**: Monitor test performance and identify flaky tests
-- **Failed Test Reporting**: Get detailed reports on test failures
-- **PR Comments**: Automatic coverage reports on pull requests
-
-#### Running Tests with JUnit Output
-
-For detailed test reporting, use `gotestsum`:
-
-```bash
-# Install gotestsum if not already installed
-go install gotest.tools/gotestsum@latest
-
-# Run tests with JUnit XML output
-make test-junit
-
-# Or run in CI format
-make test-ci
-```
-
-This generates:
-
-- `coverage.out` - Code coverage report
-- `junit.xml` - JUnit format test results for test analytics
-
-#### Local Coverage Report
-
-Generate an HTML coverage report:
-
-```bash
-make test-coverage
-# Opens coverage.html in your default browser
-```
-
-### Local Development
-
-1. Start a local Pocket-ID instance:
-
-   ```bash
-   make pocket-id-start
-   ```
-
-2. Build and install the provider:
-
-   ```bash
-   make dev
-   ```
-
-3. Use the provider in your Terraform configuration
-
-### Debugging
-
-Enable debug logging:
-
-```bash
-export TF_LOG=DEBUG
-terraform apply
-```
-
-## Contributing
-
-Contributions are welcome! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
-
-### How to Contribute
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-### Development Workflow
-
-1. Write tests for your changes
-2. Ensure all tests pass (`make test-all`)
-3. Update documentation as needed
-4. Follow the existing code style
-5. Add yourself to the [CONTRIBUTORS](CONTRIBUTORS.md) file
-
-## Roadmap
-
-- [ ] Support for webhook resources
-- [ ] Bulk user import functionality
-- [ ] Enhanced policy management
-- [ ] Session management features
-- [ ] Automated passkey registration (when/if API supports it)
-
-## Support
-
-- **Issues**: [GitHub Issues](https://github.com/Trozz/terraform-provider-pocketid/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/Trozz/terraform-provider-pocketid/discussions)
-- **Pocket-ID**: [Pocket-ID Repository](https://github.com/pocket-id/pocket-id)
-
-## Security
-
-### Reporting Security Issues
-
-Please report security vulnerabilities to [security@leer.dev](mailto:security@leer.dev). Do not open public issues for
-security problems.
-
-### Best Practices
-
-1. **Never commit API tokens** to version control
-2. Use environment variables or secure secret management
-3. Enable TLS verification in production
-4. Regularly rotate API tokens
-5. Follow the principle of least privilege for API tokens
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-- The [Pocket-ID](https://github.com/pocket-id/pocket-id) team for creating an awesome OIDC provider
-- The [Terraform Plugin Framework](https://github.com/hashicorp/terraform-plugin-framework) team
-- All [contributors](CONTRIBUTORS.md) who have helped improve this provider
-
-## Maintainers
-
-- [@trozz](https://github.com/trozz)
-
----
-
-Made with ❤️ by the Terraform Pocket-ID Provider community
+# Pocket ID provider — maintenance fork
+
+This is **irashack's independent maintenance fork** of
+[Trozz/terraform-provider-pocketid](https://github.com/Trozz/terraform-provider-pocketid).
+It preserves upstream history, resource schemas, import IDs, license, and contributor attribution.
+It is not an official Pocket ID project or Trozz release. No support SLA is promised.
+
+Version **2.3.1** starts from upstream **v2.3.0**
+(`44c32e037fa0206d64a59e5eed9d8fbceecca36e`). It brings in Mathieu Lemay's
+[PR #97](https://github.com/Trozz/terraform-provider-pocketid/pull/97), including
+Yusaku Mizobuchi's test contribution, then validates malformed versions, prevents
+mutation retries, protects partial creation, and removes secret-bearing HTTP bodies
+from logs and diagnostics. [PR #90](https://github.com/Trozz/terraform-provider-pocketid/pull/90)
+was reviewed for overlap; its custom user-ID/secret features are not included.
+
+Use **`registry.terraform.io/irashack/pocketid`**, exact version **`2.3.1`**,
+with the native filesystem mirror in [INSTALL.md](INSTALL.md).
+**Registry publication is pending.** A GitHub release does not register a provider.
+Never install this binary over `trozz/pocketid` or use `dev_overrides` for normal operation.
+
+| Pocket ID | Secret API | Verification |
+|---|---|---|
+| 2.9.0 | POST `/api/oidc/clients/:id/secret` | Official-image client acceptance |
+| 2.13.0 | POST `/api/oidc/clients/:id/secret` | Official-image client acceptance |
+| 2.14.0 | POST `/api/oidc/clients/:id/secrets` | Official-image client acceptance |
+| Earlier 2.x with missing version route | Singular endpoint only after Pocket ID's exact missing-route response | HTTP regression only; not live-tested |
+| Other releases, including later 2.14+ | Semantic-version selection | Not live-tested; compatibility is not a blanket promise |
+
+See [TESTING.md](TESTING.md) for exact tool/platform results and known failures,
+[CHANGELOG.md](CHANGELOG.md) for this release, and [CONTRIBUTING.md](CONTRIBUTING.md)
+for upstream contribution and return criteria. Original upstream guidance is retained
+in [UPSTREAM-README.md](UPSTREAM-README.md); its registry/install claims describe upstream.
+Resource documentation remains in [docs/](docs/).
+
+## Secret and failure behavior
+
+Confidential-client creation generates one secret. Public clients generate none.
+Refresh, import and metadata-only updates never call the secret endpoint. Import
+cannot recover an existing create-only secret; the value remains null. Store
+provider state securely; a sensitive attribute alone does not encrypt state.
+
+Version errors fail before creating a confidential client. Only Pocket ID's JSON
+404 `API endpoint not found` identifies a missing version route. Invalid/empty
+versions, authentication failures, unexpected 404s and server/transport failures
+are not classified as old servers. No non-GET mutation is automatically retried;
+HTTP redirects are not followed with the API key.
+
+A definite rejection can roll back only the client created in that operation.
+Cleanup failure or an ambiguous secret response retains its ID in state and tells
+you to inspect read-only. **Do not blindly apply a tainted resource:** Terraform
+may propose replacement. Inspect the client and secret metadata, then explicitly
+choose recovery. No second secret is generated automatically. A lost response to
+server-generated-ID client creation may leave an object whose ID was never
+received; inspect the client list before retrying. Existing-ID conflicts do not
+trigger deletion. HTTP diagnostics expose status codes, not arbitrary server bodies.

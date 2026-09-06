@@ -1,166 +1,22 @@
-# Release Checklist for Terraform Provider for Pocket-ID
+# Maintenance release procedure
 
-This checklist ensures a smooth release process for new versions of the provider.
+1. Run TESTING.md's client matrix, meaningful Go checks, native lifecycle tests,
+   and the migration rehearsal. Record exact versions and any failures.
+2. Review the focused diff and public metadata for credentials, state, private
+   configuration and accidental local committer addresses. Preserve LICENSE and
+   upstream authors. Update README/CHANGELOG and document untested platforms.
+3. Commit reviewed source. Create a stable version tag after validation.
+4. Build with pinned GoReleaser 2.18.1 using `.goreleaser.yml`:
+   `goreleaser release --clean --skip=publish`. Check all expected target ZIPs and
+   SHA256SUMS. No GPG key or registry publication is implied.
+5. Publish the tag/source and release archives, manifest and SHA256SUMS. Include
+   the SHA256SUMS digest and exact validation evidence in release notes.
+6. Download the published artifacts into a fresh directory, verify all checksums,
+   install via a native mirror and repeat native Terraform/OpenTofu lifecycle
+   checks. A tag or successful build alone is not a released-provider proof.
 
-## Pre-Release Checklist
-
-### Code Quality
-
-- [ ] All unit tests pass locally (`make test`)
-- [ ] All acceptance tests pass locally (`make test-acc`)
-- [ ] No linting errors (`make lint`)
-- [ ] Code coverage is acceptable (aim for >80%)
-- [ ] All PR feedback has been addressed
-
-### Documentation
-
-- [ ] CHANGELOG.md is updated with all changes
-- [ ] README.md is up to date
-- [ ] Resource documentation is complete
-- [ ] Data source documentation is complete
-- [ ] Examples are working and up to date
-- [ ] Run `tfplugindocs generate` to update generated docs
-- [ ] Review generated documentation for accuracy
-
-### Version Preparation
-
-- [ ] Decide on version number following semantic versioning
-  - [ ] MAJOR version for incompatible API changes
-  - [ ] MINOR version for backwards-compatible functionality
-  - [ ] PATCH version for backwards-compatible bug fixes
-- [ ] Update version references if hardcoded anywhere
-- [ ] Review and update compatibility matrix if needed
-
-### Testing
-
-- [ ] Test upgrade path from previous version
-- [ ] Test with minimum supported Terraform version
-- [ ] Test with latest Terraform version
-- [ ] Test all resource CRUD operations
-- [ ] Test all data sources
-- [ ] Test import functionality
-- [ ] Verify sensitive values are properly masked
-
-## Release Process
-
-### 1. Final Checks
-
-- [ ] Ensure main branch is up to date
-- [ ] No uncommitted changes (`git status`)
-- [ ] All CI checks are passing on main branch
-
-### 2. Create Release Tag
-
-```bash
-# For a new release (e.g., v0.1.0)
-git tag -a v0.1.0 -m "Release v0.1.0"
-
-# For a pre-release (e.g., v0.1.0-rc.1)
-git tag -a v0.1.0-rc.1 -m "Pre-release v0.1.0-rc.1"
-
-# Push the tag
-git push origin v0.1.0
-```
-
-### 3. Monitor Release Workflow
-
-- [ ] Check GitHub Actions release workflow is running
-- [ ] Verify GPG signing is successful
-- [ ] Confirm all platform binaries are built
-- [ ] Check that release assets are properly uploaded
-
-### 4. Verify GitHub Release
-
-- [ ] Release appears on GitHub releases page
-- [ ] Release notes are properly formatted
-- [ ] All required assets are present:
-  - [ ] Binary archives for all platforms
-  - [ ] SHA256SUMS file
-  - [ ] SHA256SUMS.sig file
-  - [ ] Manifest JSON file
-- [ ] Download and verify one binary works
-
-### 5. Terraform Registry (First Time Only)
-
-- [ ] Sign in to Terraform Registry
-- [ ] Publish provider following PUBLISHING.md
-- [ ] Verify webhook is created
-- [ ] Confirm provider page is live
-
-### 6. Verify Registry Release
-
-- [ ] New version appears on Terraform Registry
-- [ ] Documentation is properly rendered
-- [ ] Installation instructions are correct
-- [ ] Test installation with new version:
-
-```hcl
-terraform {
-  required_providers {
-    pocketid = {
-      source  = "trozz/pocketid"
-      version = "0.1.0"  # Use actual version
-    }
-  }
-}
-```
-
-## Post-Release Checklist
-
-### Communication
-
-- [ ] Create GitHub discussion/announcement
-- [ ] Update any pinned issues
-- [ ] Notify Pocket-ID community (if applicable)
-- [ ] Update project board/milestones
-
-### Documentation Updates
-
-- [ ] Update README.md badge from "pending" to active
-- [ ] Update installation examples to use Registry source
-- [ ] Archive any outdated documentation
-- [ ] Update compatibility matrix
-
-### Monitoring
-
-- [ ] Monitor GitHub issues for problems
-- [ ] Check Terraform Registry for any issues
-- [ ] Watch for user feedback
-- [ ] Track download statistics
-
-### Housekeeping
-
-- [ ] Close milestone for this release
-- [ ] Create milestone for next release
-- [ ] Update project board
-- [ ] Plan next release features
-
-## Rollback Plan
-
-If issues are discovered after release:
-
-1. **Do NOT delete or modify the release** - this breaks checksums
-2. **Document the issue** in:
-   - GitHub release notes (edit to add warning)
-   - README.md if critical
-   - Open a GitHub issue
-3. **Release a patch version** with the fix
-4. **Communicate** the issue and fix to users
-
-## Emergency Contacts
-
-- Terraform Registry Support: <terraform-registry@hashicorp.com>
-- GitHub Support: <https://support.github.com>
-- GPG Key Issues: Check PUBLISHING.md troubleshooting
-
-## Version History
-
-Track releases here for reference:
-
-| Version | Date | Type | Notes |
-|---------|------|------|-------|
-| v0.1.0  | TBD  | Initial | First public release |
-
----
-
-**Remember**: Once a version is released, it cannot be changed. Always release a new version for fixes.
+The existing GoReleaser GitHub workflow is retained for an explicit manual release
+run. Routine CI runs on branch/PR changes. Upstream's automatic development
+releases, scheduled sweeps, cleanup and contributor-edit jobs are not enabled in
+this maintenance fork. Do not publish a registry identity until it is actually
+registered with the required signing setup.

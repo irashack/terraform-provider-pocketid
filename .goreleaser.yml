@@ -16,14 +16,6 @@ git:
   ignore_tags:
     - "*-dev*"
 
-before:
-  hooks:
-    # You may remove this if you don't use go modules.
-    - go mod tidy
-    # Generate documentation
-    - go install github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs@latest
-    - tfplugindocs generate
-
 # Build configuration
 builds:
   - id: terraform-provider-pocketid
@@ -84,25 +76,10 @@ checksum:
     - glob: "terraform-registry-manifest.json"
       name_template: "{{ .ProjectName }}_{{ .Version }}_manifest.json"
 
-# Signing configuration for Terraform Registry
-signs:
-  - cmd: gpg
-    args:
-      - --batch
-      - --local-user
-      - "{{ .Env.GPG_FINGERPRINT }}"
-      - --output
-      - ${signature}
-      - --detach-sign
-      - ${artifact}
-    signature: ${artifact}.sig
-    artifacts: checksum
-    stdin: "{{ .Env.PASSPHRASE }}"
-
 # Release configuration
 release:
   github:
-    owner: Trozz
+    owner: irashack
     name: terraform-provider-pocketid
 
   extra_files:
@@ -111,20 +88,11 @@ release:
 
   # Release notes
   header: |
-    ## Terraform Provider for Pocket-ID v{{ .Version }}
-
-    ### Provider Documentation
-
-    Documentation is available on the [Terraform Registry](https://registry.terraform.io/providers/trozz/pocketid/{{ .Version }}/docs).
-
-  footer: |
-    ## What's Next?
-
-    - Read the [documentation](https://registry.terraform.io/providers/trozz/pocketid/latest/docs)
-    - Report issues on [GitHub](https://github.com/Trozz/terraform-provider-pocketid/issues)
-    - Join the discussion on [Pocket-ID](https://github.com/pocket-id/pocket-id)
-
-    **Full Changelog**: https://github.com/Trozz/terraform-provider-pocketid/compare/{{ .PreviousTag }}...{{ .Tag }}
+    Maintenance fork of Trozz/terraform-provider-pocketid, based on upstream v2.3.0.
+    Fixes confidential OIDC client creation on Pocket ID 2.14 and hardens failure handling.
+    See README.md, INSTALL.md, TESTING.md and CHANGELOG.md in this release's source.
+    Registry publication is pending. Use the fork identity and native filesystem mirror.
+    Archives and SHA256SUMS are published without a registry signing key.
 
   # Prerelease configuration
   prerelease: auto
@@ -141,7 +109,7 @@ release:
 # Changelog configuration
 changelog:
   sort: asc
-  use: github
+  use: git
   filters:
     exclude:
       - "^docs:"

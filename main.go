@@ -23,7 +23,7 @@ func main() {
 	flag.Parse()
 
 	opts := providerserver.ServeOpts{
-		Address: "registry.terraform.io/trozz/pocketid",
+		Address: "registry.terraform.io/irashack/pocketid",
 		Debug:   debug,
 	}
 

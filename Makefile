@@ -2,9 +2,9 @@
 
 # Variables
 PROVIDER_NAME = pocketid
-NAMESPACE = trozz
+NAMESPACE = irashack
 BINARY_NAME = terraform-provider-$(PROVIDER_NAME)
-VERSION ?= 0.1.0
+VERSION ?= 2.3.1
 OS_ARCH ?= $(shell go env GOOS)_$(shell go env GOARCH)
 INSTALL_PATH = ~/.terraform.d/plugins/registry.terraform.io/$(NAMESPACE)/$(PROVIDER_NAME)/$(VERSION)/$(OS_ARCH)
 

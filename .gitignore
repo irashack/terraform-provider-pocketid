@@ -277,3 +277,6 @@ debug/
 # It should be generated dynamically
 test-data/
 .serena/
+
+__pycache__/
+*.pyc
