@@ -1,14 +1,8 @@
-blank_issues_enabled: false
+blank_issues_enabled: true
 contact_links:
-  - name: Security Vulnerability
-    url: mailto:security@leer.dev
-    about: Please report security vulnerabilities via email instead of GitHub issues
-  - name: Terraform Provider Registry
-    url: https://registry.terraform.io/providers/trozz/pocketid/latest
-    about: View the provider documentation on the Terraform Registry
-  - name: Community Discussion
-    url: https://github.com/trozz/terraform-provider-pocketid/discussions
-    about: Ask questions and discuss ideas with the community
-  - name: Provider Development Guide
-    url: https://developer.hashicorp.com/terraform/plugin/sdkv2
-    about: Learn how to contribute to Terraform provider development
+  - name: Private security report
+    url: https://github.com/irashack/terraform-provider-pocketid/security/advisories/new
+    about: Report vulnerabilities privately without production credentials or state.
+  - name: Fork installation and documentation
+    url: https://github.com/irashack/terraform-provider-pocketid#readme
+    about: Start here for installation, compatibility and resource documentation.

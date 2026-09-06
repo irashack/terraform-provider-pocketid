@@ -280,3 +280,7 @@ test-data/
 
 __pycache__/
 *.pyc
+
+# Local development outputs
+/bin/
+.dccache

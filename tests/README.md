@@ -1,6 +1,11 @@
 # PocketID Provider Tests
 
-This directory contains comprehensive Terraform configurations to test all provider functionality.
+For automated checks, use `make test-acc-matrix` and `make test-acc-provider` from
+the repository root; see [TESTING.md](../TESTING.md) for coverage and exclusions.
+
+The Terraform configurations here are manual demonstrations. Use a disposable
+instance and the fork mirror from [INSTALL.md](../INSTALL.md); review all changes
+before applying. They are not the automated acceptance suite.
 
 ## Test Structure
 
@@ -21,8 +26,8 @@ cp terraform.tfvars.example terraform.tfvars
 terraform init
 terraform apply
 
-# Save outputs for the next test
-terraform output -json > ../terraform-data-sources/resource-ids.json
+# Copy only the required non-sensitive resource IDs into the next configuration.
+# Do not export all outputs: tokens and client secrets are present in state.
 ```
 
 ### Step 2: Test Data Sources

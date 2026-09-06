@@ -16,7 +16,11 @@
    checks. A tag or successful build alone is not a released-provider proof.
 
 The existing GoReleaser GitHub workflow is retained for an explicit manual release
-run. Routine CI runs on branch/PR changes. Upstream's automatic development
+run from `main-maintenance`, accepting only an existing stable tag on that branch.
+It validates the tagged source, runs the client matrix, and creates a draft. Add the
+checksum-manifest digest from the run summary and native validation results to its
+notes before explicitly publishing. Existing released tags must never be moved or
+rebuilt in place. Routine CI runs on branch/PR changes. Upstream's automatic development
 releases, scheduled sweeps, cleanup and contributor-edit jobs are not enabled in
 this maintenance fork. Do not publish a registry identity until it is actually
 registered with the required signing setup.

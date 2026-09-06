@@ -1,7 +1,8 @@
 terraform {
   required_providers {
     pocketid = {
-      source = "trozz/pocketid"
+      source  = "registry.terraform.io/irashack/pocketid"
+      version = "2.3.1"
     }
     random = {
       source  = "hashicorp/random"

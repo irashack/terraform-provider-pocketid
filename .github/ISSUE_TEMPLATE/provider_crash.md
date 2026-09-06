@@ -11,9 +11,9 @@ assignees: ''
 
 Brief description of what you were doing when the provider crashed.
 
-## Terraform Version
+## Terraform / OpenTofu and Pocket ID Versions
 
-Run `terraform -v` to show the version.
+Include the CLI version, Pocket ID version, operating system and architecture.
 
 ## Provider Version
 
@@ -29,7 +29,7 @@ Version of terraform-provider-pocketid that crashed.
 ## Crash Output
 
 ```
-# Please paste the full panic output here
+# Include only a redacted stack trace with no state, secrets or private inputs
 # This typically starts with "panic:" and includes a stack trace
 ```
 
@@ -41,7 +41,7 @@ Version of terraform-provider-pocketid that crashed.
 
 ## Debug Logs
 
-Please provide a link to a GitHub Gist containing the complete debug output leading up to the crash: <https://www.terraform.io/docs/internals/debugging.html>
+Include only a short, redacted error and a synthetic reproduction. Never attach full debug logs, state, plans, API tokens or client secrets.
 
 ## Environment Details
 
@@ -55,4 +55,4 @@ Have you found any way to avoid the crash? If so, please describe.
 
 ## Note
 
-Provider crashes are high-priority issues. We'll investigate as soon as possible.
+Reports are reviewed as maintainer time allows.

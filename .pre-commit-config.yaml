@@ -1,69 +1,16 @@
-# Pre-commit configuration for terraform-provider-pocketid
-# See https://pre-commit.com for more information
+# Optional: pre-commit install. CI uses these same Make targets.
 repos:
-  # General file checks
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+  - repo: local
     hooks:
-      - id: trailing-whitespace
-      - id: end-of-file-fixer
-      - id: check-merge-conflict
-      - id: check-yaml
-      - id: check-json
-      - id: check-toml
-      - id: check-added-large-files
-        args: ['--maxkb=500']
-      - id: check-case-conflict
-      - id: check-executables-have-shebangs
-      - id: mixed-line-ending
-
-  # Go specific hooks
-  - repo: https://github.com/TekWizely/pre-commit-golang
-    rev: v1.0.0-rc.1
-    hooks:
-      - id: go-fmt
-      - id: go-vet-mod
-      - id: go-mod-tidy
-      - id: go-test-mod
-        args: ['-timeout=5m']
-      - id: go-build-mod
-      - id: golangci-lint-mod
-        args: ['--timeout=5m']
-
-  # Security scanning
-  - repo: https://github.com/trufflesecurity/trufflehog
-    rev: v3.89.2
-    hooks:
-      - id: trufflehog
-        name: TruffleHog
-        description: Detect secrets in your data.
-        entry: bash -c 'trufflehog git file://. --since-commit HEAD --only-verified --fail'
+      - id: go-format
+        name: Go format check
+        entry: make fmt-check
         language: system
-        stages: ["pre-commit", "pre-push"]
-
-  # Terraform/HCL formatting
-  - repo: https://github.com/antonbabenko/pre-commit-terraform
-    rev: v1.99.4
-    hooks:
-      - id: terraform_fmt
-        args:
-          - --args=-recursive
-
-  # Markdown linting
-  - repo: https://github.com/DavidAnson/markdownlint-cli2
-    rev: v0.15.0
-    hooks:
-      - id: markdownlint-cli2
-        args: ['--fix']
-
-  # Commit message validation
-  - repo: https://github.com/compilerla/conventional-pre-commit
-    rev: v4.2.0
-    hooks:
-      - id: conventional-pre-commit
-        stages: [commit-msg]
-        args: [feat, fix, docs, style, refactor, test, chore, ci, build]
-
-# Global configuration
-fail_fast: false
-minimum_pre_commit_version: "3.0.0"
+        pass_filenames: false
+        types: [go]
+      - id: go-vet
+        name: Go vet
+        entry: make vet
+        language: system
+        pass_filenames: false
+        types: [go]

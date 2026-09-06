@@ -1,8 +1,8 @@
 terraform {
   required_providers {
     pocketid = {
-      source  = "trozz/pocketid"
-      version = "~> 1.0"
+      source  = "registry.terraform.io/irashack/pocketid"
+      version = "2.3.1"
     }
   }
 }

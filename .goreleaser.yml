@@ -10,9 +10,7 @@ version: 2
 # Git configuration
 git:
   # Ignore dev pre-release tags when resolving the previous/current tag.
-  # The cleanup-on-tag-push workflow deletes these tags during a release, so
-  # using one as the changelog base produces a 404 against the GitHub compare
-  # API. Ignoring them makes the previous tag resolve to the last stable release.
+  # Historical upstream dev tags are not stable changelog bases.
   ignore_tags:
     - "*-dev*"
 
@@ -67,6 +65,9 @@ archives:
       - LICENSE
       - README.md
       - docs/**/*
+      - INSTALL.md
+      - TESTING.md
+      - CHANGELOG.md
 
 # Checksum configuration
 checksum:
@@ -88,8 +89,7 @@ release:
 
   # Release notes
   header: |
-    Maintenance fork of Trozz/terraform-provider-pocketid, based on upstream v2.3.0.
-    Fixes confidential OIDC client creation on Pocket ID 2.14 and hardens failure handling.
+    Independent maintenance fork of Trozz/terraform-provider-pocketid.
     See README.md, INSTALL.md, TESTING.md and CHANGELOG.md in this release's source.
     Registry publication is pending. Use the fork identity and native filesystem mirror.
     Archives and SHA256SUMS are published without a registry signing key.
@@ -97,8 +97,8 @@ release:
   # Prerelease configuration
   prerelease: auto
 
-  # Draft release (set to false for automatic publishing)
-  draft: false
+  # Review checksums and native lifecycle evidence before publishing the draft.
+  draft: true
 
   # Name template for the release
   name_template: "v{{ .Version }}"

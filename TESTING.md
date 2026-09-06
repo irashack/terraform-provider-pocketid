@@ -77,3 +77,26 @@ Terraform/OpenTofu versions other than those named were not tested. Cross-built
 Windows, FreeBSD, Darwin AMD64, Linux 386 and ARM variants are not runtime-tested
 locally. Linux CI results, when available, belong to their linked workflow run;
 a successful cross-build alone is not a live compatibility result.
+
+## Maintenance cleanup verification — 2026-09-06 (unreleased source)
+
+After the dependency updates recorded in UPSTREAM.md, local darwin_arm64 checks
+passed using Go 1.27.1 (now the preferred toolchain in go.mod):
+
+- `make check`: format, vet, unit/race tests, build and golangci-lint 2.13.2.
+- `make actionlint`: workflow syntax and expression validation, actionlint 1.7.12.
+- `make vuln`: govulncheck 1.7.0 found no reachable vulnerabilities and none in
+  imported packages; two advisories remain in required modules outside the
+  imported package graph. This is a point-in-time scan, not a blanket guarantee.
+- `make test-acc-matrix`: client lifecycle on official Pocket ID 2.9.0, 2.13.0
+  and 2.14.0 images, with each disposable container removed afterward.
+- `make test-acc-provider`: broader 2.14 acceptance, explicitly excluding
+  `TestAccResourceApplicationConfig*` as documented above.
+- `make docs`: generated docs from the actual provider schema with tfplugindocs
+  0.25.0. Example Terraform formatting and local README links passed.
+- GoReleaser 2.18.1 configuration validation and `go mod tidy -diff` passed.
+
+These are source checks, not a new release or native binary migration rehearsal.
+The changed GitHub workflows have been checked locally but not run on GitHub.
+CI selects the preferred toolchain from go.mod; the lower `go` directive remains
+the language/module minimum rather than the CI toolchain selection.

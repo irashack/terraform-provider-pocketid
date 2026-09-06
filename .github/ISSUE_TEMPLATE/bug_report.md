@@ -11,13 +11,13 @@ assignees: ''
 
 A clear and concise description of what the bug is.
 
-## Terraform Version
+## Terraform / OpenTofu and Pocket ID Versions
 
-Run `terraform -v` to show the version. If you are not running the latest version of Terraform, please upgrade because your issue may have already been fixed.
+Include the CLI version, Pocket ID version, operating system and architecture.
 
 ## Provider Version
 
-If you are not running the latest version of the provider, please upgrade because your issue may have already been fixed.
+Include the exact provider source address and version; distinguish the fork from upstream.
 
 ## Affected Resource(s)
 
@@ -37,7 +37,7 @@ If this issue appears to affect multiple resources, it may be an issue with Terr
 
 ## Debug Output
 
-Please provide a link to a GitHub Gist containing the complete debug output: <https://www.terraform.io/docs/internals/debugging.html>. Please do NOT paste the debug output in the issue; just paste a link to the Gist.
+Include only a short, redacted error and a synthetic reproduction. Never attach full debug logs, state, plans, API tokens or client secrets.
 
 ## Expected Behavior
 

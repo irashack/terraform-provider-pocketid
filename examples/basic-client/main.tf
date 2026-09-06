@@ -2,7 +2,8 @@ terraform {
   required_version = ">= 1.0"
   required_providers {
     pocketid = {
-      source = "trozz/pocketid"
+      source  = "registry.terraform.io/irashack/pocketid"
+      version = "2.3.1"
     }
   }
 }
@@ -19,7 +20,7 @@ resource "pocketid_client" "example" {
   logout_callback_urls = var.logout_callback_urls
 
   # Optional: Add allowed user groups to restrict access
-  # allowed_user_groups = ["developers", "admins"]
+  # Use group IDs, for example: allowed_user_groups = [pocketid_group.developers.id]
 }
 
 # Data source to verify the client was created

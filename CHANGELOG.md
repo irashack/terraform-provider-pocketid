@@ -1,4 +1,16 @@
-# Maintenance fork v2.3.1 — 2026-09-06
+# Changelog
+
+## Unreleased
+
+- Consolidate upstream dependency updates (#87, #98, #99) and selected Actions pins (#94).
+- Rewrite installation and contributor guidance for the fork; correct MIT license
+  references, reporting contacts and example provider addresses.
+- Consolidate local checks and disposable test fixtures; expand CI and validate
+  manually requested release tags before creating a draft.
+- Record the upstream backlog, including group-order drift (#92), declarative
+  secrets/IDs (#90), application-config failures and registry publication.
+
+## 2.3.1 — 2026-09-06
 
 Based on upstream v2.3.0. Backports PR #97 with original contributor attribution.
 
