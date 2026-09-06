@@ -4,7 +4,10 @@
 package provider_test
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"os"
 	"regexp"
 	"testing"
 
@@ -447,6 +450,56 @@ resource "pocketid_client" "test" {
 `,
 				ExpectError: regexp.MustCompile("Invalid PAR configuration"),
 			},
+		},
+	})
+}
+
+// Import cannot recover the create-only secret. Refresh and metadata updates
+// must preserve it without issuing another secret-creation request.
+func TestAccResourceClient_secretContinuity(t *testing.T) {
+	var original string
+	var id string
+	check := func(s *terraform.State) error {
+		rs := s.RootModule().Resources["pocketid_client.test"]
+		if rs == nil {
+			return fmt.Errorf("missing client state")
+		}
+		secret := rs.Primary.Attributes["client_secret"]
+		if original == "" {
+			original = secret
+			id = rs.Primary.ID
+		}
+		if secret == "" || secret != original || id != rs.Primary.ID {
+			return fmt.Errorf("client identity or secret changed")
+		}
+		if os.Getenv("POCKETID_TEST_VERSION") == "2.14.0" {
+			req, _ := http.NewRequest("GET", os.Getenv("POCKETID_BASE_URL")+"/api/oidc/clients/"+id+"/secrets", nil)
+			req.Header.Set("X-API-KEY", os.Getenv("POCKETID_API_TOKEN"))
+			response, err := http.DefaultClient.Do(req)
+			if err != nil {
+				return fmt.Errorf("secret metadata read failed")
+			}
+			defer func() { _ = response.Body.Close() }()
+			var metadata []map[string]interface{}
+			if response.StatusCode != 200 || json.NewDecoder(response.Body).Decode(&metadata) != nil || len(metadata) != 1 {
+				return fmt.Errorf("expected exactly one secret")
+			}
+		}
+		return nil
+	}
+	resource.Test(t, resource.TestCase{
+		PreCheck: func() { testAccPreCheck(t) }, ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: testAccResourceClientConfig_basic("continuity", "https://example.invalid/callback"), Check: check},
+			{RefreshState: true, Check: check},
+			{Config: testAccResourceClientConfig_basic("continuity-updated", "https://example.invalid/callback"), Check: check},
+			{ResourceName: "pocketid_client.test", ImportState: true, ImportStateVerify: true, ImportStateVerifyIgnore: []string{"client_secret"},
+				ImportStateCheck: func(states []*terraform.InstanceState) error {
+					if len(states) != 1 || states[0].Attributes["client_secret"] != "" {
+						return fmt.Errorf("import must not recover a secret")
+					}
+					return nil
+				}},
 		},
 	})
 }

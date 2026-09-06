@@ -2,6 +2,7 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -276,12 +277,48 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 		"isPublic": createReq.IsPublic,
 	})
 
+	// Resolve the API contract before making any client or secret mutation.
+	if !plan.IsPublic.ValueBool() {
+		if err := r.client.CheckSecretAPI(); err != nil {
+			resp.Diagnostics.AddError("Cannot verify secret API compatibility", err.Error())
+			return
+		}
+	}
+	// A caller-supplied ID is checked before creation. Never claim or clean up
+	// an existing client just because POST failed (including a conflict).
+	if createReq.ClientID != nil {
+		_, err := r.client.GetClient(*createReq.ClientID)
+		var status *client.HTTPError
+		if err == nil || !errors.As(err, &status) || status.StatusCode != 404 {
+			resp.Diagnostics.AddError("Cannot create fixed-ID OIDC client", "The client already exists or its absence could not be verified. Import an existing client instead; no mutation was attempted.")
+			return
+		}
+	}
 	clientResp, err := r.client.CreateClient(createReq)
 	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error creating OIDC client",
-			"Could not create OIDC client, unexpected error: "+err.Error(),
-		)
+		detail := "Client creation failed: " + err.Error()
+		if !client.IsDefiniteRejection(err) {
+			detail += ". The POST result is uncertain; inspect read-only before retrying. No cleanup was attempted."
+			if createReq.ClientID != nil {
+				plan.ID = types.StringValue(*createReq.ClientID)
+				plan.ClientSecret = types.StringNull()
+				plan.HasLogo = types.BoolValue(false)
+				if plan.LaunchURL.IsUnknown() {
+					plan.LaunchURL = types.StringNull()
+				}
+				if found, readErr := r.client.GetClient(*createReq.ClientID); readErr == nil {
+					plan.HasLogo = types.BoolValue(found.HasLogo)
+					detail += " A read found the fixed-ID client; its identity is retained in state."
+				} else {
+					detail += " The fixed ID is retained for recovery; its existence could not be confirmed."
+				}
+				resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+			} else {
+				detail += " No server-generated ID was received; list clients before deciding recovery."
+			}
+		}
+		resp.Diagnostics.AddError("Error creating OIDC client", detail)
+
 		return
 	}
 
@@ -307,12 +344,9 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 		tflog.Debug(ctx, "Generating client secret for non-public client")
 		secret, err := r.client.GenerateClientSecret(clientResp.ID)
 		if err != nil {
-			// Try to clean up the created client
-			_ = r.client.DeleteClient(clientResp.ID)
-			resp.Diagnostics.AddError(
-				"Error generating client secret",
-				"Could not generate client secret, the client was deleted. Error: "+err.Error(),
-			)
+			plan.ClientSecret = types.StringNull()
+			r.failedCreate(ctx, &plan, err, resp)
+
 			return
 		}
 		plan.ClientSecret = types.StringValue(secret)
@@ -331,12 +365,8 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 			})
 			err = r.client.UpdateClientAllowedUserGroups(clientResp.ID, groupIDs)
 			if err != nil {
-				// Try to clean up the created client
-				_ = r.client.DeleteClient(clientResp.ID)
-				resp.Diagnostics.AddError(
-					"Error updating allowed user groups",
-					"Could not update allowed user groups, the client was deleted. Error: "+err.Error(),
-				)
+				r.failedCreate(ctx, &plan, err, resp)
+
 				return
 			}
 		}
@@ -792,4 +822,34 @@ func mapAPIClientToModel(ctx context.Context, api *client.OIDCClient) clientReso
 	}
 
 	return model
+}
+
+// failedCreate only rolls back a newly created client after a definite API
+// rejection. An ambiguous mutation is inspected, never retried or deleted.
+func (r *clientResource) failedCreate(ctx context.Context, plan *clientResourceModel, cause error, resp *resource.CreateResponse) {
+	id := plan.ID.ValueString()
+	if client.IsDefiniteRejection(cause) {
+		if cleanupErr := r.client.DeleteClient(id); cleanupErr == nil {
+			resp.Diagnostics.AddError("OIDC client creation rolled back", "The newly created client was deleted after a rejected operation: "+cause.Error())
+			return
+		} else {
+			// A failed DELETE might still have committed. Verify before recording it.
+			_, readErr := r.client.GetClient(id)
+			var status *client.HTTPError
+			if errors.As(readErr, &status) && status.StatusCode == 404 {
+				resp.Diagnostics.AddError("OIDC client rollback verified", "Cleanup returned an error, but a subsequent read confirmed the client is absent: "+cause.Error())
+				return
+			}
+			resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
+			resp.Diagnostics.AddError("OIDC client cleanup failed", "Client ID "+id+" remains in state. Stop and inspect before recovery; do not retry apply blindly. Cleanup: "+cleanupErr.Error()+"; original operation: "+cause.Error())
+			return
+		}
+	}
+	_, readErr := r.client.GetClient(id)
+	detail := "A read confirmed the client still exists."
+	if readErr != nil {
+		detail = "Read-only inspection could not confirm the client: " + readErr.Error()
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
+	resp.Diagnostics.AddError("OIDC client creation result uncertain", "Client ID "+id+" is retained in state; no secret POST or cleanup was retried. "+detail+" Stop and inspect before recovery; a create-only secret cannot be recovered by import. "+cause.Error())
 }
