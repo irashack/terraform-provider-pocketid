@@ -3,13 +3,14 @@
 Manage [Pocket ID](https://pocket-id.org/) OIDC clients, users, groups and access
 settings as code. This is **irashack's maintenance fork** of
 [Trozz/terraform-provider-pocketid](https://github.com/Trozz/terraform-provider-pocketid),
-with compatibility fixes for Pocket ID 2.14 and safer client-creation failure handling.
+with compatibility fixes for Pocket ID 2.14 and 2.15 and safer failure handling.
 It is independently maintained, not an official Pocket ID or Trozz release.
 
 ## Get started
 
-Patch release **2.3.2 is prepared**; publication is pending. It fixes SMTP updates
-while preserving WebAuthn policy, the CIMD URL allowlist and unrelated configuration.
+Release **2.4.0** supports Pocket ID 2.15.0 and stops client updates from silently
+disabling replay protection or deleting public keys on federated identities; see the
+[changelog](CHANGELOG.md) for its one behaviour change.
 **Registry publication is pending:** install its verified archive using the native
 filesystem mirror in [INSTALL.md](INSTALL.md) before running `terraform init` or
 `tofu init`. A GitHub release alone does not make the provider registry-installable.
@@ -19,7 +20,7 @@ terraform {
   required_providers {
     pocketid = {
       source  = "registry.terraform.io/irashack/pocketid"
-      version = "2.3.2"
+      version = "2.4.0"
     }
   }
 }
@@ -60,13 +61,13 @@ See [examples](examples/README.md) for complete configurations and
 ## Compatibility and current limits
 
 We support the current and previous **minor release series** (N and N−1), at
-explicitly tested patch versions: **2.15.0 and 2.14.0** for the 2.4.0 candidate
+explicitly tested patch versions: **2.15.0 and 2.14.0** for release 2.4.0
 (release 2.3.2 was validated on 2.14.0 and 2.13.0).
 Adding the next minor requires validation and retires the oldest series. Untested
 patches are not automatically certified. **2.13.0 and earlier are no longer supported or tested**;
 legacy parsing safeguards remain defensive code, not a support promise.
 
-| Pocket ID | Federated identity `public_keys` | Verification for the 2.4.0 candidate |
+| Pocket ID | Federated identity `public_keys` | Verification for release 2.4.0 |
 |---|---|---|
 | 2.14.0 | Refused before any mutation | Full provider acceptance |
 | 2.15.0 | Supported | Full provider acceptance; native Terraform/OpenTofu upgrade from released 2.3.2 |

@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.4.0 — unreleased
+## 2.4.0 — 2026-09-20
 
 Pocket ID 2.15.0 support. Released 2.3.2 already works on 2.15.0; this release closes
 two ways a client update could silently weaken a federated identity.

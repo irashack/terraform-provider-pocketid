@@ -23,8 +23,8 @@ outside source; never publish that file. Logs/state are not release assets.
 Native binary tests use an already populated filesystem mirror:
 
 ```sh
-python3 scripts/disposable-pocketid.py 2.15.0 -- python3 tests/native/lifecycle.py terraform /absolute/mirror
-python3 scripts/disposable-pocketid.py 2.15.0 -- python3 tests/native/lifecycle.py tofu /absolute/mirror
+python3 scripts/disposable-pocketid.py 2.15.0 -- python3 tests/native/lifecycle.py terraform /absolute/mirror 2.4.0
+python3 scripts/disposable-pocketid.py 2.15.0 -- python3 tests/native/lifecycle.py tofu /absolute/mirror 2.4.0
 ```
 
 `PROVIDER_MIGRATION_TEST=1` (address migration from upstream 2.3.0) was last run on
@@ -37,11 +37,12 @@ renamed fork binary. The test uses supported state replacement, checks encrypted
 state/backups and saved-plan encryption, preserves the ID and secret, and requires
 an empty subsequent plan. No development overrides are used.
 
-## 2.4.0 candidate evidence — 2026-09-20
+## Release 2.4.0 evidence — 2026-09-20
 
 The supported matrix moves to **Pocket ID 2.14.0 and 2.15.0** (official Linux ARM64
 images); 2.13.0 is retired from support, CI and the fixture allowlist. Local
-platform darwin_arm64, Go 1.27.1, golangci-lint 2.13.2. Not yet tagged or published.
+platform darwin_arm64, Go 1.27.1, golangci-lint 2.13.2, Terraform 1.16.0 and
+OpenTofu 1.12.6.
 
 - The 2.14.0..2.15.0 server source was compared directly. The management API gains
   two read-only routes and one writable field, `publicKeys` on a federated identity;
@@ -75,8 +76,16 @@ python3 scripts/disposable-pocketid.py 2.15.0 -- python3 tests/native/upgrade.py
   build then plans nothing, keeps the client ID and secret, records the server's
   `replayProtection` on refresh, and leaves it unchanged through an unrelated update.
 
-Not run for this candidate: the native SMTP and lifecycle mirror tests (they need a
-populated release mirror), Linux, and any live instance.
+- A binary stamped 2.4.0 in an isolated unpacked mirror, beside the published 2.3.2
+  archive, passes `tests/native/lifecycle.py` and `tests/native/application_config.py`
+  with native **Terraform and OpenTofu on both versions**: install, create, refresh,
+  update, import, empty plan, delete, one secret and usable client authentication;
+  old-payload HTTP 400, SMTP-only update preserving every unrelated returned
+  setting, data-source reads and removal; and the same SMTP lifecycle started under
+  2.3.2 and upgraded to 2.4.0. OpenTofu runs enforce state, backup and saved-plan
+  encryption.
+
+Not run: Linux or any other cross-built platform, and any live instance.
 
 ## Release 2.3.2 evidence — 2026-09-06
 

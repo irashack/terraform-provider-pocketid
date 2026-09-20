@@ -14,13 +14,16 @@ import urllib.parse
 import urllib.request
 import uuid
 
-tool, mirror = sys.argv[1:]
+# Usage: lifecycle.py TOOL MIRROR [FORK_VERSION]; the version defaults to the
+# first fork release, which the migration case was written against.
+tool, mirror = sys.argv[1:3]
+fork_version = sys.argv[3] if len(sys.argv) > 3 else "2.3.1"
 version = os.environ["POCKETID_TEST_VERSION"]
 base = os.environ["POCKETID_BASE_URL"]
 assert base.startswith("http://127.0.0.1:")
 migration = os.environ.get("PROVIDER_MIGRATION_TEST") == "1"
 source = "registry.opentofu.org/trozz/pocketid" if migration else "registry.terraform.io/irashack/pocketid"
-provider_version = "2.3.0" if migration else "2.3.1"
+provider_version = "2.3.0" if migration else fork_version
 cid = "native-" + uuid.uuid4().hex[:12]
 
 def api(path, data=None, headers=None):
@@ -133,7 +136,7 @@ terraform {
         run("state","replace-provider","-auto-approve",source,"registry.terraform.io/irashack/pocketid")
         assert_encrypted()
         source="registry.terraform.io/irashack/pocketid"
-        provider_version="2.3.1"
+        provider_version=fork_version
         config("native-fixture")
         run("init","-input=false")
         assert state()["id"]==cid and state()["client_secret"]==secret, "migration changed identity/secret"
