@@ -741,6 +741,20 @@ func (c *Client) GetCurrentVersion() (string, error) {
 	return strings.TrimPrefix(normalized, "v"), nil
 }
 
+// VersionAtLeast reports whether the server runs at least the given version.
+// A server without the version endpoint (before v2.3.0) is older than any
+// version this is asked about.
+func (c *Client) VersionAtLeast(minimum string) (bool, error) {
+	version, err := c.GetCurrentVersion()
+	if err != nil {
+		return false, err
+	}
+	if version == "" {
+		return false, nil
+	}
+	return semver.Compare("v"+version, "v"+strings.TrimPrefix(minimum, "v")) >= 0, nil
+}
+
 // HTTPError exposes status without leaking an API error body.
 type HTTPError struct {
 	StatusCode      int

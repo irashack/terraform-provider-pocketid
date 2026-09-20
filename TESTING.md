@@ -6,8 +6,8 @@
 go test -race ./internal/...
 go vet ./...
 golangci-lint run ./...
-python3 scripts/disposable-pocketid.py 2.13.0 -- go test -v -count=1 -timeout 15m ./internal/provider -tags=acc -run '^TestAccResource(Client|ApplicationConfig)'
-python3 scripts/disposable-pocketid.py 2.14.0 -- go test -v -count=1 -timeout 15m ./internal/provider -tags=acc -run '^TestAccResource(Client|ApplicationConfig)'
+python3 scripts/disposable-pocketid.py 2.14.0 -- go test -v -count=1 -timeout 20m ./internal/provider -tags=acc
+python3 scripts/disposable-pocketid.py 2.15.0 -- go test -v -count=1 -timeout 20m ./internal/provider -tags=acc
 ```
 
 The fixture pulls official versioned Pocket ID images. It creates an isolated
@@ -23,16 +23,60 @@ outside source; never publish that file. Logs/state are not release assets.
 Native binary tests use an already populated filesystem mirror:
 
 ```sh
-python3 scripts/disposable-pocketid.py 2.14.0 -- python3 tests/native/lifecycle.py terraform /absolute/mirror
-python3 scripts/disposable-pocketid.py 2.14.0 -- python3 tests/native/lifecycle.py tofu /absolute/mirror
-PROVIDER_MIGRATION_TEST=1 python3 scripts/disposable-pocketid.py 2.13.0 -- python3 tests/native/lifecycle.py tofu /absolute/mirror
+python3 scripts/disposable-pocketid.py 2.15.0 -- python3 tests/native/lifecycle.py terraform /absolute/mirror
+python3 scripts/disposable-pocketid.py 2.15.0 -- python3 tests/native/lifecycle.py tofu /absolute/mirror
 ```
 
+`PROVIDER_MIGRATION_TEST=1` (address migration from upstream 2.3.0) was last run on
+Pocket ID 2.13.0 for release 2.3.1. It cannot run on a supported server: upstream
+2.3.0 cannot create a confidential client on 2.14 or later, and 2.13.0 has left the
+fixture allowlist. The case is retained in the script as a record.
 The migration case additionally needs the genuine upstream 2.3.0 artifact under
 `registry.opentofu.org/trozz/pocketid` in the isolated mirror. It must not be a
 renamed fork binary. The test uses supported state replacement, checks encrypted
 state/backups and saved-plan encryption, preserves the ID and secret, and requires
 an empty subsequent plan. No development overrides are used.
+
+## 2.4.0 candidate evidence — 2026-09-20
+
+The supported matrix moves to **Pocket ID 2.14.0 and 2.15.0** (official Linux ARM64
+images); 2.13.0 is retired from support, CI and the fixture allowlist. Local
+platform darwin_arm64, Go 1.27.1, golangci-lint 2.13.2. Not yet tagged or published.
+
+- The 2.14.0..2.15.0 server source was compared directly. The management API gains
+  two read-only routes and one writable field, `publicKeys` on a federated identity;
+  the client list now returns `allowedUserGroups` instead of a count, which this
+  provider never read. The application-configuration DTO is byte-identical, and
+  `/api/version/current` moved modules with the same path, auth and response.
+- Released 2.3.2, unchanged, passes the full acceptance suite on 2.15.0.
+- `make check`, `make actionlint`, `go mod tidy -diff` and `make vuln` pass.
+  `make vuln` first reported reachable GO-2026-6443 in gRPC 1.83.1, the transport
+  between Terraform and the provider; 1.83.2 clears it, and the suite below was
+  re-run on 2.15.0 afterward. Two advisories remain in unused required-module code.
+- The full acceptance suite (53 tests) passes on both 2.14.0 and 2.15.0. On 2.14.0 `public_keys` is refused before any mutation; on
+  2.15.0 keys written with padding and a different member order survive create,
+  an unrelated update, a key-set change, import and removal with empty follow-up
+  plans, which proves the server's re-encoding does not read as drift.
+- `replay_protection`: an explicit `false` holds; an omitted value keeps an existing
+  identity's setting through an unrelated update and through inserting a new
+  identity ahead of it, and a new identity gets `true`.
+- The secret-continuity check and `tests/native/lifecycle.py` selected their 2.14+
+  assertions with `== "2.14.0"`, so they were silently skipped on any later server.
+  They now compare versions and run on 2.15.0.
+- Upgrade from the released archive, with native **Terraform and OpenTofu** on 2.15.0:
+
+```sh
+make build
+python3 scripts/disposable-pocketid.py 2.15.0 -- python3 tests/native/upgrade.py tofu \
+  "$PWD/dist/terraform-provider-pocketid_2.3.2_darwin_arm64.zip" "$PWD/bin/terraform-provider-pocketid"
+```
+
+  Released 2.3.2 creates a confidential client with a federated identity. The new
+  build then plans nothing, keeps the client ID and secret, records the server's
+  `replayProtection` on refresh, and leaves it unchanged through an unrelated update.
+
+Not run for this candidate: the native SMTP and lifecycle mirror tests (they need a
+populated release mirror), Linux, and any live instance.
 
 ## Release 2.3.2 evidence — 2026-09-06
 
@@ -77,7 +121,7 @@ unpacked mirror (do not install over an existing provider), then run:
 ```sh
 mkdir -p /tmp/pocketid-test-mirror/registry.terraform.io/irashack/pocketid/2.3.2/darwin_arm64
 go build -ldflags '-X main.version=2.3.2' -o /tmp/pocketid-test-mirror/registry.terraform.io/irashack/pocketid/2.3.2/darwin_arm64/terraform-provider-pocketid_v2.3.2 .
-for version in 2.13.0 2.14.0; do
+for version in 2.14.0 2.15.0; do
   for tool in terraform tofu; do
     python3 scripts/disposable-pocketid.py "$version" -- python3 tests/native/application_config.py "$tool" /tmp/pocketid-test-mirror 2.3.2
   done

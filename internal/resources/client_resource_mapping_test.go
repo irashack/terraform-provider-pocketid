@@ -26,6 +26,9 @@ func TestBuildCreateRequestFromPlan(t *testing.T) {
 			Subject:  types.StringValue("subject-1"),
 			Audience: types.StringValue("audience-1"),
 			JWKS:     types.StringNull(),
+
+			PublicKeys:       types.ListNull(publicKeysListType.ElemType),
+			ReplayProtection: types.BoolValue(true),
 		},
 	})
 	if diags.HasError() {

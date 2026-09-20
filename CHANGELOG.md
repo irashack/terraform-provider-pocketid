@@ -1,5 +1,35 @@
 # Changelog
 
+## 2.4.0 — unreleased
+
+Pocket ID 2.15.0 support. Released 2.3.2 already works on 2.15.0; this release closes
+two ways a client update could silently weaken a federated identity.
+
+- Add `replay_protection` to `federated_identities`. Pocket ID replaces the whole
+  identity list on every client update and the provider never sent the field, so
+  every create and every update, however unrelated, disabled replay protection,
+  including on identities an administrator had protected in the UI. An explicit
+  value now wins. When omitted, an identity already managed keeps its current
+  value, matched by issuer, subject and audience rather than list position.
+- **Behaviour change:** a *new* identity with `replay_protection` omitted is created
+  with it enabled, as the Pocket ID admin UI does. Earlier releases created it
+  disabled. Set `replay_protection = false` for an issuer whose token is presented
+  more than once. Existing identities are not changed by upgrading.
+- Add `public_keys` to `federated_identities` for Pocket ID 2.15.0's explicit JWKs.
+  Without it, a provider update deleted keys configured in the UI. Keys compare by
+  JSON semantics because the server re-encodes them. Private or symmetric keys,
+  a missing `kid`, a non-signature `use`, and `jwks` together with `public_keys` are
+  rejected at plan time without echoing the key. On a server older than 2.15.0 the
+  provider refuses before any mutation instead of letting the keys be dropped.
+- Correct the `jwks` description: it is a JWKS URL.
+- Support matrix is now Pocket ID 2.15.0 and 2.14.0; 2.13.0 leaves support, CI and
+  the fixture allowlist. CI runs the full suite on both versions.
+- Tests that selected 2.14+ assertions by exact version now compare versions, so they
+  run on 2.15.0 and later. Add `tests/native/upgrade.py`, an upgrade proof from a
+  released archive.
+- Update gRPC to 1.83.2 for reachable advisory GO-2026-6443.
+- No schema version change or state upgrader is needed; state from 2.3.2 plans empty.
+
 ## 2.3.2 — 2026-09-06
 
 - Add `webauthn_user_verification`, `webauthn_allow_synced_passkeys`,

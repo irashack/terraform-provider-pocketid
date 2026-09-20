@@ -130,6 +130,24 @@ resource "pocketid_client" "federated_app" {
       issuer   = "https://token.actions.githubusercontent.com"
       subject  = "repo:example/repo:ref:refs/heads/main"
       audience = "https://pocket-id.example.com"
+    },
+    {
+      # An issuer that publishes no JWKS: pin its public keys instead
+      # (Pocket ID 2.15.0 or later). Never put a private key here.
+      issuer = "https://build.internal.example.com"
+      public_keys = [
+        jsonencode({
+          kty = "EC"
+          crv = "P-256"
+          kid = "build-2026"
+          use = "sig"
+          x   = "ScFVPMb2zxk2ZDS5IJu91DBAzf4L7bKikkOXdV6I4_w"
+          y   = "yJAFYZTNNfNKrBFfEnzqepcQkSEfyWOyr0l5U3l5aTM"
+        })
+      ]
+      # Tokens are single-use by default. Turn that off only for an issuer
+      # whose token is legitimately presented more than once.
+      replay_protection = false
     }
   ]
 }
@@ -193,5 +211,7 @@ Required:
 Optional:
 
 - `audience` (String) The expected audience of the federated identity token.
-- `jwks` (String) Optional JWKS used to validate the federated identity token.
+- `jwks` (String) URL of the JWKS used to validate the federated identity token. When neither this nor `public_keys` is set, Pocket ID discovers the keys from the issuer. Conflicts with `public_keys`.
+- `public_keys` (List of String) Explicit public keys used to validate the federated identity token, each a JSON-encoded JWK (for example `jsonencode({...})`). Every key must be an asymmetric public key with a unique `kid`, and `use` must be `sig` or absent. Requires Pocket ID 2.15.0 or later. Conflicts with `jwks`.
+- `replay_protection` (Boolean) Whether a federated identity token may be used only once. When omitted, an identity already managed keeps its current value and a new identity gets `true`, matching the Pocket ID admin UI. Disable it only for an issuer whose tokens are legitimately presented more than once.
 - `subject` (String) The expected subject of the federated identity token.

@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -61,18 +62,22 @@ type clientResourceModel struct {
 
 // clientFederatedIdentityModel maps a single federated identity nested object.
 type clientFederatedIdentityModel struct {
-	Issuer   types.String `tfsdk:"issuer"`
-	Subject  types.String `tfsdk:"subject"`
-	Audience types.String `tfsdk:"audience"`
-	JWKS     types.String `tfsdk:"jwks"`
+	Issuer           types.String `tfsdk:"issuer"`
+	Subject          types.String `tfsdk:"subject"`
+	Audience         types.String `tfsdk:"audience"`
+	JWKS             types.String `tfsdk:"jwks"`
+	PublicKeys       types.List   `tfsdk:"public_keys"`
+	ReplayProtection types.Bool   `tfsdk:"replay_protection"`
 }
 
 // federatedIdentityAttrTypes is the attribute-type map for a federated identity object.
 var federatedIdentityAttrTypes = map[string]attr.Type{
-	"issuer":   types.StringType,
-	"subject":  types.StringType,
-	"audience": types.StringType,
-	"jwks":     types.StringType,
+	"issuer":            types.StringType,
+	"subject":           types.StringType,
+	"audience":          types.StringType,
+	"jwks":              types.StringType,
+	"public_keys":       publicKeysListType,
+	"replay_protection": types.BoolType,
 }
 
 // Metadata returns the resource type name.
@@ -153,6 +158,9 @@ func (r *clientResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			"federated_identities": schema.ListNestedAttribute{
 				Description: "List of federated identities (workload identity federation) allowed to authenticate as this client.",
 				Optional:    true,
+				PlanModifiers: []planmodifier.List{
+					federatedReplayProtectionModifier{},
+				},
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
 						"issuer": schema.StringAttribute{
@@ -168,8 +176,23 @@ func (r *clientResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 							Optional:    true,
 						},
 						"jwks": schema.StringAttribute{
-							Description: "Optional JWKS used to validate the federated identity token.",
+							Description: "URL of the JWKS used to validate the federated identity token. When neither this nor `public_keys` is set, Pocket ID discovers the keys from the issuer. Conflicts with `public_keys`.",
 							Optional:    true,
+						},
+						"public_keys": schema.ListAttribute{
+							Description: "Explicit public keys used to validate the federated identity token, each a JSON-encoded JWK (for example `jsonencode({...})`). Every key must be an asymmetric public key with a unique `kid`, and `use` must be `sig` or absent. Requires Pocket ID 2.15.0 or later. Conflicts with `jwks`.",
+							ElementType: jsontypes.NormalizedType{},
+							Optional:    true,
+							Validators: []validator.List{
+								listvalidator.SizeAtLeast(1),
+								listvalidator.ConflictsWith(path.MatchRelative().AtParent().AtName("jwks")),
+								listvalidator.ValueStringsAre(publicJWKValidator{}),
+							},
+						},
+						"replay_protection": schema.BoolAttribute{
+							Description: "Whether a federated identity token may be used only once. When omitted, an identity already managed keeps its current value and a new identity gets `true`, matching the Pocket ID admin UI. Disable it only for an issuer whose tokens are legitimately presented more than once.",
+							Optional:    true,
+							Computed:    true,
 						},
 					},
 				},
@@ -278,6 +301,10 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 	})
 
 	// Resolve the API contract before making any client or secret mutation.
+	if err := checkFederatedPublicKeysSupport(r.client, createReq.Credentials); err != nil {
+		resp.Diagnostics.AddAttributeError(path.Root("federated_identities"), "Unsupported federated identity configuration", err.Error())
+		return
+	}
 	if !plan.IsPublic.ValueBool() {
 		if err := r.client.CheckSecretAPI(); err != nil {
 			resp.Diagnostics.AddError("Cannot verify secret API compatibility", err.Error())
@@ -495,6 +522,22 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 		isGroupRestricted = len(groupIDs) > 0
 	}
 
+	// Pocket ID replaces the whole federated identity list on update. A
+	// replay_protection value the plan could not determine is read from the
+	// server first, so this update cannot change it as a side effect.
+	var currentIdentities []client.OIDCClientFederatedIdentity
+	if federatedIdentitiesNeedServerValues(ctx, plan.FederatedIdentities) {
+		current, err := r.client.GetClient(plan.ID.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Error reading OIDC client",
+				"Could not read the current federated identities before updating; no mutation was attempted: "+err.Error(),
+			)
+			return
+		}
+		currentIdentities = current.Credentials.FederatedIdentities
+	}
+
 	// Update the client
 	updateReq := &client.OIDCClientCreateRequest{
 		Name:                                plan.Name.ValueString(),
@@ -512,7 +555,11 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 		}(),
 		PkceEnabled:       plan.PkceEnabled.ValueBool(),
 		IsGroupRestricted: isGroupRestricted,
-		Credentials:       buildCredentialsFromPlan(ctx, &plan),
+		Credentials:       buildCredentialsFromPlan(ctx, &plan, currentIdentities),
+	}
+	if err := checkFederatedPublicKeysSupport(r.client, updateReq.Credentials); err != nil {
+		resp.Diagnostics.AddAttributeError(path.Root("federated_identities"), "Unsupported federated identity configuration", err.Error())
+		return
 	}
 	if !plan.ClientID.IsNull() && !plan.ClientID.IsUnknown() && plan.ClientID.ValueString() != "" {
 		cid := plan.ClientID.ValueString()
@@ -724,12 +771,14 @@ func buildCreateRequestFromPlan(ctx context.Context, plan *clientResourceModel) 
 		LaunchURL:                           launchPtr,
 		PkceEnabled:                         plan.PkceEnabled.ValueBool(),
 		IsGroupRestricted:                   isGroupRestricted,
-		Credentials:                         buildCredentialsFromPlan(ctx, plan),
+		Credentials:                         buildCredentialsFromPlan(ctx, plan, nil),
 	}
 }
 
 // buildCredentialsFromPlan converts the federated_identities plan list into API credentials.
-func buildCredentialsFromPlan(ctx context.Context, plan *clientResourceModel) client.OIDCClientCredentials {
+// current holds the server's identities, consulted only for a replay_protection
+// value the plan could not determine; it is nil when creating a client.
+func buildCredentialsFromPlan(ctx context.Context, plan *clientResourceModel, current []client.OIDCClientFederatedIdentity) client.OIDCClientCredentials {
 	if plan.FederatedIdentities.IsNull() || plan.FederatedIdentities.IsUnknown() {
 		return client.OIDCClientCredentials{}
 	}
@@ -744,10 +793,12 @@ func buildCredentialsFromPlan(ctx context.Context, plan *clientResourceModel) cl
 	federated := make([]client.OIDCClientFederatedIdentity, 0, len(identities))
 	for _, identity := range identities {
 		federated = append(federated, client.OIDCClientFederatedIdentity{
-			Issuer:   identity.Issuer.ValueString(),
-			Subject:  identity.Subject.ValueString(),
-			Audience: identity.Audience.ValueString(),
-			JWKS:     identity.JWKS.ValueString(),
+			Issuer:           identity.Issuer.ValueString(),
+			Subject:          identity.Subject.ValueString(),
+			Audience:         identity.Audience.ValueString(),
+			JWKS:             identity.JWKS.ValueString(),
+			PublicKeys:       publicKeysToAPI(identity.PublicKeys),
+			ReplayProtection: resolveReplayProtection(identity, current),
 		})
 	}
 
@@ -764,10 +815,12 @@ func federatedIdentitiesToList(ctx context.Context, identities []client.OIDCClie
 	models := make([]clientFederatedIdentityModel, 0, len(identities))
 	for _, identity := range identities {
 		models = append(models, clientFederatedIdentityModel{
-			Issuer:   types.StringValue(identity.Issuer),
-			Subject:  optionalString(identity.Subject),
-			Audience: optionalString(identity.Audience),
-			JWKS:     optionalString(identity.JWKS),
+			Issuer:           types.StringValue(identity.Issuer),
+			Subject:          optionalString(identity.Subject),
+			Audience:         optionalString(identity.Audience),
+			JWKS:             optionalString(identity.JWKS),
+			PublicKeys:       publicKeysFromAPI(identity.PublicKeys),
+			ReplayProtection: types.BoolValue(identity.ReplayProtection),
 		})
 	}
 

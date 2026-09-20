@@ -50,6 +50,14 @@ Application-config HTTP 400 failures are fixed in candidate 2.3.2 by preserving
 the required WebAuthn fields and CIMD allowlist. Both supported server versions
 now run application-config acceptance; the full 2.14 suite has no exclusion.
 
+## Pocket ID 2.15.0 — 2026-09-20
+
+Upstream `main` is unchanged since the review above (`c3dcfcb`, no release after
+v2.3.0), so nothing there addresses 2.15.0. The fork's 2.4.0 candidate adds federated
+identity `replay_protection` and `public_keys`; upstream has the same silent reset of
+both on every client update, which is worth offering back. Evidence is in
+[TESTING.md](TESTING.md).
+
 ## Remaining work
 
 1. Resolve #92 with an explicit compatibility decision and migration evidence.

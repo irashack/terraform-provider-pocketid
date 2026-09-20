@@ -60,15 +60,19 @@ See [examples](examples/README.md) for complete configurations and
 ## Compatibility and current limits
 
 We support the current and previous **minor release series** (N and N−1), at
-explicitly tested patch versions: **2.14.0 and 2.13.0** for release 2.3.2.
+explicitly tested patch versions: **2.15.0 and 2.14.0** for the 2.4.0 candidate
+(release 2.3.2 was validated on 2.14.0 and 2.13.0).
 Adding the next minor requires validation and retires the oldest series. Untested
-patches are not automatically certified. **2.9.0 is no longer supported or tested**;
+patches are not automatically certified. **2.13.0 and earlier are no longer supported or tested**;
 legacy parsing safeguards remain defensive code, not a support promise.
 
-| Pocket ID | Secret API | Verification for release 2.3.2 |
+| Pocket ID | Federated identity `public_keys` | Verification for the 2.4.0 candidate |
 |---|---|---|
-| 2.13.0 | Singular `/secret` | Client and application-config acceptance; native Terraform/OpenTofu SMTP lifecycle |
-| 2.14.0 | Plural `/secrets` | Full provider acceptance; native Terraform/OpenTofu SMTP lifecycle |
+| 2.14.0 | Refused before any mutation | Full provider acceptance |
+| 2.15.0 | Supported | Full provider acceptance; native Terraform/OpenTofu upgrade from released 2.3.2 |
+
+Both use the plural `/secrets` API. The singular-endpoint and missing-version
+fallbacks remain as defensive code only.
 
 [TESTING.md](TESTING.md) records tested tool versions and scope. The prior application-config
 HTTP 400 failures are fixed in 2.3.2. Multiple `allowed_user_groups` can show
@@ -84,9 +88,9 @@ It does not use your running Pocket ID instance.
 
 ```sh
 make check                  # formatting, vet, unit/race tests, build and lint
-make test-acc               # client and application-config lifecycle on Pocket ID 2.14.0
+make test-acc               # client and application-config lifecycle on Pocket ID 2.15.0
 make test-acc-matrix        # client lifecycle on both supported test images
-make test-acc-provider     # full 2.14 suite, including application configuration
+make test-acc-provider     # full suite on POCKETID_VERSION (default 2.15.0)
 ```
 
 Pinned tooling commands and contributor guidance are in [CONTRIBUTING.md](CONTRIBUTING.md).

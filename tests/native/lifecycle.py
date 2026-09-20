@@ -35,8 +35,14 @@ def api(path, data=None, headers=None):
         except ValueError: body={}
         return e.code, body
 
+def at_least(minimum):
+    return tuple(int(part) for part in version.split(".")) >= tuple(int(part) for part in minimum.split("."))
+
+# The plural secrets API exists from Pocket ID 2.14.0 onward.
+MULTI_SECRET = at_least("2.14.0")
+
 def check_secret(secret):
-    if version == "2.14.0":
+    if MULTI_SECRET:
         code, metadata = api("/api/oidc/clients/"+cid+"/secrets")
         assert code == 200 and len(metadata) == 1, "expected one secret"
         values={"grant_type":"client_credentials","client_id":cid,"client_secret":secret}
@@ -150,4 +156,4 @@ terraform {
     run("destroy","-auto-approve","-input=false")
     assert api("/api/oidc/clients/"+cid)[0]==404,"delete did not remove fixture"
     if tool == "tofu": assert_encrypted()
-    print("PASS native "+tool+" Pocket ID "+version+": install/create/refresh/update/import/empty-plan/delete" + ("/single-secret/authentication" if version=="2.14.0" else "") + ("/encrypted-state-and-plan" if tool=="tofu" else "") + ("/provider-address-migration" if migration else ""))
+    print("PASS native "+tool+" Pocket ID "+version+": install/create/refresh/update/import/empty-plan/delete" + ("/single-secret/authentication" if MULTI_SECRET else "") + ("/encrypted-state-and-plan" if tool=="tofu" else "") + ("/provider-address-migration" if migration else ""))

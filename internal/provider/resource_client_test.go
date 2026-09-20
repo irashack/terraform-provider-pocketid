@@ -350,6 +350,8 @@ func TestAccResourceClient_federatedIdentities(t *testing.T) {
 					resource.TestCheckResourceAttr(resourceName, "federated_identities.0.issuer", "https://issuer.example.com"),
 					resource.TestCheckResourceAttr(resourceName, "federated_identities.0.subject", "subject-1"),
 					resource.TestCheckResourceAttr(resourceName, "federated_identities.0.audience", "audience-1"),
+					// Omitted on a new identity: enabled, as the Pocket ID admin UI does.
+					resource.TestCheckResourceAttr(resourceName, "federated_identities.0.replay_protection", "true"),
 				),
 			},
 		},
@@ -472,7 +474,8 @@ func TestAccResourceClient_secretContinuity(t *testing.T) {
 		if secret == "" || secret != original || id != rs.Primary.ID {
 			return fmt.Errorf("client identity or secret changed")
 		}
-		if os.Getenv("POCKETID_TEST_VERSION") == "2.14.0" {
+		// The plural secrets API exists from Pocket ID 2.14.0 onward.
+		if testAccServerAtLeast("2.14.0") {
 			req, _ := http.NewRequest("GET", os.Getenv("POCKETID_BASE_URL")+"/api/oidc/clients/"+id+"/secrets", nil)
 			req.Header.Set("X-API-KEY", os.Getenv("POCKETID_API_TOKEN"))
 			response, err := http.DefaultClient.Do(req)
