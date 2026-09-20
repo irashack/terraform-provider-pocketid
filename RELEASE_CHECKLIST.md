@@ -27,21 +27,22 @@ releases, scheduled sweeps, cleanup and contributor-edit jobs are not enabled in
 this maintenance fork. Do not publish a registry identity until it is actually
 registered with the required signing setup.
 
-## Release v2.4.0
+## Releases v2.4.0 and v2.4.1
 
 A same-address minor release: new optional attributes, one documented behaviour
 change, no schema version change and no state-provider replacement. The upgrade
 proof for it is `tests/native/upgrade.py` from the published 2.3.2 archive, plus
-`tests/native/application_config.py ... 2.4.0 2.3.2`. Publication commands:
+`tests/native/application_config.py ... 2.4.1 2.3.2`. 2.4.1 is a patch on 2.4.0 from an
+independent post-release review. Publication commands:
 
 ```sh
 git push origin main-maintenance
-git push origin v2.4.0
-gh workflow run release.yml --repo irashack/terraform-provider-pocketid --ref main-maintenance -f tag=v2.4.0
+git push origin v2.4.1
+gh workflow run release.yml --repo irashack/terraform-provider-pocketid --ref main-maintenance -f tag=v2.4.1
 ```
 
 Then verify the draft as described below for v2.3.2, substituting the version, and
-follow INSTALL.md's "Upgrade from fork 2.3.2 to 2.4.0".
+follow INSTALL.md's "Upgrade from fork 2.3.2 or 2.4.0 to 2.4.1".
 
 ## Prepared patch v2.3.2
 

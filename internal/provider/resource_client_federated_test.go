@@ -21,11 +21,21 @@ import (
 // in a different order from the one Pocket ID stores after re-encoding them.
 const (
 	testAccPublicJWK1 = `{ "kid": "acc-key-1", "kty": "EC", "crv": "P-256", "use": "sig", "x": "ScFVPMb2zxk2ZDS5IJu91DBAzf4L7bKikkOXdV6I4_w", "y": "yJAFYZTNNfNKrBFfEnzqepcQkSEfyWOyr0l5U3l5aTM" }`
+	// An RSA key carrying "alg", to prove re-encoding keeps optional members.
+	testAccPublicJWK3 = `{ "kid": "acc-key-3", "kty": "RSA", "alg": "RS256", "use": "sig", "e": "AQAB", "n": "sIPHqPy041TwYYbGzl5NlxnztjKPOU_4ebbrgnzymmwHsgpY2akPR_v7GBXq2yPWAfROPtUr8toGjkRH_ziqyKlCgRYsE7SeLeloHeqT3bam-rzdnaOfufBwC_ucXZHHcNbxG0eZ5gjtH6kCMG196clznrDp6VpoXruIfFYqJ2SiKI5DqnN7MFHKXyv9H4sIT12CGd2U5YuD45FxcdKChVfX4Zg8k2J2ajNJD2XqCIsAczTfGmoSi8sSTcrd32_mUEP2U5pywiipx9F6lGibJXEKLrZQje6oyGV4yPOgAZzkUooHC2uzum__bbGfHw-04OrrFrWCHj-mYcZvu8X20Q" }`
 	testAccPublicJWK2 = `{ "kid": "acc-key-2", "kty": "EC", "crv": "P-256", "x": "m2wurk4shfFqJEUlpHs2GZHmmdhlOueqM-uyDdxjHpc", "y": "D6fLveG4tLP5RE6asPlhYsOYFbvnai3RYjfex0OEXs4" }`
 )
 
-func testAccServerAtLeast(version string) bool {
-	return semver.Compare("v"+os.Getenv("POCKETID_TEST_VERSION"), "v"+version) >= 0
+// testAccServerAtLeast selects version-specific assertions. A missing or
+// malformed POCKETID_TEST_VERSION fails the test: comparing it would read as
+// "older" and silently skip the newer server's checks.
+func testAccServerAtLeast(t *testing.T, version string) bool {
+	t.Helper()
+	running := "v" + os.Getenv("POCKETID_TEST_VERSION")
+	if !semver.IsValid(running) {
+		t.Fatalf("POCKETID_TEST_VERSION must be the fixture's Pocket ID version, got %q", os.Getenv("POCKETID_TEST_VERSION"))
+	}
+	return semver.Compare(running, "v"+version) >= 0
 }
 
 func testAccFederatedClient(identities ...string) string {
@@ -103,7 +113,7 @@ func TestAccResourceClient_federatedPublicKeys(t *testing.T) {
 		return fmt.Sprintf(`    { issuer = "https://keys.example.com", subject = "keys", public_keys = [%s] },`, strings.Join(quoted, ", "))
 	}
 
-	if !testAccServerAtLeast("2.15.0") {
+	if !testAccServerAtLeast(t, "2.15.0") {
 		// Older servers would drop the keys silently; the provider must refuse
 		// before creating anything.
 		resource.Test(t, resource.TestCase{
@@ -137,6 +147,10 @@ func TestAccResourceClient_federatedPublicKeys(t *testing.T) {
 					resource.TestCheckResourceAttr(resourceName, "name", "fed-keys-renamed"),
 					resource.TestCheckResourceAttr(resourceName, "federated_identities.0.public_keys.#", "1"),
 				),
+			},
+			{
+				Config: testAccFederatedClient(identity(testAccPublicJWK1, testAccPublicJWK3)),
+				Check:  resource.TestCheckResourceAttr(resourceName, "federated_identities.0.public_keys.#", "2"),
 			},
 			{
 				Config: testAccFederatedClient(identity(testAccPublicJWK1, testAccPublicJWK2)),
@@ -197,6 +211,77 @@ func TestAccResourceClient_federatedPublicKeysRejected(t *testing.T) {
 			{
 				Config:      testAccFederatedClient(fmt.Sprintf(`    { issuer = "https://keys.example.com", jwks = "https://keys.example.com/jwks.json", public_keys = [%q] },`, testAccPublicJWK1)),
 				ExpectError: regexp.MustCompile(`(?s)jwks.*public_keys|public_keys.*jwks`),
+			},
+			{
+				Config:      testAccFederatedClient(fmt.Sprintf(`    { issuer = "https://keys.example.com", public_keys = [%q, %q] },`, testAccPublicJWK1, testAccPublicJWK1)),
+				ExpectError: regexp.MustCompile(`Duplicate federated identity public key ID`),
+			},
+		},
+	})
+}
+
+// A value that is configured but not known until apply must be left to the
+// configuration. Planning a default over it contradicts the final plan.
+func TestAccResourceClient_federatedReplayProtectionKnownAfterApply(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{{
+			Config: `
+resource "terraform_data" "flag" {
+  input = false
+}
+` + testAccFederatedClient(`    { issuer = "https://deferred.example.com", subject = "deferred", replay_protection = terraform_data.flag.output },`),
+			Check: resource.TestCheckResourceAttr("pocketid_client.test", "federated_identities.0.replay_protection", "false"),
+		}},
+	})
+}
+
+// Pocket ID accepts identities that share issuer, subject and audience. Each
+// must keep its own setting when the configuration omits it.
+func TestAccResourceClient_federatedReplayProtectionDuplicateIdentities(t *testing.T) {
+	resourceName := "pocketid_client.test"
+	identity := func(jwks, replay string) string {
+		return fmt.Sprintf(`    { issuer = "https://twin.example.com", subject = "twin", jwks = "https://twin.example.com/%s.json"%s },`, jwks, replay)
+	}
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccFederatedClient(identity("a", ", replay_protection = false"), identity("b", ", replay_protection = true")),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceName, "federated_identities.0.replay_protection", "false"),
+					resource.TestCheckResourceAttr(resourceName, "federated_identities.1.replay_protection", "true"),
+				),
+			},
+			{
+				Config: strings.Replace(testAccFederatedClient(identity("a", ""), identity("b", "")), `"fed-settings"`, `"fed-twins-renamed"`, 1),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceName, "name", "fed-twins-renamed"),
+					resource.TestCheckResourceAttr(resourceName, "federated_identities.0.replay_protection", "false"),
+					resource.TestCheckResourceAttr(resourceName, "federated_identities.1.replay_protection", "true"),
+				),
+			},
+		},
+	})
+}
+
+// A null element must be refused at plan time on every server version: dropped
+// silently it would shrink the list after the mutation and skip the version gate.
+func TestAccResourceClient_federatedPublicKeysNullElement(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      testAccFederatedClient(fmt.Sprintf(`    { issuer = "https://keys.example.com", public_keys = [%q, null] },`, testAccPublicJWK1)),
+				ExpectError: regexp.MustCompile(`must not be null`),
+			},
+			{
+				Config:      testAccFederatedClient(`    { issuer = "https://keys.example.com", public_keys = [null] },`),
+				ExpectError: regexp.MustCompile(`must not be null`),
 			},
 		},
 	})

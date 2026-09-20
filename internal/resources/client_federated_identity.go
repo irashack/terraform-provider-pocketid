@@ -48,15 +48,18 @@ func (m federatedReplayProtectionModifier) MarkdownDescription(ctx context.Conte
 	return m.Description(ctx)
 }
 
-func (federatedReplayProtectionModifier) PlanModifyList(_ context.Context, req planmodifier.ListRequest, resp *planmodifier.ListResponse) {
-	if req.PlanValue.IsNull() || req.PlanValue.IsUnknown() {
+func (federatedReplayProtectionModifier) PlanModifyList(ctx context.Context, req planmodifier.ListRequest, resp *planmodifier.ListResponse) {
+	if req.PlanValue.IsNull() || req.PlanValue.IsUnknown() || req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
 		return
 	}
 
-	// Index the prior identities by key. A null value (state written by a
-	// provider that did not track the field, planned without a refresh) is
-	// recorded as unknown so that apply resolves it from the server instead.
-	prior := map[string]types.Bool{}
+	// Prior values per identity key, in list order. Pocket ID accepts several
+	// identities with the same key, so the nth planned occurrence of a key is
+	// paired with the nth prior one; a first-match lookup would hand one
+	// identity's setting to its twin. A null value (state written by a provider
+	// that did not track the field, planned without a refresh) is recorded as
+	// unknown so that apply resolves it from the server instead.
+	prior := map[string][]types.Bool{}
 	if !req.StateValue.IsNull() && !req.StateValue.IsUnknown() {
 		for _, element := range req.StateValue.Elements() {
 			object, ok := element.(types.Object)
@@ -67,19 +70,18 @@ func (federatedReplayProtectionModifier) PlanModifyList(_ context.Context, req p
 			if !ok {
 				continue
 			}
-			if _, seen := prior[key]; seen {
-				continue
-			}
 			value, _ := object.Attributes()["replay_protection"].(types.Bool)
 			if value.IsNull() {
 				value = types.BoolUnknown()
 			}
-			prior[key] = value
+			prior[key] = append(prior[key], value)
 		}
 	}
 
+	configured := req.ConfigValue.Elements()
 	elements := req.PlanValue.Elements()
 	planned := make([]attr.Value, len(elements))
+	occurrence := map[string]int{}
 	changed := false
 	for i, element := range elements {
 		planned[i] = element
@@ -87,17 +89,32 @@ func (federatedReplayProtectionModifier) PlanModifyList(_ context.Context, req p
 		if !ok || object.IsNull() || object.IsUnknown() {
 			continue
 		}
-		current, _ := object.Attributes()["replay_protection"].(types.Bool)
-		if !current.IsUnknown() {
-			continue // set explicitly in configuration
+		key, keyKnown := federatedIdentityObjectKey(object)
+		nth := occurrence[key]
+		if keyKnown {
+			occurrence[key]++ // counted even when set explicitly, to keep twins aligned
 		}
-		key, ok := federatedIdentityObjectKey(object)
-		if !ok {
+
+		// Only an omitted attribute is ours to plan. A configured value that is
+		// not known until apply stays unknown: planning over it contradicts the
+		// configuration and Terraform rejects the plan.
+		if i >= len(configured) {
+			continue
+		}
+		configuredObject, ok := configured[i].(types.Object)
+		if !ok || configuredObject.IsNull() || configuredObject.IsUnknown() {
+			continue
+		}
+		if configuredValue, _ := configuredObject.Attributes()["replay_protection"].(types.Bool); !configuredValue.IsNull() {
+			continue
+		}
+		if !keyKnown {
 			continue // identity not known until apply; resolved there
 		}
-		value, exists := prior[key]
-		if !exists {
-			value = types.BoolValue(newFederatedIdentityReplayProtection)
+
+		value := types.BoolValue(newFederatedIdentityReplayProtection)
+		if nth < len(prior[key]) {
+			value = prior[key][nth]
 		}
 		if value.IsUnknown() {
 			continue
@@ -108,7 +125,7 @@ func (federatedReplayProtectionModifier) PlanModifyList(_ context.Context, req p
 			attributes[name] = attribute
 		}
 		attributes["replay_protection"] = value
-		rebuilt, diags := types.ObjectValue(object.AttributeTypes(context.Background()), attributes)
+		rebuilt, diags := types.ObjectValue(object.AttributeTypes(ctx), attributes)
 		resp.Diagnostics.Append(diags...)
 		if diags.HasError() {
 			return
@@ -120,7 +137,7 @@ func (federatedReplayProtectionModifier) PlanModifyList(_ context.Context, req p
 		return
 	}
 
-	list, diags := types.ListValue(req.PlanValue.ElementType(context.Background()), planned)
+	list, diags := types.ListValue(req.PlanValue.ElementType(ctx), planned)
 	resp.Diagnostics.Append(diags...)
 	if !diags.HasError() {
 		resp.PlanValue = list
@@ -141,20 +158,33 @@ func federatedIdentityObjectKey(object types.Object) (string, bool) {
 	return federatedIdentityKey(parts[0], parts[1], parts[2]), true
 }
 
-// resolveReplayProtection returns the value to send for one identity. A value
+// resolveReplayProtections returns the value to send for each identity. A value
 // still unknown at apply time is taken from the server's current identity with
-// the same key, so an update never changes a setting the plan could not see.
-func resolveReplayProtection(identity clientFederatedIdentityModel, current []client.OIDCClientFederatedIdentity) bool {
-	if !identity.ReplayProtection.IsNull() && !identity.ReplayProtection.IsUnknown() {
-		return identity.ReplayProtection.ValueBool()
+// the same key and occurrence, so an update never changes a setting the plan
+// could not see. current is nil when creating a client.
+func resolveReplayProtections(identities []clientFederatedIdentityModel, current []client.OIDCClientFederatedIdentity) []bool {
+	existing := map[string][]bool{}
+	for _, identity := range current {
+		key := federatedIdentityKey(identity.Issuer, identity.Subject, identity.Audience)
+		existing[key] = append(existing[key], identity.ReplayProtection)
 	}
-	key := federatedIdentityKey(identity.Issuer.ValueString(), identity.Subject.ValueString(), identity.Audience.ValueString())
-	for _, existing := range current {
-		if federatedIdentityKey(existing.Issuer, existing.Subject, existing.Audience) == key {
-			return existing.ReplayProtection
+
+	resolved := make([]bool, len(identities))
+	occurrence := map[string]int{}
+	for i, identity := range identities {
+		key := federatedIdentityKey(identity.Issuer.ValueString(), identity.Subject.ValueString(), identity.Audience.ValueString())
+		nth := occurrence[key]
+		occurrence[key]++
+		switch {
+		case !identity.ReplayProtection.IsNull() && !identity.ReplayProtection.IsUnknown():
+			resolved[i] = identity.ReplayProtection.ValueBool()
+		case nth < len(existing[key]):
+			resolved[i] = existing[key][nth]
+		default:
+			resolved[i] = newFederatedIdentityReplayProtection
 		}
 	}
-	return newFederatedIdentityReplayProtection
+	return resolved
 }
 
 // federatedIdentitiesNeedServerValues reports whether any planned identity
@@ -215,7 +245,13 @@ func (v publicJWKValidator) MarkdownDescription(ctx context.Context) string {
 }
 
 func (publicJWKValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
-	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+	if req.ConfigValue.IsUnknown() {
+		return
+	}
+	if req.ConfigValue.IsNull() {
+		// A null element cannot be sent. Dropping it would shrink the list after
+		// the mutation and could slip an empty list past the version gate.
+		resp.Diagnostics.AddAttributeError(req.Path, "Invalid federated identity public key", "A public key must not be null. Remove the element instead.")
 		return
 	}
 	if problem := publicJWKProblem(req.ConfigValue.ValueString()); problem != "" {
@@ -230,15 +266,24 @@ func publicJWKProblem(raw string) string {
 	if err := json.Unmarshal([]byte(raw), &key); err != nil || key == nil {
 		return "Each public key must be a single JSON object containing one JWK."
 	}
-	member := func(name string) string {
-		var value string
-		_ = json.Unmarshal(key[name], &value)
-		return value
+	// member returns a string member, and whether it is present as a string.
+	member := func(name string) (string, bool) {
+		value, present := key[name]
+		if !present {
+			return "", true
+		}
+		var text string
+		if json.Unmarshal(value, &text) != nil {
+			return "", false
+		}
+		return text, true
 	}
-	switch member("kty") {
-	case "":
-		return `The key is missing the "kty" property.`
-	case "oct":
+
+	kty, ok := member("kty")
+	if !ok || kty == "" {
+		return `The key's "kty" property must be a non-empty string.`
+	}
+	if kty == "oct" {
 		return "Symmetric keys cannot verify a third party's signature; provide an asymmetric public key."
 	}
 	// RFC 7518 private parameters: "d" for RSA, EC and OKP keys, the rest for RSA CRT form.
@@ -247,13 +292,57 @@ func publicJWKProblem(raw string) string {
 			return "The key contains private key material. Provide only the public JWK."
 		}
 	}
-	if member("kid") == "" {
-		return `The key is missing the "kid" property, which Pocket ID uses to select the verification key.`
+	if kid, ok := member("kid"); !ok || kid == "" {
+		return `The key's "kid" property must be a non-empty string; Pocket ID uses it to select the verification key.`
 	}
-	if use := member("use"); use != "" && use != "sig" {
+	if use, ok := member("use"); !ok || (use != "" && use != "sig") {
 		return `The key's "use" must be "sig" or absent.`
 	}
+	// Public parameters of the key types RFC 7518 defines. Other types are left to the server.
+	for _, required := range map[string][]string{"RSA": {"n", "e"}, "EC": {"crv", "x", "y"}, "OKP": {"crv", "x"}}[kty] {
+		if value, ok := member(required); !ok || value == "" {
+			return fmt.Sprintf("The %s key is missing its public %q parameter.", kty, required)
+		}
+	}
 	return ""
+}
+
+// uniquePublicKeyIDValidator rejects two keys with the same "kid" in one
+// identity, which Pocket ID refuses only at apply time.
+type uniquePublicKeyIDValidator struct{}
+
+func (uniquePublicKeyIDValidator) Description(context.Context) string {
+	return `every key must have a distinct "kid"`
+}
+
+func (v uniquePublicKeyIDValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (uniquePublicKeyIDValidator) ValidateList(_ context.Context, req validator.ListRequest, resp *validator.ListResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	seen := map[string]int{}
+	for i, element := range req.ConfigValue.Elements() {
+		value, ok := element.(jsontypes.Normalized)
+		if !ok || value.IsNull() || value.IsUnknown() {
+			continue
+		}
+		var key struct {
+			KeyID string `json:"kid"`
+		}
+		if json.Unmarshal([]byte(value.ValueString()), &key) != nil || key.KeyID == "" {
+			continue // reported per element
+		}
+		if first, duplicate := seen[key.KeyID]; duplicate {
+			// A key ID is public; the key itself is still not echoed.
+			resp.Diagnostics.AddAttributeError(req.Path.AtListIndex(i), "Duplicate federated identity public key ID",
+				fmt.Sprintf("Key %d has the same \"kid\" %q as key %d. Key IDs must be unique within an identity.", i+1, key.KeyID, first+1))
+			continue
+		}
+		seen[key.KeyID] = i
+	}
 }
 
 // publicKeysFromAPI converts stored keys into the public_keys attribute value.

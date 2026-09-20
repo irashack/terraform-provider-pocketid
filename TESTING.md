@@ -37,6 +37,45 @@ renamed fork binary. The test uses supported state replacement, checks encrypted
 state/backups and saved-plan encryption, preserves the ID and secret, and requires
 an empty subsequent plan. No development overrides are used.
 
+## Release 2.4.1 evidence — 2026-09-20
+
+An independent read-only review of published 2.4.0 (Codex, gpt-6-astra) reported three
+defects and one validation gap. Each defect was first reproduced as a failing
+acceptance test against the 2.4.0 code on Pocket ID 2.15.0, with the predicted cause:
+
+| Case | 2.4.0 result |
+|---|---|
+| Two identities sharing issuer/subject/audience, `replay_protection` omitted, unrelated rename | second identity silently went `true` → `false` |
+| `replay_protection = terraform_data.flag.output` (unknown while planning) | "Provider produced invalid plan ... planned value cty.True does not match config value" |
+| `public_keys = [valid, null]` | "inconsistent result after apply ... element 1 has vanished", after the server was changed |
+
+Same platform and tool versions as 2.4.0. With the fixes:
+
+- `make check`, `make vuln`, `make actionlint`, `go mod tidy -diff` and the generated-doc
+  check pass. The full acceptance suite (56 tests) passes on both 2.14.0 and 2.15.0.
+- The public-key acceptance test now also round-trips an RSA key carrying `alg`, so the
+  server's re-encoding is shown not to read as drift for RSA as well as EC keys.
+- `tests/native/upgrade.py` from the **published 2.3.2** archive, Terraform and OpenTofu:
+  an administrator enables replay protection on one of two identities outside
+  Terraform; the new build applies an unrelated update with `-refresh=false` while state
+  still predates the attribute, and each identity keeps its own server value; later
+  plans are empty. From the **published 2.4.0** archive: empty plan, and identity,
+  secret and replay protection kept through an update.
+- A binary stamped 2.4.1 passes `tests/native/lifecycle.py` with both tools on both
+  versions, and `tests/native/application_config.py` upgraded from 2.3.2 and from 2.4.0
+  with both tools on 2.15.0.
+
+The review also checked, and found sound: rebuilding the planned list with the nested
+custom type, distinct-identity reordering, unknown identity fields, create/replace/
+import, whole-list null/unknown handling, semantic JSON equality on Create, Update and
+Read, the private-parameter list, pre-release and missing-version handling in the
+2.15.0 gate, and the absence of a state upgrader. Two limits it noted stand: if a
+future server reorders keys or adds or drops JWK members when re-encoding, that would
+read as drift; and an explicit `subject = ""` or `audience = ""` reads back as null,
+which predates these releases.
+
+Not run: Linux or any other cross-built platform, and any live instance.
+
 ## Release 2.4.0 evidence — 2026-09-20
 
 The supported matrix moves to **Pocket ID 2.14.0 and 2.15.0** (official Linux ARM64

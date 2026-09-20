@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,11 +41,38 @@ func identityList(t *testing.T, objects ...attr.Value) types.List {
 	return list
 }
 
+// omittedInConfig derives the configuration Terraform would have sent for a
+// plan in which every unknown replay_protection was simply left out: the
+// framework marks an omitted computed attribute unknown in the plan, while the
+// configuration holds null.
+func omittedInConfig(t *testing.T, plan types.List) types.List {
+	t.Helper()
+	objects := make([]attr.Value, 0, len(plan.Elements()))
+	for _, element := range plan.Elements() {
+		attributes := map[string]attr.Value{}
+		for name, value := range element.(types.Object).Attributes() {
+			attributes[name] = value
+		}
+		if attributes["replay_protection"].IsUnknown() {
+			attributes["replay_protection"] = types.BoolNull()
+		}
+		object, diags := types.ObjectValue(federatedIdentityAttrTypes, attributes)
+		require.False(t, diags.HasError(), "%v", diags)
+		objects = append(objects, object)
+	}
+	return identityList(t, objects...)
+}
+
 func plannedReplayProtection(t *testing.T, state, plan types.List) []types.Bool {
+	t.Helper()
+	return plannedReplayProtectionWithConfig(t, state, omittedInConfig(t, plan), plan)
+}
+
+func plannedReplayProtectionWithConfig(t *testing.T, state, config, plan types.List) []types.Bool {
 	t.Helper()
 	resp := &planmodifier.ListResponse{PlanValue: plan}
 	federatedReplayProtectionModifier{}.PlanModifyList(context.Background(),
-		planmodifier.ListRequest{StateValue: state, PlanValue: plan}, resp)
+		planmodifier.ListRequest{StateValue: state, ConfigValue: config, PlanValue: plan}, resp)
 	require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
 
 	values := make([]types.Bool, 0, len(resp.PlanValue.Elements()))
@@ -96,10 +124,53 @@ func TestReplayProtectionPlan_UntrackedPriorStaysUnknown(t *testing.T) {
 	assert.Equal(t, []types.Bool{types.BoolUnknown()}, plannedReplayProtection(t, state, plan))
 }
 
-func TestResolveReplayProtection(t *testing.T) {
+// replay_protection = some_resource.output is configured but unknown while
+// planning. Planning a value over it contradicts the configuration, and
+// Terraform rejects the plan ("planned value does not match config value").
+func TestReplayProtectionPlan_ConfiguredUnknownIsLeftAlone(t *testing.T) {
+	state := identityList(t, identityObject(t, "https://a.example", "s", types.BoolValue(true)))
+	plan := identityList(t,
+		identityObject(t, "https://a.example", "s", types.BoolUnknown()),
+		identityObject(t, "https://new.example", "s", types.BoolUnknown()),
+	)
+	config := plan // unknown in the configuration itself, not omitted
+
+	assert.Equal(t, []types.Bool{types.BoolUnknown(), types.BoolUnknown()},
+		plannedReplayProtectionWithConfig(t, state, config, plan))
+}
+
+// Pocket ID accepts identities sharing issuer, subject and audience. A
+// first-match lookup would give every twin the first one's setting and silently
+// disable protection on the second here.
+func TestReplayProtectionPlan_TwinsKeepTheirOwnSetting(t *testing.T) {
+	state := identityList(t,
+		identityObject(t, "https://twin.example", "s", types.BoolValue(false)),
+		identityObject(t, "https://twin.example", "s", types.BoolValue(true)),
+	)
+	plan := identityList(t,
+		identityObject(t, "https://twin.example", "s", types.BoolUnknown()),
+		identityObject(t, "https://twin.example", "s", types.BoolUnknown()),
+		identityObject(t, "https://twin.example", "s", types.BoolUnknown()),
+	)
+
+	assert.Equal(t,
+		[]types.Bool{types.BoolValue(false), types.BoolValue(true), types.BoolValue(true)},
+		plannedReplayProtection(t, state, plan), "a third twin is new and gets the default")
+
+	// An explicit value on the first twin must not shift the second one's pairing.
+	explicit := identityList(t,
+		identityObject(t, "https://twin.example", "s", types.BoolValue(true)),
+		identityObject(t, "https://twin.example", "s", types.BoolUnknown()),
+	)
+	assert.Equal(t, []types.Bool{types.BoolValue(true), types.BoolValue(true)},
+		plannedReplayProtection(t, state, explicit))
+}
+
+func TestResolveReplayProtections(t *testing.T) {
 	current := []client.OIDCClientFederatedIdentity{
 		{Issuer: "https://a.example", Subject: "s", ReplayProtection: false},
-		{Issuer: "https://b.example", Subject: "s", ReplayProtection: true},
+		{Issuer: "https://twin.example", Subject: "s", ReplayProtection: false},
+		{Issuer: "https://twin.example", Subject: "s", ReplayProtection: true},
 	}
 	identity := func(issuer string, replay types.Bool) clientFederatedIdentityModel {
 		return clientFederatedIdentityModel{
@@ -108,11 +179,25 @@ func TestResolveReplayProtection(t *testing.T) {
 		}
 	}
 
-	assert.False(t, resolveReplayProtection(identity("https://b.example", types.BoolValue(false)), current), "explicit value wins")
-	assert.False(t, resolveReplayProtection(identity("https://a.example", types.BoolUnknown()), current), "server value kept")
-	assert.True(t, resolveReplayProtection(identity("https://b.example", types.BoolUnknown()), current), "server value kept")
-	assert.True(t, resolveReplayProtection(identity("https://new.example", types.BoolUnknown()), current), "new identity default")
-	assert.True(t, resolveReplayProtection(identity("https://new.example", types.BoolUnknown()), nil), "create default")
+	assert.Equal(t, []bool{true, false, true, true, true},
+		resolveReplayProtections([]clientFederatedIdentityModel{
+			identity("https://a.example", types.BoolValue(true)),   // explicit value wins
+			identity("https://twin.example", types.BoolUnknown()),  // first twin: server value
+			identity("https://twin.example", types.BoolUnknown()),  // second twin: its own server value
+			identity("https://twin.example", types.BoolUnknown()),  // third twin: new
+			identity("https://other.example", types.BoolUnknown()), // new identity
+		}, current))
+	assert.Equal(t, []bool{true},
+		resolveReplayProtections([]clientFederatedIdentityModel{identity("https://a.example", types.BoolUnknown())}, nil),
+		"create has no server identities")
+
+	// An empty subject or audience is the same identity as an absent one: the
+	// API omits empty strings and Read maps them to null.
+	withEmpty := clientFederatedIdentityModel{
+		Issuer: types.StringValue("https://a.example"), Subject: types.StringValue("s"),
+		Audience: types.StringValue(""), ReplayProtection: types.BoolUnknown(),
+	}
+	assert.Equal(t, []bool{false}, resolveReplayProtections([]clientFederatedIdentityModel{withEmpty}, current))
 }
 
 func TestFederatedIdentityRoundTrip(t *testing.T) {
@@ -170,6 +255,12 @@ func TestPublicJWKProblem(t *testing.T) {
 		"private EC key":      {`{"kty":"EC","crv":"P-256","kid":"k","x":"a","y":"b","d":"c"}`, true},
 		"private RSA CRT":     {`{"kty":"RSA","kid":"k","n":"AQAB","e":"AQAB","p":"AQAB"}`, true},
 		"missing kid":         {`{"kty":"EC","crv":"P-256","x":"a","y":"b"}`, true},
+		"non-string kid":      {`{"kty":"EC","crv":"P-256","kid":7,"x":"a","y":"b"}`, true},
+		"non-string use":      {`{"kty":"EC","crv":"P-256","kid":"k","use":["sig"],"x":"a","y":"b"}`, true},
+		"RSA without modulus": {`{"kty":"RSA","kid":"k"}`, true},
+		"EC without y":        {`{"kty":"EC","crv":"P-256","kid":"k","x":"a"}`, true},
+		"public OKP key":      {`{"kty":"OKP","crv":"Ed25519","kid":"k","x":"a"}`, false},
+		"unknown key type":    {`{"kty":"future","kid":"k"}`, false},
 		"encryption-only use": {`{"kty":"EC","crv":"P-256","kid":"k","use":"enc","x":"a","y":"b"}`, true},
 	}
 	for name, tc := range cases {
@@ -218,4 +309,48 @@ func TestCheckFederatedPublicKeysSupport(t *testing.T) {
 		api, _ := serverReporting(t, "not-a-version")
 		assert.Error(t, checkFederatedPublicKeysSupport(api, withKeys))
 	})
+}
+
+func TestPublicJWKValidatorRejectsNull(t *testing.T) {
+	for name, tc := range map[string]struct {
+		value   types.String
+		problem bool
+	}{
+		"null":    {types.StringNull(), true},
+		"unknown": {types.StringUnknown(), false},
+		"valid":   {types.StringValue(testPublicJWK), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resp := &validator.StringResponse{}
+			publicJWKValidator{}.ValidateString(context.Background(), validator.StringRequest{ConfigValue: tc.value}, resp)
+			assert.Equal(t, tc.problem, resp.Diagnostics.HasError())
+		})
+	}
+}
+
+func TestUniquePublicKeyIDValidator(t *testing.T) {
+	keys := func(kids ...string) types.List {
+		values := make([]attr.Value, 0, len(kids))
+		for _, kid := range kids {
+			values = append(values, jsontypes.NewNormalizedValue(`{"kty":"OKP","crv":"Ed25519","kid":"`+kid+`","x":"a"}`))
+		}
+		return types.ListValueMust(publicKeysListType.ElemType, values)
+	}
+	for name, tc := range map[string]struct {
+		list    types.List
+		problem bool
+	}{
+		"distinct":  {keys("a", "b"), false},
+		"duplicate": {keys("a", "b", "a"), true},
+		"null list": {types.ListNull(publicKeysListType.ElemType), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resp := &validator.ListResponse{}
+			uniquePublicKeyIDValidator{}.ValidateList(context.Background(), validator.ListRequest{ConfigValue: tc.list}, resp)
+			assert.Equal(t, tc.problem, resp.Diagnostics.HasError())
+			for _, diagnostic := range resp.Diagnostics {
+				assert.NotContains(t, diagnostic.Detail(), `"x"`, "the key itself is never echoed")
+			}
+		})
+	}
 }

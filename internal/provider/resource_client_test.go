@@ -475,7 +475,7 @@ func TestAccResourceClient_secretContinuity(t *testing.T) {
 			return fmt.Errorf("client identity or secret changed")
 		}
 		// The plural secrets API exists from Pocket ID 2.14.0 onward.
-		if testAccServerAtLeast("2.14.0") {
+		if testAccServerAtLeast(t, "2.14.0") {
 			req, _ := http.NewRequest("GET", os.Getenv("POCKETID_BASE_URL")+"/api/oidc/clients/"+id+"/secrets", nil)
 			req.Header.Set("X-API-KEY", os.Getenv("POCKETID_API_TOKEN"))
 			response, err := http.DefaultClient.Do(req)

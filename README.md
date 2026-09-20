@@ -8,7 +8,7 @@ It is independently maintained, not an official Pocket ID or Trozz release.
 
 ## Get started
 
-Release **2.4.0** supports Pocket ID 2.15.0 and stops client updates from silently
+Release **2.4.1** supports Pocket ID 2.15.0 and stops client updates from silently
 disabling replay protection or deleting public keys on federated identities; see the
 [changelog](CHANGELOG.md) for its one behaviour change.
 **Registry publication is pending:** install its verified archive using the native
@@ -20,7 +20,7 @@ terraform {
   required_providers {
     pocketid = {
       source  = "registry.terraform.io/irashack/pocketid"
-      version = "2.4.0"
+      version = "2.4.1"
     }
   }
 }
@@ -61,13 +61,13 @@ See [examples](examples/README.md) for complete configurations and
 ## Compatibility and current limits
 
 We support the current and previous **minor release series** (N and N−1), at
-explicitly tested patch versions: **2.15.0 and 2.14.0** for release 2.4.0
+explicitly tested patch versions: **2.15.0 and 2.14.0** for release 2.4.1
 (release 2.3.2 was validated on 2.14.0 and 2.13.0).
 Adding the next minor requires validation and retires the oldest series. Untested
 patches are not automatically certified. **2.13.0 and earlier are no longer supported or tested**;
 legacy parsing safeguards remain defensive code, not a support promise.
 
-| Pocket ID | Federated identity `public_keys` | Verification for release 2.4.0 |
+| Pocket ID | Federated identity `public_keys` | Verification for release 2.4.1 |
 |---|---|---|
 | 2.14.0 | Refused before any mutation | Full provider acceptance |
 | 2.15.0 | Supported | Full provider acceptance; native Terraform/OpenTofu upgrade from released 2.3.2 |

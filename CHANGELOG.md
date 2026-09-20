@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.4.1 — 2026-09-20
+
+Fixes found by an independent review of 2.4.0, each reproduced against the released
+binary first. If you use `federated_identities`, prefer this release to 2.4.0.
+
+- Identities sharing issuer, subject and audience now each keep their own
+  `replay_protection` when it is omitted. 2.4.0 matched by first hit, so an unrelated
+  update gave every twin the first one's value and could silently disable protection.
+  The nth occurrence of a key is now paired with the nth prior one, at plan and apply.
+- A `replay_protection` that is configured but not known until apply, such as another
+  resource's output, is left to the configuration. 2.4.0 planned a value over it and
+  Terraform rejected the plan with "planned value does not match config value".
+- A `null` element in `public_keys` is rejected at plan time. 2.4.0 dropped it while
+  building the request, which failed with "element has vanished" after the server
+  had been changed, and `[null]` alone slipped past the 2.15.0 version gate.
+- `public_keys` also rejects, at plan time and without echoing the key, two keys with
+  the same `kid`, a non-string `kid`, `kty` or `use`, and RSA, EC or OKP keys missing
+  their public parameters. The server refused these only at apply.
+- Acceptance tests now fail when `POCKETID_TEST_VERSION` is missing or malformed,
+  instead of reading it as an older server and skipping the newer checks.
+  `tests/native/upgrade.py` additionally covers protection enabled outside Terraform
+  and an update applied with `-refresh=false` while state predates the attribute.
+- No schema or behaviour change otherwise; 2.4.0 state plans empty.
+
 ## 2.4.0 — 2026-09-20
 
 Pocket ID 2.15.0 support. Released 2.3.2 already works on 2.15.0; this release closes

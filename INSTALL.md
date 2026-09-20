@@ -10,14 +10,14 @@ terraform {
   required_providers {
     pocketid = {
       source  = "registry.terraform.io/irashack/pocketid"
-      version = "2.4.0"
+      version = "2.4.1"
     }
   }
 }
 ```
 
 Download the exact version's archive and SHA256SUMS from
-[release v2.4.0](https://github.com/irashack/terraform-provider-pocketid/releases/tag/v2.4.0).
+[release v2.4.1](https://github.com/irashack/terraform-provider-pocketid/releases/tag/v2.4.1).
 Verify the SHA256SUMS file against the immutable digest recorded in the release
 notes, then verify the selected archive against that file. Checksums detect
 content changes; they are not a registry GPG signature. This release is unsigned.
@@ -25,14 +25,14 @@ content changes; they are not a registry GPG signature. This release is unsigned
 For example, for `darwin_arm64` (use `linux_amd64` or `linux_arm64` as appropriate):
 
 ```sh
-version=2.4.0
+version=2.4.1
 platform=darwin_arm64
 archive=terraform-provider-pocketid_${version}_${platform}.zip
 sums=terraform-provider-pocketid_${version}_SHA256SUMS
 release=https://github.com/irashack/terraform-provider-pocketid/releases/download/v${version}
 curl --fail --location --output "$archive" "$release/$archive"
 curl --fail --location --output "$sums" "$release/$sums"
-# Set this to the literal SHA256SUMS digest from the v2.4.0 release notes:
+# Set this to the literal SHA256SUMS digest from the v2.4.1 release notes:
 expected_manifest_sha256=REPLACE_WITH_RELEASE_DIGEST
 printf '%s  %s\n' "$expected_manifest_sha256" "$sums" | shasum -a 256 -c -
 awk -v file="$archive" '$2 == file { print }' "$sums" | shasum -a 256 -c -
@@ -68,17 +68,20 @@ tofu providers lock -fs-mirror="$mirror" \
 
 Keep the exact version and checksum pins; do not silently select a newer tag.
 
-## Upgrade from fork 2.3.2 to 2.4.0
+## Upgrade from fork 2.3.2 or 2.4.0 to 2.4.1
 
-Verify and add the v2.4.0 archive to the existing native mirror, leaving earlier
-versions intact. Change only the exact version pin to `2.4.0`, keep the source
+From 2.4.0 this is a drop-in patch: same schema, empty plan. Skip 2.4.0 if you are
+coming from 2.3.2.
+
+Verify and add the v2.4.1 archive to the existing native mirror, leaving earlier
+versions intact. Change only the exact version pin to `2.4.1`, keep the source
 address, run `tofu init -upgrade` through the root's normal entry point and commit
 the lockfile. No `state replace-provider` and no state upgrade step is involved.
 **Require an empty plan.** The first refresh records each existing federated
 identity's `replay_protection` as the server has it, and nothing is changed.
 
 Earlier releases disabled replay protection on every identity they created or
-updated. 2.4.0 does not turn it back on for you: set `replay_protection = true`
+updated. Upgrading does not turn it back on for you: set `replay_protection = true`
 on each identity whose issuer presents a token only once. A *new* identity with
 the attribute omitted is now created with it enabled. `public_keys` needs Pocket ID
 2.15.0; on an older server the provider refuses before changing anything.

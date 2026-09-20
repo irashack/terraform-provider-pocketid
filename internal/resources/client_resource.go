@@ -187,6 +187,7 @@ func (r *clientResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 								listvalidator.SizeAtLeast(1),
 								listvalidator.ConflictsWith(path.MatchRelative().AtParent().AtName("jwks")),
 								listvalidator.ValueStringsAre(publicJWKValidator{}),
+								uniquePublicKeyIDValidator{},
 							},
 						},
 						"replay_protection": schema.BoolAttribute{
@@ -790,15 +791,16 @@ func buildCredentialsFromPlan(ctx context.Context, plan *clientResourceModel, cu
 		return client.OIDCClientCredentials{}
 	}
 
+	replayProtection := resolveReplayProtections(identities, current)
 	federated := make([]client.OIDCClientFederatedIdentity, 0, len(identities))
-	for _, identity := range identities {
+	for i, identity := range identities {
 		federated = append(federated, client.OIDCClientFederatedIdentity{
 			Issuer:           identity.Issuer.ValueString(),
 			Subject:          identity.Subject.ValueString(),
 			Audience:         identity.Audience.ValueString(),
 			JWKS:             identity.JWKS.ValueString(),
 			PublicKeys:       publicKeysToAPI(identity.PublicKeys),
-			ReplayProtection: resolveReplayProtection(identity, current),
+			ReplayProtection: replayProtection[i],
 		})
 	}
 
