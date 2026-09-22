@@ -484,6 +484,20 @@ func (r *clientResource) Read(ctx context.Context, req resource.ReadRequest, res
 	resp.Diagnostics.Append(diags...)
 }
 
+// preserveUnmanagedClientFields copies the settings the provider does not
+// expose as attributes from the current server state into an update request,
+// so that updating a managed attribute does not reset them.
+func preserveUnmanagedClientFields(req *client.OIDCClientCreateRequest, current *client.OIDCClient) {
+	req.Description = current.Description
+	req.SkipConsent = current.SkipConsent
+	req.AccessTokenDurationMinutes = current.AccessTokenDurationMinutes
+	req.RefreshTokenDurationMinutes = current.RefreshTokenDurationMinutes
+	req.HasLogo = current.HasLogo
+	req.HasDarkLogo = current.HasDarkLogo
+	req.LogoURL = current.LogoURL
+	req.DarkLogoURL = current.DarkLogoURL
+}
+
 // Update updates the resource and sets the updated Terraform state on success.
 func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	// Retrieve values from plan
@@ -523,19 +537,22 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 		isGroupRestricted = len(groupIDs) > 0
 	}
 
-	// Pocket ID replaces the whole federated identity list on update. A
-	// replay_protection value the plan could not determine is read from the
-	// server first, so this update cannot change it as a side effect.
+	// The update endpoint replaces the client in full, so the current client
+	// is read first. Settings the provider does not expose are sent back
+	// unchanged; without this a description is cleared, skip_consent reverts
+	// to false and the token durations fall back to their defaults. Pocket ID
+	// likewise replaces the whole federated identity list, so a
+	// replay_protection value the plan could not determine is taken from here.
+	current, err := r.client.GetClient(plan.ID.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error reading OIDC client",
+			"Could not read the current OIDC client before updating; no mutation was attempted: "+err.Error(),
+		)
+		return
+	}
 	var currentIdentities []client.OIDCClientFederatedIdentity
 	if federatedIdentitiesNeedServerValues(ctx, plan.FederatedIdentities) {
-		current, err := r.client.GetClient(plan.ID.ValueString())
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Error reading OIDC client",
-				"Could not read the current federated identities before updating; no mutation was attempted: "+err.Error(),
-			)
-			return
-		}
 		currentIdentities = current.Credentials.FederatedIdentities
 	}
 
@@ -566,6 +583,8 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 		cid := plan.ClientID.ValueString()
 		updateReq.ClientID = &cid
 	}
+
+	preserveUnmanagedClientFields(updateReq, current)
 
 	tflog.Debug(ctx, "Updating OIDC client", map[string]any{
 		"id":   plan.ID.ValueString(),
