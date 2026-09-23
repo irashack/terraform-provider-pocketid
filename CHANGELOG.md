@@ -1,5 +1,46 @@
 # Changelog
 
+## 2.4.103 — 2026-09-23
+
+Adds a non-authoritative group membership resource, for a group whose members
+are partly managed outside Terraform (for example, a self-service onboarding
+broker). No schema change to any existing resource or data source; 2.4.102
+state plans empty.
+
+- New resource `pocketid_group_membership` manages a single `(group_id, user_id)`
+  pair. Create adds the user to the group without touching any other member;
+  Delete removes only that user; Read drops the resource from state if the pair
+  no longer exists (the user was deleted, or the group membership was removed
+  outside Terraform) instead of erroring. Both attributes require replacement.
+  Import uses `<group_id>/<user_id>`.
+- **API mechanism:** Pocket-ID exposes no endpoint to add or remove a single
+  group member; the only mutating endpoint is `PUT /api/users/{id}/user-groups`,
+  which replaces a user's entire group list. The new resource performs a
+  read-modify-write against that endpoint (`Client.AddUserToGroup` /
+  `RemoveUserFromGroup` / `UserHasGroupMembership` in `internal/client`): it
+  reads the user's current groups, adds or removes the target group, and
+  writes the full list back. A concurrent writer of the same user's groups
+  between that read and write can have its change silently overwritten; there
+  is no compare-and-swap primitive that would close this window. This is
+  documented on the resource, not fixed, since Pocket-ID's API gives no way to
+  fix it from the client side.
+- **Does not combine with `pocketid_user.groups`:** that attribute is already
+  authoritative over a user's full group list — including resetting it to
+  empty when `groups` is left unset in configuration, which
+  `TestAccResourceUser_withGroups`'s "Remove all groups" step already exercised.
+  Reproduced live on Pocket ID 2.15.0: a `pocketid_user` resource that never
+  sets `groups` plans to clear a membership added by
+  `pocketid_group_membership` on the very next refresh. `pocketid_user`'s
+  existing behavior is unchanged; this is a documented incompatibility between
+  the two resources, not a bug fix. `pocketid_group` does not manage membership
+  at all and is safe to use alongside the new resource.
+- The `pocketid_user` data source gains an `email` lookup key alongside `id`
+  and `username`, so a user can be looked up by email without a
+  Terraform-managed `pocketid_user` resource for it — useful for adding an
+  existing (e.g. owner) account to groups with `pocketid_group_membership`
+  while never touching its `groups` attribute. `pocketid_users` (the list data
+  source) is unchanged.
+
 ## 2.4.102 — 2026-09-23
 
 2.4.101 was tagged but never built or released; 2.4.102 contains it plus the

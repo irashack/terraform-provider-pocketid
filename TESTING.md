@@ -37,6 +37,56 @@ renamed fork binary. The test uses supported state replacement, checks encrypted
 state/backups and saved-plan encryption, preserves the ID and secret, and requires
 an empty subsequent plan. No development overrides are used.
 
+## Release 2.4.103 evidence — 2026-09-23
+
+Adds the non-authoritative `pocketid_group_membership` resource and an `email`
+lookup key on the `pocketid_user` data source. No schema change to any existing
+resource or data source. Tested with OpenTofu 1.12.6 and Terraform 1.16.0 on
+macOS ARM64, Docker via OrbStack.
+
+- `go vet ./...`, `gofmt -l`, and `golangci-lint run ./...` (v2.13.2) are clean.
+  `go test -race ./internal/...` passes, including new unit coverage: eight
+  cases for `Client.AddUserToGroup` / `RemoveUserFromGroup` /
+  `UserHasGroupMembership` (`internal/client/group_membership_test.go`),
+  fifteen for the new resource (`internal/resources/group_membership_resource_test.go`,
+  covering schema, configure, create/delete preserving other members, read
+  dropping state when the user or the membership is gone, the unsupported
+  in-place update, and import including invalid identifiers), and six for the
+  `pocketid_user` data source's new `email` lookup
+  (`internal/datasources/user_data_source_test.go`).
+- `make docs` (tfplugindocs 0.25.0) regenerates only `docs/resources/group_membership.md`
+  (new) and `docs/data-sources/user.md` (the `email` lookup key); `docs-check`
+  is clean once committed.
+- The full acceptance suite (`./internal/provider -tags=acc`) passes on both
+  2.14.0 and 2.15.0: **63 of 63 tests**, including six new
+  `TestAccResourceGroupMembership_*` cases that exercise create/import, that
+  deleting one membership does not disturb a second Terraform-managed
+  membership of the same group, that deleting a Terraform-managed membership
+  leaves a member added directly through the API (outside Terraform) intact,
+  drift detection when a membership is removed outside Terraform, and an
+  invalid import identifier.
+- `./internal/datasources -tags=acc` passes on both 2.14.0 and 2.15.0: **37 of
+  37 tests**, including the new `TestAccUserDataSource_lookupByEmail`. This
+  package's acceptance tests are not wired into any Make target or CI workflow
+  (a pre-existing gap, not introduced here); they were run directly with the
+  same disposable fixture for this evidence.
+- Reproduced live, then documented rather than changed: a `pocketid_group_membership`
+  resource combined with a `pocketid_user` resource for the *same* user, where
+  that `pocketid_user` resource never sets `groups`, plans to clear the
+  membership on the very next refresh. `pocketid_user.groups` is Optional and
+  not Computed, so an omitted `groups` in configuration is authoritative for
+  "no groups" on every plan — the same behavior
+  `TestAccResourceUser_withGroups`'s existing "Remove all groups" step already
+  covers, just triggered here by a resource that never configured `groups` at
+  all rather than one that cleared it. `pocketid_group_membership`'s
+  acceptance tests therefore target users created directly through the API
+  (never through a `pocketid_user` resource), and the resource's docs warn
+  against combining it with `pocketid_user.groups` for the same user.
+  `pocketid_group` does not manage membership in any form and is unaffected.
+- Not run: Linux or any other cross-built platform, Pocket ID 2.16, native
+  Terraform/OpenTofu lifecycle/upgrade rehearsal (no schema change, so none is
+  required by INSTALL.md's own criteria), and any live instance.
+
 ## Release 2.4.102 evidence — 2026-09-23
 
 Upstream #116 cherry-picked with authorship kept. Its pre-update read is merged with

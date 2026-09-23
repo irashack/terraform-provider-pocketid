@@ -27,6 +27,14 @@ releases, scheduled sweeps, cleanup and contributor-edit jobs are not enabled in
 this maintenance fork. Do not publish a registry identity until it is actually
 registered with the required signing setup.
 
+## Release v2.4.103
+
+An additive same-address release on 2.4.102: the new `pocketid_group_membership`
+resource and an `email` lookup key on the `pocketid_user` data source. No schema
+change to any existing resource or data source, so upgrading is a drop-in patch
+with an empty plan for existing configurations. Before tagging, check the
+number is not an upstream tag (`git ls-remote --tags upstream`).
+
 ## Release v2.4.102
 
 v2.4.101 was tagged and pushed but never built or released; pushed tags are not

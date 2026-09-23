@@ -8,7 +8,10 @@ It is independently maintained, not an official Pocket ID or Trozz release.
 
 ## Get started
 
-Release **2.4.102** supports Pocket ID 2.15.0. Client updates no longer reset a
+Release **2.4.103** supports Pocket ID 2.15.0. It adds a non-authoritative
+`pocketid_group_membership` resource for adding a single user to a single group
+without owning the group's full member list, and an `email` lookup key on the
+`pocketid_user` data source. 2.4.102 added: client updates no longer reset a
 client's description, skip-consent setting or token lifetimes, and no longer disable
 replay protection or delete public keys on federated identities; see the
 [changelog](CHANGELOG.md), including 2.4.0's one behaviour change.
@@ -21,7 +24,7 @@ terraform {
   required_providers {
     pocketid = {
       source  = "registry.terraform.io/irashack/pocketid"
-      version = "2.4.102"
+      version = "2.4.103"
     }
   }
 }
@@ -50,7 +53,8 @@ for normal installations.
 | Capability | Documentation |
 |---|---|
 | OIDC clients, callbacks, PKCE and group access | [Client resource](docs/resources/client.md) |
-| Users and group membership | [User resource](docs/resources/user.md), [group resource](docs/resources/group.md) |
+| Users and groups | [User resource](docs/resources/user.md), [group resource](docs/resources/group.md) |
+| Adding one existing user to one group, non-authoritatively | [Group membership resource](docs/resources/group_membership.md) |
 | One-time access tokens | [Token resource](docs/resources/one_time_access_token.md) |
 | SCIM service providers and LDAP synchronization | [SCIM](docs/resources/scim_service_provider.md), [LDAP](docs/resources/ldap_sync.md) |
 | Instance configuration | [Application configuration](docs/resources/application_config.md) |
@@ -62,13 +66,13 @@ See [examples](examples/README.md) for complete configurations and
 ## Compatibility and current limits
 
 We support the current and previous **minor release series** (N and N−1), at
-explicitly tested patch versions: **2.15.0 and 2.14.0** for release 2.4.102
+explicitly tested patch versions: **2.15.0 and 2.14.0** for release 2.4.103
 (release 2.3.2 was validated on 2.14.0 and 2.13.0).
 Adding the next minor requires validation and retires the oldest series. Untested
 patches are not automatically certified. **2.13.0 and earlier are no longer supported or tested**;
 legacy parsing safeguards remain defensive code, not a support promise.
 
-| Pocket ID | Federated identity `public_keys` | Verification for release 2.4.102 |
+| Pocket ID | Federated identity `public_keys` | Verification for release 2.4.103 |
 |---|---|---|
 | 2.14.0 | Refused before any mutation | Full provider acceptance |
 | 2.15.0 | Supported | Full provider acceptance; native Terraform/OpenTofu upgrade from released 2.3.2 |

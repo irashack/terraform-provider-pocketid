@@ -10,14 +10,14 @@ terraform {
   required_providers {
     pocketid = {
       source  = "registry.terraform.io/irashack/pocketid"
-      version = "2.4.102"
+      version = "2.4.103"
     }
   }
 }
 ```
 
 Download the exact version's archive and SHA256SUMS from
-[release v2.4.102](https://github.com/irashack/terraform-provider-pocketid/releases/tag/v2.4.102).
+[release v2.4.103](https://github.com/irashack/terraform-provider-pocketid/releases/tag/v2.4.103).
 Verify the SHA256SUMS file against the immutable digest recorded in the release
 notes, then verify the selected archive against that file. Checksums detect
 content changes; they are not a registry GPG signature. This release is unsigned.
@@ -25,14 +25,14 @@ content changes; they are not a registry GPG signature. This release is unsigned
 For example, for `darwin_arm64` (use `linux_amd64` or `linux_arm64` as appropriate):
 
 ```sh
-version=2.4.102
+version=2.4.103
 platform=darwin_arm64
 archive=terraform-provider-pocketid_${version}_${platform}.zip
 sums=terraform-provider-pocketid_${version}_SHA256SUMS
 release=https://github.com/irashack/terraform-provider-pocketid/releases/download/v${version}
 curl --fail --location --output "$archive" "$release/$archive"
 curl --fail --location --output "$sums" "$release/$sums"
-# Set this to the literal SHA256SUMS digest from the v2.4.102 release notes:
+# Set this to the literal SHA256SUMS digest from the v2.4.103 release notes:
 expected_manifest_sha256=REPLACE_WITH_RELEASE_DIGEST
 printf '%s  %s\n' "$expected_manifest_sha256" "$sums" | shasum -a 256 -c -
 awk -v file="$archive" '$2 == file { print }' "$sums" | shasum -a 256 -c -
@@ -67,6 +67,22 @@ tofu providers lock -fs-mirror="$mirror" \
 ```
 
 Keep the exact version and checksum pins; do not silently select a newer tag.
+
+## Upgrade from fork 2.4.102 to 2.4.103
+
+An additive same-address patch: same schema for every existing resource and data
+source, empty plan. Verify and add the v2.4.103 archive to the existing native
+mirror, leaving earlier versions intact. Change only the exact version pin to
+`2.4.103`, run `tofu init -upgrade` through the root's normal entry point and
+commit the lockfile. **Require an empty plan.**
+
+Adopt the new `pocketid_group_membership` resource, and the `pocketid_user` data
+source's new `email` lookup key, only where you choose to; nothing existing
+changes behavior. Do not add `pocketid_group_membership` for a user that a
+`pocketid_user` resource also manages with (or without) a `groups` attribute:
+that attribute is authoritative over the user's full group list and will plan
+to remove memberships the new resource added. See the
+[`pocketid_group_membership` docs](docs/resources/group_membership.md).
 
 ## Upgrade from fork 2.4.1 to 2.4.102
 
