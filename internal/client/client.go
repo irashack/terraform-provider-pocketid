@@ -454,6 +454,79 @@ func (c *Client) UpdateUserGroups(userID string, groupIDs []string) error {
 	return err
 }
 
+// AddUserToGroup adds a user to a group without changing the user's other
+// group memberships. Pocket-ID exposes no endpoint to add a single member to
+// a group; the only mutating endpoint is PUT /api/users/{id}/user-groups,
+// which replaces a user's entire group list. This performs a read-modify-write:
+// it reads the user's current groups, adds groupID if it is not already
+// present, and writes the full list back. A concurrent writer of the same
+// user's groups (another apply of this provider, or an external process such
+// as an onboarding broker) that runs between the read and the write can have
+// its change silently overwritten; there is no compare-and-swap primitive
+// that would close this window.
+func (c *Client) AddUserToGroup(userID, groupID string) error {
+	user, err := c.GetUser(userID)
+	if err != nil {
+		return err
+	}
+
+	groupIDs := make([]string, 0, len(user.UserGroups)+1)
+	for _, group := range user.UserGroups {
+		groupIDs = append(groupIDs, group.ID)
+		if group.ID == groupID {
+			// Already a member; nothing to do.
+			return nil
+		}
+	}
+	groupIDs = append(groupIDs, groupID)
+
+	return c.UpdateUserGroups(userID, groupIDs)
+}
+
+// RemoveUserFromGroup removes a user from a group without changing the
+// user's other group memberships. See AddUserToGroup for the
+// read-modify-write mechanism this relies on and the race window it leaves.
+func (c *Client) RemoveUserFromGroup(userID, groupID string) error {
+	user, err := c.GetUser(userID)
+	if err != nil {
+		return err
+	}
+
+	found := false
+	groupIDs := make([]string, 0, len(user.UserGroups))
+	for _, group := range user.UserGroups {
+		if group.ID == groupID {
+			found = true
+			continue
+		}
+		groupIDs = append(groupIDs, group.ID)
+	}
+	if !found {
+		// Already not a member; nothing to do.
+		return nil
+	}
+
+	return c.UpdateUserGroups(userID, groupIDs)
+}
+
+// UserHasGroupMembership reports whether userID currently belongs to groupID.
+// It returns the error from GetUser unchanged (including a *HTTPError with
+// StatusCode 404 if the user no longer exists), so callers can distinguish a
+// missing user from the user simply not belonging to the group.
+func (c *Client) UserHasGroupMembership(userID, groupID string) (bool, error) {
+	user, err := c.GetUser(userID)
+	if err != nil {
+		return false, err
+	}
+
+	for _, group := range user.UserGroups {
+		if group.ID == groupID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // UpdateUserCustomClaims replaces all custom claims for a user. The API
 // performs a full replace: claims not present in the list are removed.
 func (c *Client) UpdateUserCustomClaims(userID string, claims []CustomClaim) ([]CustomClaim, error) {
