@@ -29,7 +29,8 @@ registered with the required signing setup.
 
 ## Release v2.4.101
 
-A same-address patch on 2.4.1 carrying upstream #116; no schema change. Fork patch
+A same-address patch on 2.4.1 carrying upstream #116 and #103's copy-first
+application configuration; no schema change. Fork patch
 releases on the 2.4 line are numbered from 2.4.101 because upstream has released
 different 2.4.0 to 2.4.2. Before tagging a fork release, check that the number is
 not an upstream tag (`git ls-remote --tags upstream`). The upgrade proof is

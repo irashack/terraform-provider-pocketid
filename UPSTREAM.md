@@ -63,7 +63,8 @@ both on every client update, which is worth offering back. Evidence is in
 Upstream released 2.4.0, 2.4.1 and 2.4.2 on 2026-09-21 and 22 (`main` at `292900b`).
 They merge #90, #92 and #97, fix application-config preservation in #103 by copying the
 full server object, and in #116 stop client updates from resetting description,
-skip-consent, token lifetimes and logos. The fork took #116 as 2.4.101. Upstream's
+skip-consent, token lifetimes and logos. The fork took #116 and #103's
+copy-first application configuration as 2.4.101. Upstream's
 version numbers now overlap the fork's, with different content, so fork patch releases
 on the 2.4 line are numbered from 2.4.101.
 
@@ -82,8 +83,9 @@ valuable first:
 4. Secret endpoint selection falls back to the singular endpoint on any version-read
    error, and only after the client exists.
 
-Upstream's application-config fix is more robust than the fork's field-by-field copy;
-adopt it when rebasing. #92 needs no state upgrader (a stored list decodes as a set) but
+Upstream's application-config fix starts from a copy of the server configuration,
+which is more robust than the fork's field-by-field copy; 2.4.101 adopts that shape
+and keeps the fork's four extra attributes. #92 needs no state upgrader (a stored list decodes as a set) but
 breaks index expressions on `allowed_user_groups`.
 
 ## Remaining work

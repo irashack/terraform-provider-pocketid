@@ -2,8 +2,9 @@
 
 ## 2.4.101 — 2026-09-23
 
-Upstream #116, fixing upstream #106. A client update no longer resets settings the
-provider does not manage.
+Upstream #116, fixing upstream #106: a client update no longer resets settings the
+provider does not manage. Also adopts upstream #103's shape for the application
+configuration.
 
 - `PUT /api/oidc/clients/:id` replaces a client in full, and the provider never sent
   `description`, `skipConsent`, `accessTokenDurationMinutes` or
@@ -15,6 +16,11 @@ provider does not manage.
 - That read now always happens and also supplies the federated identity values it
   was already made for, so an update issues one read, not two. If the read fails,
   nothing is changed.
+- The application-configuration update now starts from a copy of the server's current
+  configuration and overlays the planned values, as upstream #103 does. Every modelled
+  field was already preserved, so nothing changes today; a field added to the client
+  model later is kept without also being listed in the merge. The fork's four WebAuthn
+  and CIMD attributes stay.
 - No schema or state change; 2.4.1 state plans empty.
 - **Version number:** upstream Trozz has released its own, different 2.4.0 to 2.4.2.
   Fork patch releases on the 2.4 line are numbered from 2.4.101 so they cannot share
