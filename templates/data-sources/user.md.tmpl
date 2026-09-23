@@ -52,6 +52,23 @@ data "pocketid_user" "by_username" {
 output "admin_user_id" {
   value = data.pocketid_user.by_username.id
 }
+
+# Example of fetching a user by email, such as looking up an owner account
+# that is not itself managed by a pocketid_user resource so it can be added
+# to groups with pocketid_group_membership.
+data "pocketid_user" "by_email" {
+  email = "owner@example.com"
+}
+
+resource "pocketid_group" "admins" {
+  name          = "admins"
+  friendly_name = "Administrators"
+}
+
+resource "pocketid_group_membership" "owner_admins" {
+  group_id = pocketid_group.admins.id
+  user_id  = data.pocketid_user.by_email.id
+}
 ```
 
 {{ .SchemaMarkdown | trimspace }}

@@ -53,23 +53,25 @@ func (d *userDataSource) Metadata(_ context.Context, req datasource.MetadataRequ
 func (d *userDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Description:         "Fetches a user from Pocket-ID.",
-		MarkdownDescription: "Fetches a user from Pocket-ID by their ID or username. Exactly one of `id` or `username` must be specified.",
+		MarkdownDescription: "Fetches a user from Pocket-ID by their ID, username, or email address. Exactly one of `id`, `username`, or `email` must be specified.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
-				Description:         "The ID of the user to fetch. Exactly one of `id` or `username` must be specified.",
-				MarkdownDescription: "The ID of the user to fetch. Exactly one of `id` or `username` must be specified.",
+				Description:         "The ID of the user to fetch. Exactly one of `id`, `username`, or `email` must be specified.",
+				MarkdownDescription: "The ID of the user to fetch. Exactly one of `id`, `username`, or `email` must be specified.",
 				Optional:            true,
 				Computed:            true,
 			},
 			"username": schema.StringAttribute{
-				Description:         "The username of the user to fetch. Exactly one of `id` or `username` must be specified.",
-				MarkdownDescription: "The username of the user to fetch. Exactly one of `id` or `username` must be specified.",
+				Description:         "The username of the user to fetch. Exactly one of `id`, `username`, or `email` must be specified.",
+				MarkdownDescription: "The username of the user to fetch. Exactly one of `id`, `username`, or `email` must be specified.",
 				Optional:            true,
 				Computed:            true,
 			},
 			"email": schema.StringAttribute{
-				Description: "The email address of the user.",
-				Computed:    true,
+				Description:         "The email address of the user to fetch. Exactly one of `id`, `username`, or `email` must be specified.",
+				MarkdownDescription: "The email address of the user to fetch. Exactly one of `id`, `username`, or `email` must be specified.",
+				Optional:            true,
+				Computed:            true,
 			},
 			"first_name": schema.StringAttribute{
 				Description: "The first name of the user.",
@@ -140,22 +142,30 @@ func (d *userDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 		return
 	}
 
-	// Validate that exactly one of ID or username is provided
+	// Validate that exactly one of ID, username, or email is provided
 	hasID := !config.ID.IsNull() && !config.ID.IsUnknown()
 	hasUsername := !config.Username.IsNull() && !config.Username.IsUnknown()
+	hasEmail := !config.Email.IsNull() && !config.Email.IsUnknown()
 
-	if !hasID && !hasUsername {
+	specified := 0
+	for _, has := range []bool{hasID, hasUsername, hasEmail} {
+		if has {
+			specified++
+		}
+	}
+
+	if specified == 0 {
 		resp.Diagnostics.AddError(
 			"Missing Required Argument",
-			"Exactly one of 'id' or 'username' must be specified.",
+			"Exactly one of 'id', 'username', or 'email' must be specified.",
 		)
 		return
 	}
 
-	if hasID && hasUsername {
+	if specified > 1 {
 		resp.Diagnostics.AddError(
 			"Conflicting Arguments",
-			"Only one of 'id' or 'username' can be specified, not both.",
+			"Only one of 'id', 'username', or 'email' can be specified, not more than one.",
 		)
 		return
 	}
@@ -163,8 +173,8 @@ func (d *userDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 	var userResp *client.User
 	var err error
 
-	// Fetch user based on provided identifier
-	if hasID {
+	switch {
+	case hasID:
 		tflog.Debug(ctx, "Reading user data source by ID", map[string]any{
 			"id": config.ID.ValueString(),
 		})
@@ -176,7 +186,7 @@ func (d *userDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 			)
 			return
 		}
-	} else {
+	case hasUsername:
 		// Lookup by username - we need to list all users and find the matching one
 		tflog.Debug(ctx, "Reading user data source by username", map[string]any{
 			"username": config.Username.ValueString(),
@@ -203,6 +213,36 @@ func (d *userDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 			resp.Diagnostics.AddError(
 				"User Not Found",
 				"No user found with username: "+config.Username.ValueString(),
+			)
+			return
+		}
+	case hasEmail:
+		// Lookup by email - we need to list all users and find the matching one
+		tflog.Debug(ctx, "Reading user data source by email", map[string]any{
+			"email": config.Email.ValueString(),
+		})
+
+		usersResp, err := d.client.ListUsers()
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Error listing users",
+				"Could not list users to find email "+config.Email.ValueString()+": "+err.Error(),
+			)
+			return
+		}
+
+		// Find the user with matching email
+		for _, user := range usersResp.Data {
+			if user.Email == config.Email.ValueString() {
+				userResp = &user
+				break
+			}
+		}
+
+		if userResp == nil {
+			resp.Diagnostics.AddError(
+				"User Not Found",
+				"No user found with email: "+config.Email.ValueString(),
 			)
 			return
 		}

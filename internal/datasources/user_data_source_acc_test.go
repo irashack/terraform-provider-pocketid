@@ -32,6 +32,42 @@ func TestAccUserDataSource_displayNameAndEmailVerified(t *testing.T) {
 	})
 }
 
+func TestAccUserDataSource_lookupByEmail(t *testing.T) {
+	rName := acctest.RandomWithPrefix("tf-acc-test")
+	email := fmt.Sprintf("%s@example.com", rName)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccUserDataSourceConfig_lookupByEmail(rName, email),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrPair("data.pocketid_user.test", "id", "pocketid_user.test", "id"),
+					resource.TestCheckResourceAttr("data.pocketid_user.test", "username", rName),
+					resource.TestCheckResourceAttr("data.pocketid_user.test", "email", email),
+				),
+			},
+		},
+	})
+}
+
+func testAccUserDataSourceConfig_lookupByEmail(username, email string) string {
+	return fmt.Sprintf(`
+resource "pocketid_user" "test" {
+  username       = %[1]q
+  email          = %[2]q
+  first_name     = "Test"
+  last_name      = "User"
+  email_verified = true
+}
+
+data "pocketid_user" "test" {
+  email = pocketid_user.test.email
+}
+`, username, email)
+}
+
 func TestAccUsersDataSource_displayNameAndEmailVerified(t *testing.T) {
 	rName := acctest.RandomWithPrefix("tf-acc-test")
 	email := fmt.Sprintf("%s@example.com", rName)
