@@ -27,6 +27,17 @@ releases, scheduled sweeps, cleanup and contributor-edit jobs are not enabled in
 this maintenance fork. Do not publish a registry identity until it is actually
 registered with the required signing setup.
 
+## Release v2.4.101
+
+A same-address patch on 2.4.1 carrying upstream #116; no schema change. Fork patch
+releases on the 2.4 line are numbered from 2.4.101 because upstream has released
+different 2.4.0 to 2.4.2. Before tagging a fork release, check that the number is
+not an upstream tag (`git ls-remote --tags upstream`). The upgrade proof is
+`tests/native/upgrade.py` from the published 2.4.1 archive. Publication runs
+`dist/release-v2.4.101/publish.sh` on Cygnus with the login Keychain; it verifies
+the draft's assets and runs the downloaded binary through the native lifecycle
+before publishing. Then follow INSTALL.md's "Upgrade from fork 2.4.1 to 2.4.101".
+
 ## Releases v2.4.0 and v2.4.1
 
 A same-address minor release: new optional attributes, one documented behaviour

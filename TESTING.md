@@ -37,6 +37,26 @@ renamed fork binary. The test uses supported state replacement, checks encrypted
 state/backups and saved-plan encryption, preserves the ID and secret, and requires
 an empty subsequent plan. No development overrides are used.
 
+## Release 2.4.101 evidence — 2026-09-23
+
+Upstream #116 cherry-picked with authorship kept. Its pre-update read is merged with
+the existing federated-identity read, so an update makes one read.
+Tested with OpenTofu 1.12.6 and Terraform 1.16.0 on macOS ARM64.
+
+- `make check`, `make vuln`, `make docs-check` and `go mod tidy -diff` pass.
+- The full acceptance suite passes on both 2.14.0 and 2.15.0. It now includes
+  upstream's `TestAccResourceClient_preservesUnmanagedFields`: it sets description,
+  skip-consent and both token lifetimes through the API, renames the client, and
+  checks that all four survive. With only the `preserveUnmanagedClientFields` call
+  removed, it fails on 2.15.0.
+- A binary stamped 2.4.101 in a packed mirror passes `tests/native/lifecycle.py`
+  with Terraform and OpenTofu on both 2.14.0 and 2.15.0.
+- `tests/native/upgrade.py` from the **published 2.4.1** darwin_arm64 archive (checked
+  against its release's SHA256SUMS digest), with both tools on 2.15.0: empty plan,
+  client ID, secret and replay protection kept through an update.
+
+Not run: Linux or any other cross-built platform, Pocket ID 2.16, and any live instance.
+
 ## Release 2.4.1 evidence — 2026-09-20
 
 An independent read-only review of published 2.4.0 (Codex, gpt-6-astra) reported three

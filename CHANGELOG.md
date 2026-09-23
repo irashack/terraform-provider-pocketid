@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.4.101 — 2026-09-23
+
+Upstream #116, fixing upstream #106. A client update no longer resets settings the
+provider does not manage.
+
+- `PUT /api/oidc/clients/:id` replaces a client in full, and the provider never sent
+  `description`, `skipConsent`, `accessTokenDurationMinutes` or
+  `refreshTokenDurationMinutes`. Every update of a `pocketid_client`, however
+  unrelated, cleared the description, turned skip-consent off and returned both token
+  lifetimes to their defaults, including values set in the Pocket ID admin UI. The
+  provider now reads the client before updating it and sends these back unchanged,
+  together with the logo fields. They are still not attributes.
+- That read now always happens and also supplies the federated identity values it
+  was already made for, so an update issues one read, not two. If the read fails,
+  nothing is changed.
+- No schema or state change; 2.4.1 state plans empty.
+- **Version number:** upstream Trozz has released its own, different 2.4.0 to 2.4.2.
+  Fork patch releases on the 2.4 line are numbered from 2.4.101 so they cannot share
+  a number with an upstream release.
+
 ## 2.4.1 — 2026-09-20
 
 Fixes found by an independent review of 2.4.0, each reproduced against the released

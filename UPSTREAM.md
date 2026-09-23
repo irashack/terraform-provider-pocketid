@@ -58,12 +58,40 @@ identity `replay_protection` and `public_keys`; upstream has the same silent res
 both on every client update, which is worth offering back. Evidence is in
 [TESTING.md](TESTING.md).
 
+## Upstream 2.4.0–2.4.2 — 2026-09-23
+
+Upstream released 2.4.0, 2.4.1 and 2.4.2 on 2026-09-21 and 22 (`main` at `292900b`).
+They merge #90, #92 and #97, fix application-config preservation in #103 by copying the
+full server object, and in #116 stop client updates from resetting description,
+skip-consent, token lifetimes and logos. The fork took #116 as 2.4.101. Upstream's
+version numbers now overlap the fork's, with different content, so fork patch releases
+on the 2.4 line are numbered from 2.4.101.
+
+Upstream had no open pull requests. Still missing upstream and worth offering, most
+valuable first:
+
+1. Federated identity `replay_protection` and `public_keys`. Every client update still
+   disables replay protection (a server setting since 2.12) and drops explicit keys;
+   #116 does not touch the identity list.
+2. Mutation retries. Upstream retries POST/PUT/DELETE after a 5xx or connection reset.
+   A retried secret POST leaves an orphaned secret that #117's revocation never
+   reaches; a retried create duplicates a client or fails on its fixed ID; a retried
+   DELETE fails on 404.
+3. A failed client creation. Upstream discards the cleanup delete's error and always
+   says the client was deleted.
+4. Secret endpoint selection falls back to the singular endpoint on any version-read
+   error, and only after the client exists.
+
+Upstream's application-config fix is more robust than the fork's field-by-field copy;
+adopt it when rebasing. #92 needs no state upgrader (a stored list decodes as a set) but
+breaks index expressions on `allowed_user_groups`.
+
 ## Remaining work
 
-1. Resolve #92 with an explicit compatibility decision and migration evidence.
-2. Register/sign the fork if continued independent distribution is warranted;
-   until then the verified filesystem mirror remains the supported install path.
-3. Evaluate #90 as separate user-ID and multi-secret lifecycle changes.
+1. Offer the items above upstream. When they are released there, return to
+   `trozz/pocketid` rather than porting #90, #92 and #117 here.
+2. Register/sign the fork only if independent distribution continues; until then
+   the verified filesystem mirror remains the supported install path.
 
 Return to upstream when a stable upstream release passes the old/new API and
 native lifecycle tests, then rehearse supported state-provider replacement with

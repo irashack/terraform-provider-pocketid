@@ -8,9 +8,10 @@ It is independently maintained, not an official Pocket ID or Trozz release.
 
 ## Get started
 
-Release **2.4.1** supports Pocket ID 2.15.0 and stops client updates from silently
-disabling replay protection or deleting public keys on federated identities; see the
-[changelog](CHANGELOG.md) for its one behaviour change.
+Release **2.4.101** supports Pocket ID 2.15.0. Client updates no longer reset a
+client's description, skip-consent setting or token lifetimes, and no longer disable
+replay protection or delete public keys on federated identities; see the
+[changelog](CHANGELOG.md), including 2.4.0's one behaviour change.
 **Registry publication is pending:** install its verified archive using the native
 filesystem mirror in [INSTALL.md](INSTALL.md) before running `terraform init` or
 `tofu init`. A GitHub release alone does not make the provider registry-installable.
@@ -20,7 +21,7 @@ terraform {
   required_providers {
     pocketid = {
       source  = "registry.terraform.io/irashack/pocketid"
-      version = "2.4.1"
+      version = "2.4.101"
     }
   }
 }
@@ -61,13 +62,13 @@ See [examples](examples/README.md) for complete configurations and
 ## Compatibility and current limits
 
 We support the current and previous **minor release series** (N and N−1), at
-explicitly tested patch versions: **2.15.0 and 2.14.0** for release 2.4.1
+explicitly tested patch versions: **2.15.0 and 2.14.0** for release 2.4.101
 (release 2.3.2 was validated on 2.14.0 and 2.13.0).
 Adding the next minor requires validation and retires the oldest series. Untested
 patches are not automatically certified. **2.13.0 and earlier are no longer supported or tested**;
 legacy parsing safeguards remain defensive code, not a support promise.
 
-| Pocket ID | Federated identity `public_keys` | Verification for release 2.4.1 |
+| Pocket ID | Federated identity `public_keys` | Verification for release 2.4.101 |
 |---|---|---|
 | 2.14.0 | Refused before any mutation | Full provider acceptance |
 | 2.15.0 | Supported | Full provider acceptance; native Terraform/OpenTofu upgrade from released 2.3.2 |
@@ -77,7 +78,7 @@ fallbacks remain as defensive code only.
 
 [TESTING.md](TESTING.md) records tested tool versions and scope. The prior application-config
 HTTP 400 failures are fixed in 2.3.2. Multiple `allowed_user_groups` can show
-ordering drift; upstream's proposed list-to-set migration needs compatibility work.
+ordering drift; upstream fixed that in its own 2.4.0, which this fork has not adopted.
 User-chosen IDs and client secrets from upstream PR #90 are not included.
 These limitations are tracked in the [upstream review](UPSTREAM.md).
 
