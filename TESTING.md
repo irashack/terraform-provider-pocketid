@@ -37,7 +37,7 @@ renamed fork binary. The test uses supported state replacement, checks encrypted
 state/backups and saved-plan encryption, preserves the ID and secret, and requires
 an empty subsequent plan. No development overrides are used.
 
-## Release 2.4.101 evidence — 2026-09-23
+## Release 2.4.102 evidence — 2026-09-23
 
 Upstream #116 cherry-picked with authorship kept. Its pre-update read is merged with
 the existing federated-identity read, so an update makes one read. The
@@ -53,7 +53,7 @@ Tested with OpenTofu 1.12.6 and Terraform 1.16.0 on macOS ARM64.
   removed, it fails on 2.15.0.
 - `TestApplicationConfigSMTPPreservesSettings` still sets every modelled field and
   requires an SMTP-only update to send each one back unchanged.
-- A binary stamped 2.4.101 in a packed mirror passes `tests/native/lifecycle.py` and
+- A binary stamped 2.4.102 in a packed mirror passes `tests/native/lifecycle.py` and
   `tests/native/application_config.py`, both fresh and upgraded from the published
   2.4.1 archive, with Terraform and OpenTofu on both 2.14.0 and 2.15.0.
 - `tests/native/upgrade.py` from the **published 2.4.1** darwin_arm64 archive (checked

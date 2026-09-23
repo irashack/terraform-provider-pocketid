@@ -10,14 +10,14 @@ terraform {
   required_providers {
     pocketid = {
       source  = "registry.terraform.io/irashack/pocketid"
-      version = "2.4.101"
+      version = "2.4.102"
     }
   }
 }
 ```
 
 Download the exact version's archive and SHA256SUMS from
-[release v2.4.101](https://github.com/irashack/terraform-provider-pocketid/releases/tag/v2.4.101).
+[release v2.4.102](https://github.com/irashack/terraform-provider-pocketid/releases/tag/v2.4.102).
 Verify the SHA256SUMS file against the immutable digest recorded in the release
 notes, then verify the selected archive against that file. Checksums detect
 content changes; they are not a registry GPG signature. This release is unsigned.
@@ -25,14 +25,14 @@ content changes; they are not a registry GPG signature. This release is unsigned
 For example, for `darwin_arm64` (use `linux_amd64` or `linux_arm64` as appropriate):
 
 ```sh
-version=2.4.101
+version=2.4.102
 platform=darwin_arm64
 archive=terraform-provider-pocketid_${version}_${platform}.zip
 sums=terraform-provider-pocketid_${version}_SHA256SUMS
 release=https://github.com/irashack/terraform-provider-pocketid/releases/download/v${version}
 curl --fail --location --output "$archive" "$release/$archive"
 curl --fail --location --output "$sums" "$release/$sums"
-# Set this to the literal SHA256SUMS digest from the v2.4.101 release notes:
+# Set this to the literal SHA256SUMS digest from the v2.4.102 release notes:
 expected_manifest_sha256=REPLACE_WITH_RELEASE_DIGEST
 printf '%s  %s\n' "$expected_manifest_sha256" "$sums" | shasum -a 256 -c -
 awk -v file="$archive" '$2 == file { print }' "$sums" | shasum -a 256 -c -
@@ -68,14 +68,14 @@ tofu providers lock -fs-mirror="$mirror" \
 
 Keep the exact version and checksum pins; do not silently select a newer tag.
 
-## Upgrade from fork 2.4.1 to 2.4.101
+## Upgrade from fork 2.4.1 to 2.4.102
 
 A drop-in patch: same source address, same schema, empty plan. Verify and add the
-v2.4.101 archive to the existing native mirror, leaving earlier versions intact.
-Change only the exact version pin to `2.4.101`, run `tofu init -upgrade` through the
+v2.4.102 archive to the existing native mirror, leaving earlier versions intact.
+Change only the exact version pin to `2.4.102`, run `tofu init -upgrade` through the
 root's normal entry point and commit the lockfile. **Require an empty plan.** From
 2.3.2 or 2.4.0, read the next section first; its notes on `replay_protection` apply,
-and you can go straight to 2.4.101.
+and you can go straight to 2.4.102.
 
 Settings already reset by an earlier update are not restored. Check each client's
 description, skip-consent and token lifetimes in the admin UI after upgrading.

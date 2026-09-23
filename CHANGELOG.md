@@ -1,6 +1,9 @@
 # Changelog
 
-## 2.4.101 — 2026-09-23
+## 2.4.102 — 2026-09-23
+
+2.4.101 was tagged but never built or released; 2.4.102 contains it plus the
+application-configuration change below. Use 2.4.102.
 
 Upstream #116, fixing upstream #106: a client update no longer resets settings the
 provider does not manage. Also adopts upstream #103's shape for the application
