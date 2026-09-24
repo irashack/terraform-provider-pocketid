@@ -126,7 +126,7 @@ func groupMembershipTestServer(t *testing.T, userID string, initialGroups []stri
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if userExists != nil && !*userExists {
 			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte(`{"error": "User not found"}`))
+			_, _ = w.Write([]byte(`{"error": "User not found", "code": "user_not_found"}`))
 			return
 		}
 
@@ -556,4 +556,118 @@ func TestGroupMembershipResource_Delete_ErrorsOnMissingEndpoint(t *testing.T) {
 	r.Delete(ctx, resource.DeleteRequest{State: state}, deleteResp)
 
 	assert.True(t, deleteResp.Diagnostics.HasError(), "a missing-endpoint 404 must surface as an error, not silent success")
+}
+
+// genericNotFoundServer always returns a 404 whose body is not Pocket-ID's
+// structured user-not-found error - e.g. a reverse proxy's own not-found
+// page in front of a wrong base URL. This must never be read as "the user
+// is gone".
+func genericNotFoundServer(t *testing.T) *client.Client {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte("<html><body>404 Not Found</body></html>"))
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := client.NewClient(server.URL, "test-token", false, 30)
+	require.NoError(t, err)
+	return c
+}
+
+// TestGroupMembershipResource_Read_ErrorsOnGenericNotFound is the broader
+// P2 regression: any 404 that isn't Pocket-ID's own structured
+// "user_not_found" body - not just the "API endpoint not found" sentinel
+// covered above - must surface as an error and keep state.
+func TestGroupMembershipResource_Read_ErrorsOnGenericNotFound(t *testing.T) {
+	ctx := context.Background()
+	c := genericNotFoundServer(t)
+	r := configureGroupMembership(t, c)
+	sch := groupMembershipSchema(t, r)
+
+	state := groupMembershipDeleteState(ctx, sch, "group-1", "user-1")
+	readResp := &resource.ReadResponse{State: state}
+	r.Read(ctx, resource.ReadRequest{State: state}, readResp)
+
+	assert.True(t, readResp.Diagnostics.HasError(), "a generic 404 must surface as an error")
+	assert.False(t, readResp.State.Raw.IsNull(), "state must not be dropped for a generic 404")
+}
+
+// TestGroupMembershipResource_Delete_PUT404_UserStillPresent_ReturnsError
+// covers Delete's own half of the P2 fix at the resource level: a 404 from
+// the update-user-groups PUT does not by itself prove the user is gone, so
+// when a re-GET still finds the user, Delete must report an error rather
+// than silently succeed.
+func TestGroupMembershipResource_Delete_PUT404_UserStillPresent_ReturnsError(t *testing.T) {
+	ctx := context.Background()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(client.User{
+				ID:         "user-1",
+				UserGroups: []client.UserGroup{{ID: "group-1"}},
+			})
+		case http.MethodPut:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error": "Not Found"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+	c, err := client.NewClient(server.URL, "test-token", false, 30)
+	require.NoError(t, err)
+
+	r := configureGroupMembership(t, c)
+	sch := groupMembershipSchema(t, r)
+	state := groupMembershipDeleteState(ctx, sch, "group-1", "user-1")
+
+	deleteResp := &resource.DeleteResponse{}
+	r.Delete(ctx, resource.DeleteRequest{State: state}, deleteResp)
+
+	assert.True(t, deleteResp.Diagnostics.HasError(), "a PUT 404 with the user still present must be an error")
+}
+
+// TestGroupMembershipResource_Delete_PUT404_UserConfirmedGone_Succeeds is the
+// success half: the update-user-groups PUT fails with a 404, and a
+// subsequent GET positively confirms the user is gone (deleted between the
+// two requests) - Delete must treat that as already satisfied.
+func TestGroupMembershipResource_Delete_PUT404_UserConfirmedGone_Succeeds(t *testing.T) {
+	ctx := context.Background()
+	var getCount int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			getCount++
+			if getCount == 1 {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(client.User{
+					ID:         "user-1",
+					UserGroups: []client.UserGroup{{ID: "group-1"}},
+				})
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error": "User not found", "code": "user_not_found"}`))
+		case http.MethodPut:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error": "User not found", "code": "user_not_found"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+	c, err := client.NewClient(server.URL, "test-token", false, 30)
+	require.NoError(t, err)
+
+	r := configureGroupMembership(t, c)
+	sch := groupMembershipSchema(t, r)
+	state := groupMembershipDeleteState(ctx, sch, "group-1", "user-1")
+
+	deleteResp := &resource.DeleteResponse{}
+	r.Delete(ctx, resource.DeleteRequest{State: state}, deleteResp)
+
+	assert.False(t, deleteResp.Diagnostics.HasError(), "%v", deleteResp.Diagnostics)
 }

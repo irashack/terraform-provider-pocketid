@@ -171,3 +171,34 @@ func TestClient_ListAllUsers_PropagatesError(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "HTTP 500")
 }
+
+// TestClient_ListAllUsers_MalformedPaginationIsError is the P3 fix: a
+// nonempty page reporting no valid pagination.totalPages (zero, or a
+// negative value) is malformed and must not be silently treated as "no more
+// pages" - that would truncate the result without any signal that anything
+// was missed.
+func TestClient_ListAllUsers_MalformedPaginationIsError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/users", r.URL.Path)
+		resp := client.PaginatedResponse[client.User]{
+			Data: makeUsers(5),
+			Pagination: client.PaginationInfo{
+				TotalItems:   5,
+				CurrentPage:  1,
+				ItemsPerPage: 100,
+				TotalPages:   0, // malformed: nonempty data, but no page count
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(resp))
+	}))
+	defer server.Close()
+
+	c, err := client.NewClient(server.URL, "test-token", false, 30)
+	require.NoError(t, err)
+
+	got, err := c.ListAllUsers("")
+	assert.Error(t, err)
+	assert.Nil(t, got)
+	assert.Contains(t, err.Error(), "totalPages")
+}

@@ -62,7 +62,22 @@ func usersListServer(t *testing.T, users []client.User) *client.Client {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/api/users" {
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(client.PaginatedResponse[client.User]{Data: users})
+			// Well-formed pagination metadata for a single-page result:
+			// ListAllUsers treats a nonempty page with no valid totalPages
+			// as malformed and errors rather than guessing.
+			totalPages := 1
+			if len(users) == 0 {
+				totalPages = 0
+			}
+			_ = json.NewEncoder(w).Encode(client.PaginatedResponse[client.User]{
+				Data: users,
+				Pagination: client.PaginationInfo{
+					TotalItems:   len(users),
+					CurrentPage:  1,
+					ItemsPerPage: len(users),
+					TotalPages:   totalPages,
+				},
+			})
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)

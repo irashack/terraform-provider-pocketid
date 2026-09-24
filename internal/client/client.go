@@ -236,12 +236,21 @@ func (c *Client) doSingleRequest(ctx context.Context, method, endpoint string, b
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var payload struct {
 			Error string `json:"error"`
+			Code  string `json:"code"`
 		}
-		missing := resp.StatusCode == 404 && json.Unmarshal(respBody, &payload) == nil && payload.Error == "API endpoint not found"
+		parsed := json.Unmarshal(respBody, &payload) == nil
+		missing := resp.StatusCode == 404 && parsed && payload.Error == "API endpoint not found"
+		// Pocket-ID's structured errors (dto.ErrorDto) carry a stable "code"
+		// alongside the human-readable "error" message. A missing user is
+		// reported with the code below by every endpoint that looks one up
+		// (confirmed against the pinned v2.14.0/v2.15.0 source: apperror.UserNotFound(),
+		// serialized by middleware.ErrorHandlerMiddleware). The unmatched-route
+		// 404 above is a bare gin.H with no "code" field, so the two never collide.
+		userNotFound := resp.StatusCode == 404 && parsed && payload.Code == "user_not_found"
 		if resp.StatusCode == 429 {
 			return nil, &RateLimitError{StatusCode: http.StatusTooManyRequests, Message: http.StatusText(http.StatusTooManyRequests), RetryAfter: resp.Header.Get("Retry-After")}
 		}
-		return nil, &HTTPError{StatusCode: resp.StatusCode, MissingEndpoint: missing}
+		return nil, &HTTPError{StatusCode: resp.StatusCode, MissingEndpoint: missing, UserNotFound: userNotFound}
 	}
 
 	return respBody, nil
@@ -476,8 +485,10 @@ func (c *Client) ListUsersPage(page, limit int, search string) (*PaginatedRespon
 // the server's free-text search filter (empty string for no filter). It
 // requests a larger-than-default page size to bound the number of round
 // trips, and stops as soon as the server reports no further page. A hard
-// page-count ceiling defends against a malformed or non-advancing pagination
-// response looping forever.
+// page-count ceiling defends against a non-advancing pagination response
+// looping forever; a nonempty page reporting no valid page count is treated
+// as malformed and returned as an error rather than silently assumed
+// complete, since that would truncate the result without any signal.
 func (c *Client) ListAllUsers(search string) ([]User, error) {
 	const maxPages = 1000 // defensive ceiling; a real instance won't approach this
 	const pageSize = 100  // larger than the server's own default (20), fewer round trips
@@ -488,9 +499,22 @@ func (c *Client) ListAllUsers(search string) ([]User, error) {
 		if err != nil {
 			return nil, err
 		}
+
+		if len(resp.Data) == 0 {
+			// An empty page unambiguously means there is nothing more,
+			// regardless of what the pagination metadata says.
+			return all, nil
+		}
+		if resp.Pagination.TotalPages <= 0 {
+			return nil, fmt.Errorf(
+				"listing users: page %d returned %d user(s) but pagination.totalPages was %d; refusing to guess whether more pages exist",
+				page, len(resp.Data), resp.Pagination.TotalPages,
+			)
+		}
+
 		all = append(all, resp.Data...)
 
-		if len(resp.Data) == 0 || resp.Pagination.TotalPages <= page {
+		if resp.Pagination.TotalPages <= page {
 			return all, nil
 		}
 	}
@@ -538,11 +562,19 @@ func (c *Client) AddUserToGroup(userID, groupID string) error {
 }
 
 // RemoveUserFromGroup removes a user from a group without changing the
-// user's other group memberships. See AddUserToGroup for the
-// read-modify-write mechanism this relies on and the race window it leaves.
+// user's other group memberships. Removing membership of a user who no
+// longer exists is treated as already done, but only once that is positively
+// confirmed (see IsUserNotFound): a generic or malformed 404 - a wrong base
+// URL, a proxy's own not-found page, or an endpoint missing on an older
+// server - does not by itself prove the user is gone, and is returned as an
+// error instead. See AddUserToGroup for the read-modify-write mechanism this
+// relies on and the race window it leaves.
 func (c *Client) RemoveUserFromGroup(userID, groupID string) error {
 	user, err := c.GetUser(userID)
 	if err != nil {
+		if IsUserNotFound(err) {
+			return nil
+		}
 		return err
 	}
 
@@ -560,13 +592,27 @@ func (c *Client) RemoveUserFromGroup(userID, groupID string) error {
 		return nil
 	}
 
-	return c.UpdateUserGroups(userID, groupIDs)
+	if err := c.UpdateUserGroups(userID, groupIDs); err != nil {
+		// A 404 from this PUT does not by itself prove the user is gone: it
+		// could be a wrong path or a proxy's generic not-found response.
+		// Re-check with a GET, which does positively identify a missing
+		// user, before treating the removal as already satisfied.
+		var status *HTTPError
+		if errors.As(err, &status) && status.StatusCode == 404 {
+			if _, getErr := c.GetUser(userID); IsUserNotFound(getErr) {
+				return nil
+			}
+		}
+		return err
+	}
+	return nil
 }
 
 // UserHasGroupMembership reports whether userID currently belongs to groupID.
-// It returns the error from GetUser unchanged (including a *HTTPError with
-// StatusCode 404 if the user no longer exists), so callers can distinguish a
-// missing user from the user simply not belonging to the group.
+// It returns the error from GetUser unchanged, so callers can use
+// IsUserNotFound to distinguish a confirmed-missing user from any other
+// error (including a merely-generic 404) and from the user simply not
+// belonging to the group.
 func (c *Client) UserHasGroupMembership(userID, groupID string) (bool, error) {
 	user, err := c.GetUser(userID)
 	if err != nil {
@@ -886,10 +932,24 @@ func (c *Client) VersionAtLeast(minimum string) (bool, error) {
 type HTTPError struct {
 	StatusCode      int
 	MissingEndpoint bool
+	// UserNotFound is set only for a 404 whose body is Pocket-ID's own
+	// structured "user_not_found" error code - a positive identification
+	// that the user is gone, as opposed to any other 404 (a wrong base URL,
+	// a proxy's generic not-found page, or an endpoint that doesn't exist on
+	// an older server). See IsUserNotFound.
+	UserNotFound bool
 }
 
 func (e *HTTPError) Error() string {
 	return fmt.Sprintf("HTTP %d: %s", e.StatusCode, http.StatusText(e.StatusCode))
+}
+
+// IsUserNotFound reports whether err is a confirmed "no such user" response
+// from Pocket-ID - never true for a generic or malformed 404, which must be
+// treated as a real error rather than assumed to mean the user is gone.
+func IsUserNotFound(err error) bool {
+	var status *HTTPError
+	return errors.As(err, &status) && status.UserNotFound
 }
 
 // CheckSecretAPI validates compatibility before a confidential client is created.

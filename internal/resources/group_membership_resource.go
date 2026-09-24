@@ -2,7 +2,6 @@ package resources
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -210,12 +209,13 @@ func (r *groupMembershipResource) Read(ctx context.Context, req resource.ReadReq
 
 	exists, err := r.client.UserHasGroupMembership(userID, groupID)
 	if err != nil {
-		var status *client.HTTPError
-		// Only a confirmed-missing user means the membership is gone. A 404
-		// with MissingEndpoint set means the API path itself does not exist
-		// (wrong base URL, or a server too old to have it) and must surface
-		// as an error rather than silently dropping the resource from state.
-		if errors.As(err, &status) && status.StatusCode == 404 && !status.MissingEndpoint {
+		// Only a positively confirmed missing user (client.IsUserNotFound)
+		// means the membership is gone. Any other error - including a
+		// generic or malformed 404 from a wrong base URL, a proxy's own
+		// not-found page, or an endpoint missing on an older server - must
+		// surface as an error rather than silently dropping the resource
+		// from state.
+		if client.IsUserNotFound(err) {
 			tflog.Debug(ctx, "User no longer exists, removing group membership from state", map[string]any{
 				"group_id": groupID,
 				"user_id":  userID,
@@ -274,19 +274,11 @@ func (r *groupMembershipResource) Delete(ctx context.Context, req resource.Delet
 	lock.Lock()
 	defer lock.Unlock()
 
+	// RemoveUserFromGroup itself only treats a positively confirmed missing
+	// user as "nothing left to remove" (including re-confirming with a GET
+	// after a 404 from the update itself, which does not by itself prove the
+	// user is gone). Any error it returns here is a real error.
 	if err := r.client.RemoveUserFromGroup(userID, groupID); err != nil {
-		var status *client.HTTPError
-		// As in Read: only a confirmed-missing user is "nothing left to
-		// remove". A 404 with MissingEndpoint set is a wrong or unsupported
-		// API path and must be reported, not swallowed as success.
-		if errors.As(err, &status) && status.StatusCode == 404 && !status.MissingEndpoint {
-			// The user no longer exists, so there is nothing left to remove.
-			tflog.Debug(ctx, "User no longer exists, nothing to remove", map[string]any{
-				"group_id": groupID,
-				"user_id":  userID,
-			})
-			return
-		}
 		resp.Diagnostics.AddError(
 			"Error removing user from group",
 			fmt.Sprintf("Could not remove user %s from group %s: %s", userID, groupID, err),

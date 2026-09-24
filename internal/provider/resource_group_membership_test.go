@@ -230,6 +230,53 @@ func TestAccResourceGroupMembership_driftDetection(t *testing.T) {
 	})
 }
 
+// TestAccResourceGroupMembership_deleteWhenUserAlreadyGone proves the whole
+// lifecycle stays error-free when the user disappears out from under
+// Terraform, exercising the P2 fix end to end. Deleting the user (not just
+// the membership) means the very next refresh - whether that is this step's
+// own post-apply plan check or the next step's pre-apply refresh - already
+// confirms the user is gone and drops the resource from state (like
+// TestAccResourceGroupMembership_driftDetection); a subsequent apply with the
+// resource removed from configuration then has nothing left to destroy. Both
+// the refresh (Read) and, when it is actually reached, a direct destroy
+// (Delete, exercised precisely at the unit level by
+// TestGroupMembershipResource_Delete_PUT404_UserConfirmedGone_Succeeds) must
+// treat a confirmed-gone user as success, never an error.
+func TestAccResourceGroupMembership_deleteWhenUserAlreadyGone(t *testing.T) {
+	testAccPreCheck(t)
+	rName := acctest.RandomWithPrefix("tf-acc-test")
+	userID := createTestUser(t, rName+"-user")
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			// As in driftDetection: the Check deletes the user after apply,
+			// so the framework's own post-check replan is expected to be
+			// non-empty (it will now want to recreate the vanished resource).
+			{
+				Config: testAccResourceGroupMembershipConfig_basic(rName, userID),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testAccCheckGroupMembershipExists("pocketid_group.test", userID),
+					func(_ *terraform.State) error {
+						c, err := testClient()
+						if err != nil {
+							return err
+						}
+						return c.DeleteUser(userID)
+					},
+				),
+				ExpectNonEmptyPlan: true,
+			},
+			// Dropping the resource from configuration must apply cleanly,
+			// with no error surfaced by either Read or Delete.
+			{
+				Config: testAccResourceGroupMembershipConfig_groupOnly(rName),
+			},
+		},
+	})
+}
+
 func TestAccResourceGroupMembership_invalidImportID(t *testing.T) {
 	testAccPreCheck(t)
 	rName := acctest.RandomWithPrefix("tf-acc-test")
