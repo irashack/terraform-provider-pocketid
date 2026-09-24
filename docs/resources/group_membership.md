@@ -29,9 +29,11 @@ resource "pocketid_group" "family" {
   friendly_name = "Family"
 }
 
-# Look up an existing user (created outside this provider, or by a
-# pocketid_user resource that never sets its own "groups" attribute) and add
-# just that one user to the group, without owning the group's full member list.
+# Look up an existing user created outside this provider (for example, by a
+# self-service onboarding process, or an account that predates Terraform
+# management) and add just that one user to the group, without owning the
+# group's full member list. Do not do this for a user also managed by a
+# pocketid_user resource - see the warning above.
 data "pocketid_user" "owner" {
   email = "owner@example.com"
 }
