@@ -3,6 +3,7 @@ package datasources_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -123,6 +124,41 @@ func TestUserDataSource_Read_ByEmail(t *testing.T) {
 	assert.Equal(t, "bob", username)
 }
 
+// TestUserDataSource_Read_ByEmail_UserOnPageTwo is the P2 regression test:
+// ListUsers() alone only sees the first page (server default 20 items), so
+// a user beyond it was silently unfindable. This uses a fake server that
+// genuinely paginates (unlike usersListServer above) to prove the lookup
+// now follows every page via ListAllUsers.
+func TestUserDataSource_Read_ByEmail_UserOnPageTwo(t *testing.T) {
+	ctx := context.Background()
+	users := make([]client.User, 150)
+	for i := range users {
+		users[i] = client.User{
+			ID:       fmt.Sprintf("user-%d", i),
+			Username: fmt.Sprintf("user%d", i),
+			Email:    fmt.Sprintf("user%d@example.com", i),
+		}
+	}
+	// user149 is index 149, past both the server's default page size (20)
+	// and ListAllUsers' own request size (100): it can only be found by
+	// following pagination through at least a second page.
+	c := paginatedUsersDataSourceServer(t, users)
+	ds := configureUserDataSource(t, c)
+	sch := userDataSourceSchema(t, ds)
+
+	readResp := &datasource.ReadResponse{
+		State: tfsdk.State{Schema: sch, Raw: tftypes.NewValue(sch.Type().TerraformType(ctx), nil)},
+	}
+	ds.Read(ctx, datasource.ReadRequest{Config: userDataSourceConfig(ctx, t, sch, "", "", "user149@example.com")}, readResp)
+	require.False(t, readResp.Diagnostics.HasError(), "%v", readResp.Diagnostics)
+
+	var id, username string
+	require.False(t, readResp.State.GetAttribute(ctx, path.Root("id"), &id).HasError())
+	require.False(t, readResp.State.GetAttribute(ctx, path.Root("username"), &username).HasError())
+	assert.Equal(t, "user-149", id)
+	assert.Equal(t, "user149", username)
+}
+
 func TestUserDataSource_Read_ByEmail_NotFound(t *testing.T) {
 	ctx := context.Background()
 	c := usersListServer(t, []client.User{
@@ -164,4 +200,44 @@ func TestUserDataSource_Read_ConflictingLookupKeys(t *testing.T) {
 	ds.Read(ctx, datasource.ReadRequest{Config: userDataSourceConfig(ctx, t, sch, "", "alice", "alice@example.com")}, readResp)
 	require.True(t, readResp.Diagnostics.HasError())
 	assert.Contains(t, readResp.Diagnostics.Errors()[0].Summary(), "Conflicting Arguments")
+}
+
+// TestUserDataSource_ConfigValidators is the P3 fix: id/username/email
+// exactly-one-of enforcement should happen at plan/validate time via
+// ConfigValidators, not only inside Read.
+func TestUserDataSource_ConfigValidators(t *testing.T) {
+	ctx := context.Background()
+	ds := datasources.NewUserDataSource()
+	withValidators, ok := ds.(datasource.DataSourceWithConfigValidators)
+	require.True(t, ok, "pocketid_user data source should implement DataSourceWithConfigValidators")
+
+	sch := userDataSourceSchema(t, ds)
+	validators := withValidators.ConfigValidators(ctx)
+	require.NotEmpty(t, validators)
+
+	testCases := []struct {
+		name                string
+		id, username, email string
+		expectError         bool
+	}{
+		{name: "none", expectError: true},
+		{name: "id_only", id: "user-1", expectError: false},
+		{name: "username_only", username: "alice", expectError: false},
+		{name: "email_only", email: "alice@example.com", expectError: false},
+		{name: "id_and_username", id: "user-1", username: "alice", expectError: true},
+		{name: "id_and_email", id: "user-1", email: "alice@example.com", expectError: true},
+		{name: "all_three", id: "user-1", username: "alice", email: "alice@example.com", expectError: true},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := userDataSourceConfig(ctx, t, sch, tc.id, tc.username, tc.email)
+			req := datasource.ValidateConfigRequest{Config: cfg}
+			resp := &datasource.ValidateConfigResponse{}
+			for _, v := range validators {
+				v.ValidateDataSource(ctx, req, resp)
+			}
+			assert.Equal(t, tc.expectError, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
+		})
+	}
 }

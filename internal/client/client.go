@@ -428,9 +428,38 @@ func (c *Client) DeleteUser(userID string) error {
 	return err
 }
 
-// ListUsers retrieves all users
+// ListUsers retrieves one page of users (the server's default: page 1, 20
+// items). Pocket-ID paginates GET /api/users, so this alone silently misses
+// any user past the first page. Prefer ListAllUsers to see every user.
 func (c *Client) ListUsers() (*PaginatedResponse[User], error) {
-	body, err := c.doRequest("GET", "/api/users", nil)
+	return c.ListUsersPage(0, 0, "")
+}
+
+// ListUsersPage retrieves one page of users. page and limit are 1-based;
+// zero selects the server's own default for that parameter (page 1, limit
+// 20). search, when non-empty, is passed through to the server's free-text
+// search filter (matching is the server's own logic, e.g. substring across
+// username/email/name — not guaranteed to be exact or to fit on one page),
+// so callers doing an exact lookup must still filter the returned users
+// themselves and must still follow pagination.
+func (c *Client) ListUsersPage(page, limit int, search string) (*PaginatedResponse[User], error) {
+	query := url.Values{}
+	if page > 0 {
+		query.Set("pagination[page]", strconv.Itoa(page))
+	}
+	if limit > 0 {
+		query.Set("pagination[limit]", strconv.Itoa(limit))
+	}
+	if search != "" {
+		query.Set("search", search)
+	}
+
+	endpoint := "/api/users"
+	if encoded := query.Encode(); encoded != "" {
+		endpoint += "?" + encoded
+	}
+
+	body, err := c.doRequest("GET", endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -441,6 +470,31 @@ func (c *Client) ListUsers() (*PaginatedResponse[User], error) {
 	}
 
 	return &result, nil
+}
+
+// ListAllUsers retrieves every user across all pages, optionally narrowed by
+// the server's free-text search filter (empty string for no filter). It
+// requests a larger-than-default page size to bound the number of round
+// trips, and stops as soon as the server reports no further page. A hard
+// page-count ceiling defends against a malformed or non-advancing pagination
+// response looping forever.
+func (c *Client) ListAllUsers(search string) ([]User, error) {
+	const maxPages = 1000 // defensive ceiling; a real instance won't approach this
+	const pageSize = 100  // larger than the server's own default (20), fewer round trips
+
+	var all []User
+	for page := 1; page <= maxPages; page++ {
+		resp, err := c.ListUsersPage(page, pageSize, search)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, resp.Data...)
+
+		if len(resp.Data) == 0 || resp.Pagination.TotalPages <= page {
+			return all, nil
+		}
+	}
+	return nil, fmt.Errorf("listing users did not terminate after %d pages; refusing to loop further", maxPages)
 }
 
 // UpdateUserGroups updates the groups a user belongs to

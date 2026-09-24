@@ -143,8 +143,9 @@ func (d *usersDataSource) Configure(_ context.Context, req datasource.ConfigureR
 func (d *usersDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
 	tflog.Debug(ctx, "Reading users data source")
 
-	// Get users from API
-	usersResp, err := d.client.ListUsers()
+	// Get every user from the API. ListUsers alone would silently return only
+	// the first page (server default 20 items); this lists the whole set.
+	users, err := d.client.ListAllUsers("")
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error reading users",
@@ -155,11 +156,11 @@ func (d *usersDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 
 	// Map response to model
 	state := usersDataSourceModel{
-		Users: make([]userModel, 0, len(usersResp.Data)),
+		Users: make([]userModel, 0, len(users)),
 	}
 
 	// Convert each user
-	for _, userResp := range usersResp.Data {
+	for _, userResp := range users {
 		userState := userModel{
 			ID:            types.StringValue(userResp.ID),
 			Username:      types.StringValue(userResp.Username),

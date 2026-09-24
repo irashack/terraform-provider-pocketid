@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/datasourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
@@ -14,8 +16,9 @@ import (
 
 // Ensure the implementation satisfies the expected interfaces.
 var (
-	_ datasource.DataSource              = &userDataSource{}
-	_ datasource.DataSourceWithConfigure = &userDataSource{}
+	_ datasource.DataSource                     = &userDataSource{}
+	_ datasource.DataSourceWithConfigure        = &userDataSource{}
+	_ datasource.DataSourceWithConfigValidators = &userDataSource{}
 )
 
 // NewUserDataSource is a helper function to simplify the provider implementation.
@@ -114,6 +117,20 @@ func (d *userDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, r
 	}
 }
 
+// ConfigValidators enforces that exactly one of id, username, or email is
+// set at plan/validate time, ahead of the equivalent (and still necessary,
+// since ConfigValidators does not run for every caller of this package's
+// exported types in tests) runtime check in Read.
+func (d *userDataSource) ConfigValidators(_ context.Context) []datasource.ConfigValidator {
+	return []datasource.ConfigValidator{
+		datasourcevalidator.ExactlyOneOf(
+			path.MatchRoot("id"),
+			path.MatchRoot("username"),
+			path.MatchRoot("email"),
+		),
+	}
+}
+
 // Configure adds the provider configured client to the data source.
 func (d *userDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
 	if req.ProviderData == nil {
@@ -187,12 +204,14 @@ func (d *userDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 			return
 		}
 	case hasUsername:
-		// Lookup by username - we need to list all users and find the matching one
+		// Lookup by username. The search filter narrows the request, but
+		// matching is the server's own logic (e.g. substring), so every page
+		// of results is still fetched and filtered here for an exact match.
 		tflog.Debug(ctx, "Reading user data source by username", map[string]any{
 			"username": config.Username.ValueString(),
 		})
 
-		usersResp, err := d.client.ListUsers()
+		users, err := d.client.ListAllUsers(config.Username.ValueString())
 		if err != nil {
 			resp.Diagnostics.AddError(
 				"Error listing users",
@@ -202,9 +221,9 @@ func (d *userDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 		}
 
 		// Find the user with matching username
-		for _, user := range usersResp.Data {
-			if user.Username == config.Username.ValueString() {
-				userResp = &user
+		for i := range users {
+			if users[i].Username == config.Username.ValueString() {
+				userResp = &users[i]
 				break
 			}
 		}
@@ -217,12 +236,14 @@ func (d *userDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 			return
 		}
 	case hasEmail:
-		// Lookup by email - we need to list all users and find the matching one
+		// Lookup by email. The search filter narrows the request, but
+		// matching is the server's own logic (e.g. substring), so every page
+		// of results is still fetched and filtered here for an exact match.
 		tflog.Debug(ctx, "Reading user data source by email", map[string]any{
 			"email": config.Email.ValueString(),
 		})
 
-		usersResp, err := d.client.ListUsers()
+		users, err := d.client.ListAllUsers(config.Email.ValueString())
 		if err != nil {
 			resp.Diagnostics.AddError(
 				"Error listing users",
@@ -232,9 +253,9 @@ func (d *userDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 		}
 
 		// Find the user with matching email
-		for _, user := range usersResp.Data {
-			if user.Email == config.Email.ValueString() {
-				userResp = &user
+		for i := range users {
+			if users[i].Email == config.Email.ValueString() {
+				userResp = &users[i]
 				break
 			}
 		}
