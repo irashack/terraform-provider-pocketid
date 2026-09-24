@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -16,6 +17,45 @@ import (
 
 	"github.com/Trozz/terraform-provider-pocketid/internal/client"
 )
+
+// groupMembershipLocks serializes Create and Delete for every
+// pocketid_group_membership resource that targets the same user ID.
+//
+// Pocket-ID has no add/remove-one-member endpoint: Create and Delete both do
+// a read-modify-write against PUT /api/users/{id}/user-groups (see
+// Client.AddUserToGroup and Client.RemoveUserFromGroup). Terraform applies
+// resources concurrently within one apply (parallelism defaults to 10), and
+// the framework does not serialize calls across different resource
+// instances or even guarantee the same Go value handles them. Two
+// unsynchronized read-modify-write cycles for the same user - for example,
+// adding that user to five groups in one apply - race: the second PUT can be
+// built from a snapshot taken before the first PUT lands, and silently drops
+// the first addition. This is exactly the intended use (one user added to
+// many groups in a single apply), so it is serialized here rather than left
+// as a documented limitation.
+//
+// The map is keyed by user ID and grows for the life of the provider
+// process; entries are never removed. A provider process is short-lived
+// (one plan or apply), and the number of distinct users touched in a run is
+// bounded by the configuration, so this is not considered a practical leak.
+var (
+	groupMembershipLocksMu sync.Mutex
+	groupMembershipLocks   = map[string]*sync.Mutex{}
+)
+
+// lockForUser returns the mutex serializing group-membership mutations for
+// userID, creating it on first use.
+func lockForUser(userID string) *sync.Mutex {
+	groupMembershipLocksMu.Lock()
+	defer groupMembershipLocksMu.Unlock()
+
+	m, ok := groupMembershipLocks[userID]
+	if !ok {
+		m = &sync.Mutex{}
+		groupMembershipLocks[userID] = m
+	}
+	return m
+}
 
 // Ensure the implementation satisfies the expected interfaces.
 var (
@@ -136,6 +176,14 @@ func (r *groupMembershipResource) Create(ctx context.Context, req resource.Creat
 		"user_id":  userID,
 	})
 
+	// Serialize the read-modify-write against this user's group list with
+	// every other Create/Delete for the same user, so concurrently applying
+	// several pocketid_group_membership resources for one user cannot lose
+	// an addition or a removal to a race. See groupMembershipLocks.
+	lock := lockForUser(userID)
+	lock.Lock()
+	defer lock.Unlock()
+
 	if err := r.client.AddUserToGroup(userID, groupID); err != nil {
 		resp.Diagnostics.AddError(
 			"Error adding user to group",
@@ -163,7 +211,11 @@ func (r *groupMembershipResource) Read(ctx context.Context, req resource.ReadReq
 	exists, err := r.client.UserHasGroupMembership(userID, groupID)
 	if err != nil {
 		var status *client.HTTPError
-		if errors.As(err, &status) && status.StatusCode == 404 {
+		// Only a confirmed-missing user means the membership is gone. A 404
+		// with MissingEndpoint set means the API path itself does not exist
+		// (wrong base URL, or a server too old to have it) and must surface
+		// as an error rather than silently dropping the resource from state.
+		if errors.As(err, &status) && status.StatusCode == 404 && !status.MissingEndpoint {
 			tflog.Debug(ctx, "User no longer exists, removing group membership from state", map[string]any{
 				"group_id": groupID,
 				"user_id":  userID,
@@ -217,9 +269,17 @@ func (r *groupMembershipResource) Delete(ctx context.Context, req resource.Delet
 		"user_id":  userID,
 	})
 
+	// See Create: serialize against every other Create/Delete for this user.
+	lock := lockForUser(userID)
+	lock.Lock()
+	defer lock.Unlock()
+
 	if err := r.client.RemoveUserFromGroup(userID, groupID); err != nil {
 		var status *client.HTTPError
-		if errors.As(err, &status) && status.StatusCode == 404 {
+		// As in Read: only a confirmed-missing user is "nothing left to
+		// remove". A 404 with MissingEndpoint set is a wrong or unsupported
+		// API path and must be reported, not swallowed as success.
+		if errors.As(err, &status) && status.StatusCode == 404 && !status.MissingEndpoint {
 			// The user no longer exists, so there is nothing left to remove.
 			tflog.Debug(ctx, "User no longer exists, nothing to remove", map[string]any{
 				"group_id": groupID,

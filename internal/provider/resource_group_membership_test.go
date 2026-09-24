@@ -6,6 +6,7 @@ package provider_test
 import (
 	"fmt"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
@@ -363,4 +364,104 @@ resource "pocketid_group_membership" "one" {
   user_id  = %[2]q
 }
 `, rName, userOneID)
+}
+
+// TestAccResourceGroupMembership_manyGroupsOneApply is the acceptance
+// analogue of the P1 concurrency finding, and the real intended use case:
+// adding one user to several groups in a single apply. Terraform applies
+// resources concurrently within one apply (default parallelism 10), which
+// used to race the read-modify-write against the user's group list and
+// silently drop some additions.
+func TestAccResourceGroupMembership_manyGroupsOneApply(t *testing.T) {
+	testAccPreCheck(t)
+	const groupCount = 5
+	rName := acctest.RandomWithPrefix("tf-acc-test")
+	userID := createTestUser(t, rName+"-user")
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccResourceGroupMembershipConfig_manyGroups(rName, userID, groupCount),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testAccCheckGroupMembershipExists("pocketid_group.g0", userID),
+					testAccCheckGroupMembershipExists("pocketid_group.g1", userID),
+					testAccCheckGroupMembershipExists("pocketid_group.g2", userID),
+					testAccCheckGroupMembershipExists("pocketid_group.g3", userID),
+					testAccCheckGroupMembershipExists("pocketid_group.g4", userID),
+					testAccCheckUserGroupCount(userID, groupCount),
+				),
+			},
+			// Destroying every pocketid_group_membership resource for this user
+			// in one apply is the same concurrent race in reverse.
+			{
+				Config: testAccResourceGroupMembershipConfig_manyGroupsOnly(rName, groupCount),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testAccCheckGroupMembershipAbsent("pocketid_group.g0", userID),
+					testAccCheckGroupMembershipAbsent("pocketid_group.g1", userID),
+					testAccCheckGroupMembershipAbsent("pocketid_group.g2", userID),
+					testAccCheckGroupMembershipAbsent("pocketid_group.g3", userID),
+					testAccCheckGroupMembershipAbsent("pocketid_group.g4", userID),
+					testAccCheckUserGroupCount(userID, 0),
+				),
+			},
+		},
+	})
+}
+
+// testAccCheckUserGroupCount asserts the user's total group count directly,
+// as a stronger check than five independent membership checks: it would
+// catch a race that dropped one addition even if the specific groups probed
+// above happened to be the ones that survived.
+func testAccCheckUserGroupCount(userID string, want int) resource.TestCheckFunc {
+	return func(_ *terraform.State) error {
+		c, err := testClient()
+		if err != nil {
+			return err
+		}
+		user, err := c.GetUser(userID)
+		if err != nil {
+			return err
+		}
+		if got := len(user.UserGroups); got != want {
+			groupIDs := make([]string, 0, len(user.UserGroups))
+			for _, g := range user.UserGroups {
+				groupIDs = append(groupIDs, g.ID)
+			}
+			return fmt.Errorf("user %s has %d groups (%s), want %d", userID, got, strings.Join(groupIDs, ","), want)
+		}
+		return nil
+	}
+}
+
+func testAccResourceGroupMembershipConfig_manyGroups(rName, userID string, n int) string {
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&b, `
+resource "pocketid_group" "g%[1]d" {
+  name          = "%[2]s-group-%[1]d"
+  friendly_name = "Membership Test Group %[1]d"
+}
+
+resource "pocketid_group_membership" "g%[1]d" {
+  group_id = pocketid_group.g%[1]d.id
+  user_id  = %[3]q
+}
+`, i, rName, userID)
+	}
+	return b.String()
+}
+
+func testAccResourceGroupMembershipConfig_manyGroupsOnly(rName string, n int) string {
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&b, `
+resource "pocketid_group" "g%[1]d" {
+  name          = "%[2]s-group-%[1]d"
+  friendly_name = "Membership Test Group %[1]d"
+}
+`, i, rName)
+	}
+	return b.String()
 }
