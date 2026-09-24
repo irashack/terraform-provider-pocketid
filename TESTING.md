@@ -44,32 +44,11 @@ lookup key on the `pocketid_user` data source. No schema change to any existing
 resource or data source. Tested with OpenTofu 1.12.6 and Terraform 1.16.0 on
 macOS ARM64, Docker via OrbStack.
 
-- `go vet ./...`, `gofmt -l`, and `golangci-lint run ./...` (v2.13.2) are clean.
-  `go test -race ./internal/...` passes, including new unit coverage: eight
-  cases for `Client.AddUserToGroup` / `RemoveUserFromGroup` /
-  `UserHasGroupMembership` (`internal/client/group_membership_test.go`),
-  fifteen for the new resource (`internal/resources/group_membership_resource_test.go`,
-  covering schema, configure, create/delete preserving other members, read
-  dropping state when the user or the membership is gone, the unsupported
-  in-place update, and import including invalid identifiers), and six for the
-  `pocketid_user` data source's new `email` lookup
-  (`internal/datasources/user_data_source_test.go`).
+- `go vet ./...`, `gofmt -l`, `golangci-lint run ./...` (v2.13.2), and
+  `go mod tidy -diff` are clean. `go test -race ./internal/...` passes.
 - `make docs` (tfplugindocs 0.25.0) regenerates only `docs/resources/group_membership.md`
   (new) and `docs/data-sources/user.md` (the `email` lookup key); `docs-check`
   is clean once committed.
-- The full acceptance suite (`./internal/provider -tags=acc`) passes on both
-  2.14.0 and 2.15.0: **63 of 63 tests**, including six new
-  `TestAccResourceGroupMembership_*` cases that exercise create/import, that
-  deleting one membership does not disturb a second Terraform-managed
-  membership of the same group, that deleting a Terraform-managed membership
-  leaves a member added directly through the API (outside Terraform) intact,
-  drift detection when a membership is removed outside Terraform, and an
-  invalid import identifier.
-- `./internal/datasources -tags=acc` passes on both 2.14.0 and 2.15.0: **37 of
-  37 tests**, including the new `TestAccUserDataSource_lookupByEmail`. This
-  package's acceptance tests are not wired into any Make target or CI workflow
-  (a pre-existing gap, not introduced here); they were run directly with the
-  same disposable fixture for this evidence.
 - Reproduced live, then documented rather than changed: a `pocketid_group_membership`
   resource combined with a `pocketid_user` resource for the *same* user, where
   that `pocketid_user` resource never sets `groups`, plans to clear the
@@ -83,6 +62,66 @@ macOS ARM64, Docker via OrbStack.
   (never through a `pocketid_user` resource), and the resource's docs warn
   against combining it with `pocketid_user.groups` for the same user.
   `pocketid_group` does not manage membership in any form and is unaffected.
+
+### Independent review (Codex, gpt-6-sol) and fixes — 2026-09-23
+
+A read-only review of the three commits above found five issues, each
+reproduced as a failing test against the pre-fix code before being fixed:
+
+1. **P1, blocking the real use case (one user added to ~15 groups in one
+   apply):** `Client.AddUserToGroup` / `RemoveUserFromGroup`'s read-modify-write
+   against `PUT /api/users/{id}/user-groups` raced when two
+   `pocketid_group_membership` resources for the same user ran concurrently —
+   Terraform's default parallelism is 10. `TestAccResourceGroupMembership_manyGroupsOneApply`
+   (one user, five groups, one apply) failed reliably against the unfixed
+   code. Fixed by serializing Create/Delete per user ID inside the provider
+   process with a package-level map of mutexes
+   (`internal/resources/group_membership_resource.go`); a concurrent writer
+   *outside* this provider process remains a documented, unfixable race (see
+   the resource's own docs and the changelog).
+2. **P2:** the `pocketid_user` data source's username/email lookups, and the
+   `pocketid_users` list data source, called `ListUsers()` once and silently
+   missed any user past the first page (server default 20 items per page).
+   Fixed with `Client.ListAllUsers`, which follows pagination fully and also
+   passes the search term to the server's `search` filter to narrow each page.
+   `pocketid_users` had the identical bug (found while extending the fix, not
+   in the original review) and uses the same helper.
+3. **P2:** `pocketid_group_membership`'s Read and Delete treated *every* 404
+   from checking the user as "gone" — including a 404 whose body means the API
+   path itself doesn't exist (`HTTPError.MissingEndpoint`: wrong base URL, or a
+   server too old to have the endpoint). Fixed to only treat a
+   confirmed-missing user as gone; a missing-endpoint 404 now surfaces as an
+   error on both paths.
+4. **P2:** the new resource's own example suggested combining it with a
+   `pocketid_user` resource that "never sets its own `groups` attribute" —
+   directly contradicting the resource's own warning (and finding 1's
+   evidence) that an omitted `groups` still authoritatively clears the
+   membership. Removed the suggestion from the template, generated docs, and
+   the example.
+5. **P3:** the `pocketid_user` data source's exactly-one-of-`id`/`username`/`email`
+   rule was enforced only at apply time inside Read. Added a `ConfigValidators`
+   (`datasourcevalidator.ExactlyOneOf`) so it fails at plan/validate time too.
+
+New coverage added for all five: `internal/resources/group_membership_resource_test.go`
+gained concurrent-adds and mixed-concurrent-add/remove tests for one user (run
+under `-race`) and missing-endpoint-vs-missing-user tests for Read and Delete;
+`internal/client/list_all_users_test.go` gained pagination and page-2 tests
+for `ListAllUsers`; `internal/datasources/user_data_source_test.go` and
+`users_data_source_test.go` gained page-2 lookup tests and a `ConfigValidators`
+test; `internal/provider/resource_group_membership_test.go` gained
+`TestAccResourceGroupMembership_manyGroupsOneApply`.
+
+Final counts after the fixes:
+
+- `go test -race ./internal/...` passes, including the new coverage above.
+- The full acceptance suite (`./internal/provider -tags=acc`) passes on both
+  2.14.0 and 2.15.0: **64 of 64 tests** (the six original
+  `TestAccResourceGroupMembership_*` cases plus the new concurrency test).
+- `./internal/datasources -tags=acc` passes on both 2.14.0 and 2.15.0: **40 of
+  40 tests** (37 before this review, plus the page-2 and `ConfigValidators`
+  tests). This package's acceptance tests are still not wired into any Make
+  target or CI workflow (a pre-existing gap, not introduced here); they were
+  run directly with the same disposable fixture for this evidence.
 - Not run: Linux or any other cross-built platform, Pocket ID 2.16, native
   Terraform/OpenTofu lifecycle/upgrade rehearsal (no schema change, so none is
   required by INSTALL.md's own criteria), and any live instance.
