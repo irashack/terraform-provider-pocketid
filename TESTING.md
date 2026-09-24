@@ -111,17 +111,74 @@ for `ListAllUsers`; `internal/datasources/user_data_source_test.go` and
 test; `internal/provider/resource_group_membership_test.go` gained
 `TestAccResourceGroupMembership_manyGroupsOneApply`.
 
-Final counts after the fixes:
+After this round: the full acceptance suite passed 64 of 64 on both 2.14.0
+and 2.15.0 (`./internal/provider -tags=acc`), and 40 of 40 on both
+(`./internal/datasources -tags=acc`, still not wired into any Make target or
+CI workflow, a pre-existing gap).
 
-- `go test -race ./internal/...` passes, including the new coverage above.
+### Second independent review round (Codex, gpt-6-sol) — 2026-09-23
+
+Re-review of the fixes above confirmed the lock, pagination, docs, and
+`ConfigValidators` changes, and found two more issues:
+
+1. **P2, blocking:** the fix above still accepted *every* 404 except the
+   exact `{"error": "API endpoint not found"}` sentinel as "user gone" — a
+   proxy or wrong base URL returning a generic (for example HTML) 404 would
+   still have been misread as a missing user, and Delete separately accepted
+   a 404 from the update-user-groups `PUT` itself, which does not prove the
+   user is gone. Fixed by reading the actual Pocket-ID source for the exact
+   positive signal (see below) instead of a negative "not this one other
+   thing" check, and, in Delete, re-`GET`-ing on a `PUT` 404 and accepting
+   only when that re-`GET` positively confirms the user is gone.
+2. **P3:** `Client.ListAllUsers` treated a nonempty page reporting
+   `pagination.totalPages` absent or zero as "no more pages", which would
+   have silently truncated a result behind a server that omitted or
+   misreported that field. Fixed to return an error for that case instead of
+   guessing.
+
+**Finding the exact confirmation signal:** read `backend/internal/service/user_service.go`,
+`backend/internal/apperror/{error,constructors}.go`, `backend/internal/middleware/error_handler.go`,
+and `backend/internal/dto/error_dto.go` from the pinned `v2.14.0` and `v2.15.0`
+tags via `gh api`/`raw.githubusercontent.com`. `GetUser` returns
+`apperror.UserNotFound()` (`New(CodeUserNotFound, http.StatusNotFound, "User
+not found")`, `CodeUserNotFound = "user_not_found"`) on `gorm.ErrRecordNotFound`;
+`ErrorHandlerMiddleware` serializes any `*apperror.Error` as
+`dto.ErrorDto{Error, Code, Details, RequestID}` (`json:"error"`, `json:"code"`,
+...). So a confirmed-missing user is `HTTP 404` with body
+`{"error": "User not found", "code": "user_not_found", "request_id": "..."}` —
+identical on both `v2.14.0` and `v2.15.0`. The "API endpoint not found"
+sentinel, by contrast, is a bare `gin.H{"error": ...}` from the router's
+unmatched-route handler (`backend/frontend/frontend_included.go`) with no
+`code` field, so the two never collide. Added `HTTPError.UserNotFound` (set
+only for this exact shape) and `client.IsUserNotFound(err)`; `RemoveUserFromGroup`
+now also re-`GET`s on a 404 from its own `PUT` and only treats that as
+"already removed" when `IsUserNotFound` confirms it there too.
+
+New coverage: nine `internal/client/group_membership_test.go` cases covering
+a confirmed-missing user (no `PUT` attempted), a generic 404 on the initial
+`GET` (error), a `PUT` 404 with the user still present on re-`GET` (error), a
+`PUT` 404 with the user confirmed gone on re-`GET` (success), and a `PUT` 500
+(no re-`GET` attempted, error); `internal/client/list_all_users_test.go`
+gained a malformed-pagination case; `internal/resources/group_membership_resource_test.go`
+gained the same generic-404 and `PUT`-404 cases at the resource level for
+Read and Delete; `internal/provider/resource_group_membership_test.go` gained
+`TestAccResourceGroupMembership_deleteWhenUserAlreadyGone` (deletes the user
+out of band, then confirms the whole lifecycle - refresh and, when reached,
+Delete - stays error-free).
+
+Final counts after both review rounds:
+
+- `go vet ./...`, `go vet -tags=acc ./...`, `gofmt -l`, `golangci-lint run
+  ./...` (0 issues), `go mod tidy -diff`, and `govulncheck` (0 reachable, same
+  2 pre-existing unused-module advisories) are all clean. `go test -race
+  ./internal/...` passes.
+- `make docs` / `docs-check`: no drift (this round changed no schema).
 - The full acceptance suite (`./internal/provider -tags=acc`) passes on both
-  2.14.0 and 2.15.0: **64 of 64 tests** (the six original
-  `TestAccResourceGroupMembership_*` cases plus the new concurrency test).
+  2.14.0 and 2.15.0: **65 of 65 tests** (64 after the first review round,
+  plus `TestAccResourceGroupMembership_deleteWhenUserAlreadyGone`).
 - `./internal/datasources -tags=acc` passes on both 2.14.0 and 2.15.0: **40 of
-  40 tests** (37 before this review, plus the page-2 and `ConfigValidators`
-  tests). This package's acceptance tests are still not wired into any Make
-  target or CI workflow (a pre-existing gap, not introduced here); they were
-  run directly with the same disposable fixture for this evidence.
+  40 tests** (unchanged by this round; still not wired into any Make target
+  or CI workflow, a pre-existing gap).
 - Not run: Linux or any other cross-built platform, Pocket ID 2.16, native
   Terraform/OpenTofu lifecycle/upgrade rehearsal (no schema change, so none is
   required by INSTALL.md's own criteria), and any live instance.

@@ -35,12 +35,20 @@ state plans empty.
   write is a separate, remaining window with no fix possible from the client
   side (Pocket-ID has no compare-and-swap primitive); this is documented on
   the resource.
-- Read and Delete only treat a *confirmed*-missing user as the membership
-  being gone (dropping it from state, or from Read, and treating Delete as
-  already-satisfied). A 404 whose body means the API path itself doesn't
-  exist (`HTTPError.MissingEndpoint` — wrong base URL, or a server too old to
-  have the endpoint) now surfaces as an error on both paths instead of being
-  treated the same as a missing user.
+- Read and Delete only treat a *positively confirmed* missing user as the
+  membership being gone (dropping it from state, or from Read, and treating
+  Delete as already-satisfied). Confirmation means Pocket-ID's own
+  structured `user_not_found` error code on a `GET /api/users/{id}` — found
+  by reading the pinned v2.14.0/v2.15.0 source (`apperror.UserNotFound()`,
+  serialized by `middleware.ErrorHandlerMiddleware` as `{"error": "User not
+  found", "code": "user_not_found", ...}`; identical on both versions). Any
+  other 404 — a generic proxy or load-balancer not-found page, a wrong base
+  URL, or the fork's own "API endpoint not found" sentinel for a server too
+  old to have the endpoint — surfaces as an error on both paths instead.
+  Delete's own update-user-groups `PUT` can also 404 without proving the
+  user is gone (for example, a transient routing problem); a 404 there
+  triggers exactly one re-`GET`, and only a positive confirmation from that
+  re-`GET` is accepted as success.
 - **Does not combine with `pocketid_user.groups`:** that attribute is already
   authoritative over a user's full group list — including resetting it to
   empty when `groups` is left unset in configuration, which
@@ -65,7 +73,10 @@ state plans empty.
   silently missed every user past the first page (the server's default page
   size is 20). Both now page through the complete result set with a new
   `Client.ListAllUsers`, which also passes the looked-up value to the
-  server's `search` filter to narrow each page fetched.
+  server's `search` filter to narrow each page fetched. `ListAllUsers`
+  treats a nonempty page reporting no valid `pagination.totalPages` as
+  malformed and returns an error, rather than silently assuming that page
+  was the last one and truncating the result without any signal.
 
 ## 2.4.102 — 2026-09-23
 
