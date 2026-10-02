@@ -1,6 +1,6 @@
 # Local checks and CI use the same entry points. No target deploys to a live instance.
 BINARY_NAME := terraform-provider-pocketid
-POCKETID_VERSION ?= 2.15.0
+POCKETID_VERSION ?= 2.17.0
 GO := go
 LINT := $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
 DOCS := $(GO) run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs@v0.25.0
@@ -43,8 +43,8 @@ docs-check: docs ## Require generated docs to match the checkout
 test-acc: ## Run client and application-config acceptance on one disposable official image
 	python3 scripts/disposable-pocketid.py $(POCKETID_VERSION) -- $(GO) test -v -count=1 -timeout 15m ./internal/provider -tags=acc -run '^TestAccResource(Client|ApplicationConfig)'
 
-test-acc-matrix: ## Run client and application-config acceptance on supported versions
-	@for version in 2.14.0 2.15.0; do $(MAKE) test-acc POCKETID_VERSION=$$version || exit $$?; done
+test-acc-matrix: ## Run client and application-config acceptance on every fixture version
+	@for version in 2.14.0 2.15.0 2.16.0 2.17.0; do $(MAKE) test-acc POCKETID_VERSION=$$version || exit $$?; done
 
 test-acc-provider: ## Run the full acceptance suite on one disposable official image
 	python3 scripts/disposable-pocketid.py $(POCKETID_VERSION) -- $(GO) test -v -count=1 -timeout 20m ./internal/provider -tags=acc

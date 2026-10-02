@@ -6,8 +6,11 @@
 go test -race ./internal/...
 go vet ./...
 golangci-lint run ./...
-python3 scripts/disposable-pocketid.py 2.14.0 -- go test -v -count=1 -timeout 20m ./internal/provider -tags=acc
-python3 scripts/disposable-pocketid.py 2.15.0 -- go test -v -count=1 -timeout 20m ./internal/provider -tags=acc
+for version in 2.16.0 2.17.0; do
+  python3 scripts/disposable-pocketid.py "$version" -- go test -v -count=1 -timeout 20m ./internal/provider -tags=acc
+  python3 scripts/disposable-pocketid.py "$version" -- go test -v -count=1 -timeout 20m ./internal/datasources -tags=acc
+done
+make test-acc-matrix  # client and application-config acceptance on 2.14.0, 2.15.0, 2.16.0 and 2.17.0
 ```
 
 The fixture pulls official versioned Pocket ID images. It creates an isolated

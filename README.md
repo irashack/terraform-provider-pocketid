@@ -94,9 +94,9 @@ It does not use your running Pocket ID instance.
 
 ```sh
 make check                  # formatting, vet, unit/race tests, build and lint
-make test-acc               # client and application-config lifecycle on Pocket ID 2.15.0
-make test-acc-matrix        # client lifecycle on both supported test images
-make test-acc-provider     # full suite on POCKETID_VERSION (default 2.15.0)
+make test-acc               # client and application-config lifecycle on Pocket ID 2.17.0
+make test-acc-matrix        # the same on every fixture version (2.14.0 to 2.17.0)
+make test-acc-provider      # full suite on POCKETID_VERSION (default 2.17.0)
 ```
 
 Pinned tooling commands and contributor guidance are in [CONTRIBUTING.md](CONTRIBUTING.md).
