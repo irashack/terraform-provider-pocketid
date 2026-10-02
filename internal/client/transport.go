@@ -182,6 +182,10 @@ func isRetryableError(err error) bool {
 	if errors.As(err, &transport) {
 		return transport.retryable
 	}
+	var body *ResponseBodyError
+	if errors.As(err, &body) {
+		return body.retryable
+	}
 	return false
 }
 
@@ -250,6 +254,9 @@ func (c *Client) send(ctx context.Context, method, endpoint, contentType string,
 
 	if ok {
 		if readErr != nil {
+			// A 2xx to a mutation means the server accepted it: only its
+			// result is unknown, and the request must not be repeated.
+			readErr.Accepted = method != http.MethodGet && method != http.MethodHead
 			return nil, readErr
 		}
 		return respBody, nil
@@ -315,20 +322,69 @@ const (
 // the body's content.
 var errResponseTooLarge = errors.New("response body exceeds the size limit")
 
+// ResponseBodyError is a response whose status arrived but whose body could
+// not be read in full: it was over the size limit (by its declared length or
+// as it arrived) or the read was interrupted. Its message never contains any
+// of the body.
+//
+// For a 2xx answer to a mutation, Accepted is set and the error also wraps
+// ErrResultUnread: the server accepted the change and only its result is
+// unknown, so the request must not be repeated. For a GET it is simply a
+// failed read.
+type ResponseBodyError struct {
+	StatusCode int
+	// Reason is a fixed description of what went wrong.
+	Reason string
+	// TooLarge is set when the body was over the size limit.
+	TooLarge bool
+	// Accepted is set for a 2xx answer to a mutation.
+	Accepted  bool
+	cause     error
+	retryable bool
+}
+
+func (e *ResponseBodyError) Error() string {
+	message := fmt.Sprintf("HTTP %d: %s", e.StatusCode, e.Reason)
+	if e.Accepted {
+		message += "; " + ErrResultUnread.Error()
+	}
+	return message
+}
+
+// Unwrap gives errResponseTooLarge or the read failure's classification (a
+// context error, a connection errno or io.ErrUnexpectedEOF), and
+// ErrResultUnread when Accepted.
+func (e *ResponseBodyError) Unwrap() []error {
+	var causes []error
+	if e.cause != nil {
+		causes = append(causes, e.cause)
+	}
+	if e.Accepted {
+		causes = append(causes, ErrResultUnread)
+	}
+	return causes
+}
+
 // readBounded reads at most limit bytes of the response body. A larger body
-// (by its Content-Length, or by what arrives) is an error that does not
-// include any of it.
-func readBounded(resp *http.Response, limit int64) ([]byte, error) {
+// (by its Content-Length, or by what arrives) or an interrupted read is a
+// ResponseBodyError that does not include any of it.
+func readBounded(resp *http.Response, limit int64) ([]byte, *ResponseBodyError) {
 	if resp.ContentLength > limit {
-		return nil, fmt.Errorf("HTTP %d: %w (%d bytes declared, limit %d); body not read", resp.StatusCode, errResponseTooLarge, resp.ContentLength, limit)
+		return nil, &ResponseBodyError{
+			StatusCode: resp.StatusCode, TooLarge: true, cause: errResponseTooLarge,
+			Reason: fmt.Sprintf("%s (%d bytes declared, limit %d); body not read", errResponseTooLarge, resp.ContentLength, limit),
+		}
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
-		reason, cause, _ := classifyTransportError(err)
-		return nil, &readError{statusCode: resp.StatusCode, reason: reason, cause: cause}
+		reason, cause, retryable := classifyTransportError(err)
+		return nil, &ResponseBodyError{StatusCode: resp.StatusCode, Reason: "reading the response body failed: " + reason, cause: cause, retryable: retryable}
 	}
 	if int64(len(body)) > limit {
-		return nil, fmt.Errorf("HTTP %d: %w (limit %d bytes); body discarded", resp.StatusCode, errResponseTooLarge, limit)
+		return nil, &ResponseBodyError{
+			StatusCode: resp.StatusCode, TooLarge: true, cause: errResponseTooLarge,
+			Reason: fmt.Sprintf("%s (limit %d bytes); body discarded", errResponseTooLarge, limit),
+		}
 	}
 	return body, nil
 }
@@ -397,20 +453,6 @@ func newTransportError(method, endpoint, stage string, err error) *TransportErro
 	reason, cause, retryable := classifyTransportError(err)
 	return &TransportError{Method: method, Endpoint: endpoint, Reason: stage + ": " + reason, cause: cause, retryable: retryable}
 }
-
-// readError is a response body that could not be read in full. Like
-// TransportError it carries only a fixed description.
-type readError struct {
-	statusCode int
-	reason     string
-	cause      error
-}
-
-func (e *readError) Error() string {
-	return fmt.Sprintf("HTTP %d: reading the response body failed: %s", e.statusCode, e.reason)
-}
-
-func (e *readError) Unwrap() error { return e.cause }
 
 // classifyTransportError maps a client or connection error to a fixed
 // description, the sentinel it may wrap, and whether a GET may be retried

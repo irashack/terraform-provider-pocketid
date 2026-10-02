@@ -28,6 +28,10 @@
 - A one-time access token response that contains no token is now reported as
   an error saying a token may have been created, instead of storing an empty
   token.
+- When Pocket ID accepts a change but its response cannot be read (too large,
+  or the connection drops while it arrives), the error now says the change was
+  made and only its result is unknown. The provider never sends such a change
+  again by itself.
 - Responses larger than 16 MiB (64 KiB for error responses) are refused
   without being read in full. Error messages and the provider's logs never
   include response content: not the body, not the server's reason phrase, and

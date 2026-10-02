@@ -319,3 +319,87 @@ func TestTransportErrorsKeepTheirClassification(t *testing.T) {
 		assert.False(t, isRetryableError(err))
 	})
 }
+
+// A 2xx whose body cannot be read in full means, for a mutation, that the
+// server accepted it: the error wraps ErrResultUnread, so callers treat the
+// outcome as uncertain and never repeat it. For a GET it is just an error.
+func TestUnreadableSuccessBody(t *testing.T) {
+	oversizedDeclared := func(string) string {
+		return fmt.Sprintf("HTTP/1.1 201 Created\r\nContent-Length: %d\r\n\r\n{}", maxResponseBodyBytes+1)
+	}
+	oversizedStreamed := func(string) string {
+		return "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n" + strings.Repeat(" ", maxResponseBodyBytes+1)
+	}
+	interrupted := func(string) string {
+		return "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n{\"token\":"
+	}
+	cases := []struct {
+		name     string
+		method   string
+		response func(string) string
+		tooLarge bool
+		cause    error
+	}{
+		{"POST declared oversize", http.MethodPost, oversizedDeclared, true, errResponseTooLarge},
+		{"PUT streamed oversize", http.MethodPut, oversizedStreamed, true, errResponseTooLarge},
+		{"POST interrupted", http.MethodPost, interrupted, false, io.ErrUnexpectedEOF},
+		{"DELETE interrupted", http.MethodDelete, interrupted, false, io.ErrUnexpectedEOF},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			url, requests := rawServer(t, tc.response)
+			c, err := NewClient(url, "test-token", false, 5)
+			require.NoError(t, err)
+
+			_, err = c.doRequest(context.Background(), tc.method, "/api/x", map[string]string{"a": "b"})
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrResultUnread)
+			assert.ErrorIs(t, err, tc.cause)
+			var body *ResponseBodyError
+			require.ErrorAs(t, err, &body)
+			assert.True(t, body.Accepted)
+			assert.Equal(t, tc.tooLarge, body.TooLarge)
+			assert.Equal(t, int32(1), requests.Load(), "an accepted mutation is never repeated")
+		})
+	}
+	t.Run("GET oversize is only an error", func(t *testing.T) {
+		url, requests := rawServer(t, oversizedDeclared)
+		c, err := NewClient(url, "test-token", false, 5)
+		require.NoError(t, err)
+		_, err = c.doRequest(context.Background(), http.MethodGet, "/api/x", nil)
+		require.Error(t, err)
+		assert.False(t, errors.Is(err, ErrResultUnread))
+		assert.ErrorIs(t, err, errResponseTooLarge)
+		assert.Equal(t, int32(1), requests.Load(), "an oversized answer is not retried")
+	})
+	t.Run("GET interrupted is only an error", func(t *testing.T) {
+		url, _ := rawServer(t, interrupted)
+		c, err := NewClient(url, "test-token", false, 5)
+		require.NoError(t, err)
+		_, err = c.doRequest(context.Background(), http.MethodGet, "/api/x", nil)
+		require.Error(t, err)
+		assert.False(t, errors.Is(err, ErrResultUnread))
+	})
+	t.Run("rejection with an oversized body stays a rejection", func(t *testing.T) {
+		url, _ := rawServer(t, func(string) string {
+			return fmt.Sprintf("HTTP/1.1 400 Bad Request\r\nContent-Length: %d\r\n\r\n", maxErrorBodyBytes+1) + strings.Repeat(" ", maxErrorBodyBytes+1)
+		})
+		c, err := NewClient(url, "test-token", false, 5)
+		require.NoError(t, err)
+		_, err = c.doRequest(context.Background(), http.MethodPost, "/api/x", nil)
+		assert.False(t, errors.Is(err, ErrResultUnread))
+		assert.True(t, IsDefiniteRejection(err))
+	})
+	// The callers that already handle ErrResultUnread get it for these too.
+	t.Run("one-time token and user groups", func(t *testing.T) {
+		url, requests := rawServer(t, interrupted)
+		c, err := NewClient(url, "test-token", false, 5)
+		require.NoError(t, err)
+		const user = "11111111-1111-4111-8111-111111111111"
+		_, err = c.CreateOneTimeAccessToken(context.Background(), user, &OneTimeAccessTokenRequest{TTL: "1h"})
+		assert.ErrorIs(t, err, ErrResultUnread)
+		_, err = c.UpdateUserGroups(context.Background(), user, []string{"g"})
+		assert.ErrorIs(t, err, ErrResultUnread)
+		assert.Equal(t, int32(2), requests.Load())
+	})
+}
