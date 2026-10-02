@@ -315,3 +315,31 @@ resource "pocketid_group" "users" {
 }
 `, rName, rName, rName)
 }
+
+// A group deleted outside Terraform leaves state on the next refresh and is
+// created again, instead of making every plan fail.
+func TestAccResourceGroup_deletedOutsideTerraform(t *testing.T) {
+	resourceName := "pocketid_group.test"
+	config := testAccResourceGroupConfig_basic(acctest.RandomWithPrefix("tf-acc-test")+"-deleted", "Deleted outside")
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:             config,
+				Check:              testAccDeleteOutsideTerraform(resourceName, "/api/user-groups"),
+				ExpectNonEmptyPlan: true,
+			},
+			{
+				Config:             config,
+				PlanOnly:           true,
+				ExpectNonEmptyPlan: true,
+			},
+			{
+				Config: config,
+				Check:  testAccCheckExistsOnServer(resourceName, "/api/user-groups"),
+			},
+		},
+	})
+}

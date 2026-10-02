@@ -317,6 +317,15 @@ func (r *userResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	// Get user from API
 	userResp, err := r.client.GetUser(ctx, state.ID.ValueString())
 	if err != nil {
+		// Only Pocket ID's own "user not found" proves the user is gone; a
+		// proxy's or a missing route's 404 stays an error.
+		if client.IsNotFound(err, client.ResourceUser) {
+			tflog.Warn(ctx, "User no longer exists, removing it from state", map[string]any{
+				"id": state.ID.ValueString(),
+			})
+			resp.State.RemoveResource(ctx)
+			return
+		}
 		resp.Diagnostics.AddError(
 			"Error reading user",
 			"Could not read user ID "+state.ID.ValueString()+": "+err.Error(),
@@ -545,8 +554,15 @@ func (r *userResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 		"id": state.ID.ValueString(),
 	})
 
-	// Delete the user
+	// Delete the user. A user Pocket ID confirms is already gone needs no
+	// deletion; any other error, including a generic 404, stays an error.
 	err := r.client.DeleteUser(ctx, state.ID.ValueString())
+	if err != nil && client.IsNotFound(err, client.ResourceUser) {
+		tflog.Warn(ctx, "User was already deleted", map[string]any{
+			"id": state.ID.ValueString(),
+		})
+		return
+	}
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error deleting user",
