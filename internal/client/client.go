@@ -235,8 +235,9 @@ func (c *Client) doSingleRequest(ctx context.Context, method, endpoint string, b
 	// Error bodies can echo tokens or secrets. Preserve status, never their contents.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var payload struct {
-			Error string `json:"error"`
-			Code  string `json:"code"`
+			Error   string         `json:"error"`
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
 		}
 		parsed := json.Unmarshal(respBody, &payload) == nil
 		missing := resp.StatusCode == 404 && parsed && payload.Error == "API endpoint not found"
@@ -247,10 +248,16 @@ func (c *Client) doSingleRequest(ctx context.Context, method, endpoint string, b
 		// serialized by middleware.ErrorHandlerMiddleware). The unmatched-route
 		// 404 above is a bare gin.H with no "code" field, so the two never collide.
 		userNotFound := resp.StatusCode == 404 && parsed && payload.Code == "user_not_found"
+		// A missing OIDC client is apperror.NotFound("OIDC client"): code
+		// "not_found" with details.resource "OIDC client", identical in the
+		// v2.14.0 to v2.17.0 source (getClientInternal and DeleteClient). Other
+		// resources share the "not_found" code, so the resource must match too.
+		resource, _ := payload.Details["resource"].(string)
+		clientNotFound := resp.StatusCode == 404 && parsed && payload.Code == "not_found" && resource == "OIDC client"
 		if resp.StatusCode == 429 {
 			return nil, &RateLimitError{StatusCode: http.StatusTooManyRequests, Message: http.StatusText(http.StatusTooManyRequests), RetryAfter: resp.Header.Get("Retry-After")}
 		}
-		return nil, &HTTPError{StatusCode: resp.StatusCode, MissingEndpoint: missing, UserNotFound: userNotFound}
+		return nil, &HTTPError{StatusCode: resp.StatusCode, MissingEndpoint: missing, UserNotFound: userNotFound, ClientNotFound: clientNotFound}
 	}
 
 	return respBody, nil
@@ -971,6 +978,9 @@ type HTTPError struct {
 	// a proxy's generic not-found page, or an endpoint that doesn't exist on
 	// an older server). See IsUserNotFound.
 	UserNotFound bool
+	// ClientNotFound is set only for a 404 whose body is Pocket-ID's own
+	// structured not-found error for an OIDC client. See IsOIDCClientNotFound.
+	ClientNotFound bool
 }
 
 func (e *HTTPError) Error() string {
@@ -983,6 +993,14 @@ func (e *HTTPError) Error() string {
 func IsUserNotFound(err error) bool {
 	var status *HTTPError
 	return errors.As(err, &status) && status.UserNotFound
+}
+
+// IsOIDCClientNotFound reports whether err is a confirmed "no such OIDC
+// client" response from Pocket-ID. A bare, proxy or missing-route 404 does
+// not prove the client is gone and never satisfies it.
+func IsOIDCClientNotFound(err error) bool {
+	var status *HTTPError
+	return errors.As(err, &status) && status.ClientNotFound
 }
 
 // CheckSecretAPI validates compatibility before a confidential client is created.

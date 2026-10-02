@@ -992,15 +992,21 @@ func (r *clientResource) failedCreate(ctx context.Context, plan *clientResourceM
 			resp.Diagnostics.AddError("OIDC client creation rolled back", "The newly created client was deleted after a rejected operation: "+cause.Error())
 			return
 		} else {
-			// A failed DELETE might still have committed. Verify before recording it.
+			// A failed DELETE might still have committed. Only Pocket ID's own
+			// not-found error for the client confirms that; a bare, proxy or
+			// missing-route 404 does not, and dropping the ID on one would
+			// orphan the client together with any secret it holds.
 			_, readErr := r.client.GetClient(id)
-			var status *client.HTTPError
-			if errors.As(readErr, &status) && status.StatusCode == 404 {
+			if client.IsOIDCClientNotFound(readErr) {
 				resp.Diagnostics.AddError("OIDC client rollback verified", "Cleanup returned an error, but a subsequent read confirmed the client is absent: "+cause.Error())
 				return
 			}
+			outcome := "A read found the client still exists."
+			if readErr != nil {
+				outcome = "Whether the client still exists could not be confirmed (read: " + readErr.Error() + ")."
+			}
 			resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
-			resp.Diagnostics.AddError("OIDC client cleanup failed", "Client ID "+id+" remains in state. Stop and inspect before recovery; do not retry apply blindly. Cleanup: "+cleanupErr.Error()+"; original operation: "+cause.Error())
+			resp.Diagnostics.AddError("OIDC client cleanup failed", "Client ID "+id+" remains in state. "+outcome+" Stop and inspect before recovery; do not retry apply blindly. Cleanup: "+cleanupErr.Error()+"; original operation: "+cause.Error())
 			return
 		}
 	}
