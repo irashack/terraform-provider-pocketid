@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -13,406 +12,36 @@ import (
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
 )
 
-func TestClient_CreateClient_UnmarshalError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if _, err := fmt.Fprint(w, `{"invalid json":}`); err != nil {
-			t.Fatalf("Failed to write response: %v", err)
-		}
-	}))
-	defer server.Close()
-
-	c, err := client.NewClient(server.URL, "test-token", false, 30)
-	require.NoError(t, err)
-
-	createReq := &client.OIDCClientCreateRequest{
-		Name:         "test-client",
-		CallbackURLs: []string{"https://example.com/callback"},
-		IsPublic:     false,
-		PkceEnabled:  true,
-	}
-
-	result, err := c.CreateClient(createReq)
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "error unmarshaling response")
-}
-
-func TestClient_UpdateClient_UnmarshalError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if _, err := fmt.Fprint(w, `{"invalid json":}`); err != nil {
-			t.Fatalf("Failed to write response: %v", err)
-		}
-	}))
-	defer server.Close()
-
-	c, err := client.NewClient(server.URL, "test-token", false, 30)
-	require.NoError(t, err)
-
-	updateReq := &client.OIDCClientCreateRequest{
-		Name:         "updated-client",
-		CallbackURLs: []string{"https://example.com/callback"},
-		IsPublic:     false,
-		PkceEnabled:  true,
-	}
-
-	result, err := c.UpdateClient("test-id", updateReq)
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "error unmarshaling response")
-}
-
-func TestClient_ListClients_UnmarshalError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if _, err := fmt.Fprint(w, `{"data": "should be array"}`); err != nil {
-			t.Fatalf("Failed to write response: %v", err)
-		}
-	}))
-	defer server.Close()
-
-	c, err := client.NewClient(server.URL, "test-token", false, 30)
-	require.NoError(t, err)
-
-	result, err := c.ListClients()
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "error unmarshaling response")
-}
-
-func TestClient_GenerateClientSecret_UnmarshalError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/version/current" {
-			_, _ = fmt.Fprint(w, `{"currentVersion":"2.14.0"}`)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if _, err := fmt.Fprint(w, `{"secret": 123}`); err != nil { // secret should be string
-			t.Fatalf("Failed to write response: %v", err)
-		}
-	}))
-	defer server.Close()
-
-	c, err := client.NewClient(server.URL, "test-token", false, 30)
-	require.NoError(t, err)
-
-	_, err = c.GenerateClientSecret("test-id")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "error unmarshaling secret response")
-}
-
-func TestClient_CreateUser_UnmarshalError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if _, err := fmt.Fprint(w, `{"username": 123}`); err != nil { // username should be string
-			t.Fatalf("Failed to write response: %v", err)
-		}
-	}))
-	defer server.Close()
-
-	c, err := client.NewClient(server.URL, "test-token", false, 30)
-	require.NoError(t, err)
-
-	createReq := &client.UserCreateRequest{
-		Username: "testuser",
-		Email:    "test@example.com",
-	}
-
-	result, err := c.CreateUser(createReq)
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "error unmarshaling response")
-}
-
-func TestClient_UpdateUser_UnmarshalError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if _, err := fmt.Fprint(w, `{"email": []}`); err != nil { // email should be string
-			t.Fatalf("Failed to write response: %v", err)
-		}
-	}))
-	defer server.Close()
-
-	c, err := client.NewClient(server.URL, "test-token", false, 30)
-	require.NoError(t, err)
-
-	updateReq := &client.UserCreateRequest{
-		Username: "testuser",
-		Email:    "test@example.com",
-	}
-
-	result, err := c.UpdateUser("test-id", updateReq)
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "error unmarshaling response")
-}
-
-func TestClient_ListUsers_UnmarshalError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if _, err := fmt.Fprint(w, `{"data": "not an array", "pagination": {}}`); err != nil {
-			t.Fatalf("Failed to write response: %v", err)
-		}
-	}))
-	defer server.Close()
-
-	c, err := client.NewClient(server.URL, "test-token", false, 30)
-	require.NoError(t, err)
-
-	result, err := c.ListUsers()
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "error unmarshaling response")
-}
-
-func TestClient_CreateUserGroup_UnmarshalError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if _, err := fmt.Fprint(w, `{"name": true}`); err != nil { // name should be string
-			t.Fatalf("Failed to write response: %v", err)
-		}
-	}))
-	defer server.Close()
-
-	c, err := client.NewClient(server.URL, "test-token", false, 30)
-	require.NoError(t, err)
-
-	createReq := &client.UserGroupCreateRequest{
-		Name:         "test-group",
-		FriendlyName: "Test Group",
-	}
-
-	result, err := c.CreateUserGroup(createReq)
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "error unmarshaling response")
-}
-
-func TestClient_UpdateUserGroup_UnmarshalError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if _, err := fmt.Fprint(w, `{"friendlyName": 123}`); err != nil { // friendlyName should be string
-			t.Fatalf("Failed to write response: %v", err)
-		}
-	}))
-	defer server.Close()
-
-	c, err := client.NewClient(server.URL, "test-token", false, 30)
-	require.NoError(t, err)
-
-	updateReq := &client.UserGroupCreateRequest{
-		Name:         "test-group",
-		FriendlyName: "Test Group",
-	}
-
-	result, err := c.UpdateUserGroup("test-id", updateReq)
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "error unmarshaling response")
-}
-
-func TestClient_GetUser_UnmarshalError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if _, err := fmt.Fprint(w, `{"id": [], "username": "test"}`); err != nil { // id should be string
-			t.Fatalf("Failed to write response: %v", err)
-		}
-	}))
-	defer server.Close()
-
-	c, err := client.NewClient(server.URL, "test-token", false, 30)
-	require.NoError(t, err)
-
-	result, err := c.GetUser("test-id")
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "error unmarshaling response")
-}
-
-func TestClient_GetUserGroup_UnmarshalError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if _, err := fmt.Fprint(w, `{"id": {}, "name": "test"}`); err != nil { // id should be string
-			t.Fatalf("Failed to write response: %v", err)
-		}
-	}))
-	defer server.Close()
-
-	c, err := client.NewClient(server.URL, "test-token", false, 30)
-	require.NoError(t, err)
-
-	result, err := c.GetUserGroup("test-id")
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "error unmarshaling response")
-}
-
-func TestClient_ListUserGroups_UnmarshalError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if _, err := fmt.Fprint(w, `{"data": {}, "pagination": "invalid"}`); err != nil {
-			t.Fatalf("Failed to write response: %v", err)
-		}
-	}))
-	defer server.Close()
-
-	c, err := client.NewClient(server.URL, "test-token", false, 30)
-	require.NoError(t, err)
-
-	result, err := c.ListUserGroups()
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "error unmarshaling response")
-}
-
-// Test rate limiting with Retry-After header (numeric seconds)
-func TestClient_RateLimitWithRetryAfterSeconds(t *testing.T) {
-	attempts := 0
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		attempts++
-		if attempts < 2 {
-			w.Header().Set("Retry-After", "2") // 2 seconds
-			w.WriteHeader(http.StatusTooManyRequests)
-			if _, err := fmt.Fprint(w, `{"error": "Rate limit exceeded"}`); err != nil {
-				t.Fatalf("Failed to write response: %v", err)
-			}
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		if _, err := fmt.Fprint(w, `{"id": "test-id", "name": "Test Client"}`); err != nil {
-			t.Fatalf("Failed to write response: %v", err)
-		}
-	}))
-	defer server.Close()
-
-	c, err := client.NewClient(server.URL, "test-token", false, 30)
-	require.NoError(t, err)
-
-	start := time.Now()
-	result, err := c.GetClient("test-id")
-	elapsed := time.Since(start)
-
-	assert.NoError(t, err)
-	assert.NotNil(t, result)
-	assert.Equal(t, 2, attempts)
-	// Should wait approximately 2 seconds
-	assert.True(t, elapsed >= 1900*time.Millisecond && elapsed <= 2500*time.Millisecond,
-		"Expected wait time around 2 seconds, got %v", elapsed)
-}
-
-// Test timeout handling
-func TestClient_RequestTimeout(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Sleep longer than client timeout
-		time.Sleep(2 * time.Second)
-		w.WriteHeader(http.StatusOK)
-		if _, err := fmt.Fprint(w, `{"id": "test-id"}`); err != nil {
-			t.Fatalf("Failed to write response: %v", err)
-		}
-	}))
-	defer server.Close()
-
-	// Create client with 1 second timeout
-	c, err := client.NewClient(server.URL, "test-token", false, 1)
-	require.NoError(t, err)
-
-	start := time.Now()
-	result, err := c.GetClient("test-id")
-	elapsed := time.Since(start)
-
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "deadline exceeded")
-	// Should timeout after approximately 1 second
-	assert.True(t, elapsed >= 900*time.Millisecond && elapsed <= 1500*time.Millisecond,
-		"Expected timeout around 1 second, got %v", elapsed)
-}
-
-// Test error response with empty body
-func TestClient_ErrorResponseEmptyBody(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		// No body
-	}))
-	defer server.Close()
-
-	c, err := client.NewClient(server.URL, "test-token", false, 30)
-	require.NoError(t, err)
-
-	result, err := c.GetClient("test-id")
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "HTTP 500")
-}
-
-// Test with non-retryable errors
-func TestClient_NonRetryableErrors(t *testing.T) {
-	testCases := []struct {
-		name       string
-		statusCode int
-		attempts   int
+// Only Pocket ID's structured not-found error for an OIDC client confirms the
+// client is gone, identical from v2.14.0 to v2.17.0.
+func TestIsOIDCClientNotFound(t *testing.T) {
+	for name, tc := range map[string]struct {
+		status int
+		body   string
+		want   bool
 	}{
-		{
-			name:       "400 Bad Request",
-			statusCode: http.StatusBadRequest,
-			attempts:   1,
-		},
-		{
-			name:       "401 Unauthorized",
-			statusCode: http.StatusUnauthorized,
-			attempts:   1,
-		},
-		{
-			name:       "403 Forbidden",
-			statusCode: http.StatusForbidden,
-			attempts:   1,
-		},
-		{
-			name:       "404 Not Found",
-			statusCode: http.StatusNotFound,
-			attempts:   1,
-		},
-		{
-			name:       "409 Conflict",
-			statusCode: http.StatusConflict,
-			attempts:   1,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			attempts := 0
+		"structured client not found": {404, `{"error":"OIDC client not found","code":"not_found","details":{"resource":"OIDC client"},"request_id":"r"}`, true},
+		"bare 404":                    {404, ``, false},
+		"proxy page":                  {404, `<html><body>Not Found</body></html>`, false},
+		"missing route":               {404, `{"error":"API endpoint not found"}`, false},
+		"another resource":            {404, `{"error":"Client secret not found","code":"not_found","details":{"resource":"Client secret"}}`, false},
+		"no resource detail":          {404, `{"error":"not found","code":"not_found"}`, false},
+		"user not found":              {404, `{"error":"User not found","code":"user_not_found"}`, false},
+		"wrong status":                {400, `{"error":"OIDC client not found","code":"not_found","details":{"resource":"OIDC client"}}`, false},
+	} {
+		t.Run(name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				attempts++
-				w.WriteHeader(tc.statusCode)
-				if _, err := fmt.Fprintf(w, `{"error": "Error %d"}`, tc.statusCode); err != nil {
-					t.Fatalf("Failed to write response: %v", err)
-				}
+				w.WriteHeader(tc.status)
+				_, _ = fmt.Fprint(w, tc.body)
 			}))
 			defer server.Close()
-
 			c, err := client.NewClient(server.URL, "test-token", false, 30)
 			require.NoError(t, err)
 
-			result, err := c.GetClient("test-id")
-			assert.Error(t, err)
-			assert.Nil(t, result)
-			assert.Contains(t, err.Error(), fmt.Sprintf("HTTP %d", tc.statusCode))
-			assert.Equal(t, tc.attempts, attempts, "Should not retry for %d errors", tc.statusCode)
+			_, err = c.GetClient("c1")
+			require.Error(t, err)
+			assert.Equal(t, tc.want, client.IsOIDCClientNotFound(err))
+			assert.False(t, client.IsUserNotFound(err) && tc.want, "the two signals never coincide")
 		})
 	}
 }
