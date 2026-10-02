@@ -6,7 +6,7 @@ LINT := $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
 DOCS := $(GO) run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs@v0.25.0
 
 .DEFAULT_GOAL := help
-.PHONY: help build test test-coverage fmt fmt-check vet lint check docs docs-check test-acc test-acc-matrix test-acc-provider vuln actionlint release-check clean
+.PHONY: help build test test-scripts test-coverage fmt fmt-check vet lint check docs docs-check test-acc test-acc-matrix test-acc-provider vuln actionlint release-check clean
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "%-24s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
@@ -15,6 +15,9 @@ build: ## Build a development binary in bin/ (does not install it)
 
 test: ## Run unit tests with the race detector
 	$(GO) test -race ./internal/...
+
+test-scripts: ## Run the fixture script's unit tests (no container)
+	python3 -m unittest discover -s scripts -p 'test_*.py'
 
 test-coverage: ## Write a local unit-coverage report
 	$(GO) test -race -coverprofile=coverage.out ./internal/...
@@ -31,7 +34,7 @@ vet: ## Run go vet
 lint: ## Run pinned golangci-lint (Go downloads it on first use)
 	$(LINT) run ./...
 
-check: fmt-check vet test build lint ## Run the core checks used by CI
+check: fmt-check vet test test-scripts build lint ## Run the core checks used by CI
 
 docs: ## Generate resource and provider documentation
 	$(DOCS) generate --provider-name=terraform-provider-pocketid

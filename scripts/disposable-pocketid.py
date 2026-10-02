@@ -18,10 +18,39 @@ import urllib.request
 import uuid
 
 
+def check_failure_log_path(path):
+    """Refuse a failure-log destination that already exists (a file, a
+    directory or a symlink, even a dangling one) or whose directory is
+    missing, before any container is started."""
+    if os.path.lexists(path):
+        raise ValueError("POCKETID_FIXTURE_FAILURE_LOG must name a path that does not exist yet")
+    if not os.path.isdir(os.path.dirname(os.path.abspath(path))):
+        raise ValueError("POCKETID_FIXTURE_FAILURE_LOG must be in an existing directory")
+
+
+def write_failure_log(path, data):
+    """Create path exclusively with mode 0600 and write data to it. O_EXCL
+    with O_CREAT fails on any existing entry, symlinks included, so the raw
+    output can never land in, or through, a file someone else prepared."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    fd = os.open(path, flags, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        view = memoryview(data)
+        while view:
+            written = os.write(fd, view)
+            view = view[written:]
+    finally:
+        os.close(fd)
+
+
 def run(version, command):
     if version not in ("2.14.0", "2.15.0", "2.16.0", "2.17.0"):
         raise ValueError("version must be in the tested matrix")
     os.umask(0o077)
+    failure_log = os.environ.get("POCKETID_FIXTURE_FAILURE_LOG")
+    if failure_log:
+        check_failure_log_path(failure_log)
     with tempfile.TemporaryDirectory(prefix="pocketid-fixture-") as tmp:
         root = Path(tmp)
         data = root / "data"
@@ -99,8 +128,11 @@ def run(version, command):
             if result.returncode:
                 (root / "failure.log").write_bytes(output)
                 # Optional private log destination for local diagnosis, outside git.
-                if os.environ.get("POCKETID_FIXTURE_FAILURE_LOG"):
-                    Path(os.environ["POCKETID_FIXTURE_FAILURE_LOG"]).write_bytes(output)
+                if failure_log:
+                    try:
+                        write_failure_log(failure_log, output)
+                    except OSError:
+                        raise RuntimeError("fixture command failed; the failure log could not be created (it must not exist yet)")
                 raise RuntimeError("fixture command failed; raw output suppressed")
             print("Fixture " + version + " command PASS", flush=True)
         finally:
