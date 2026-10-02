@@ -63,6 +63,10 @@ resource "pocketid_client" "web_app" {
     "https://staging.example.com/logout"
   ]
 
+  # Pocket ID posts a logout token here when a user's access to the client
+  # is revoked, for example when the user is disabled (Pocket ID 2.17.0 or later).
+  backchannel_logout_url = "https://app.example.com/backchannel-logout"
+
   is_public    = false
   pkce_enabled = true
 }
@@ -186,6 +190,7 @@ output "spa_client_id" {
 ### Optional
 
 - `allowed_user_groups` (List of String) List of user group IDs that are allowed to use this client. If empty, all users can use this client.
+- `backchannel_logout_url` (String) URL to which Pocket ID sends an OpenID Connect Back-Channel Logout token when a user's access to this client is revoked: the user is disabled or deleted, loses access through a group change, or revokes the authorization, or the client is deleted. Must be an absolute http or https URL without a fragment; a public client (is_public = true) requires https. Requires Pocket ID 2.17.0 or later. When omitted, the client has no back-channel logout URL.
 - `client_id` (String) The client ID to use for the OIDC client. If not set, one will be generated. Must be between 2 and 128 characters.
 - `federated_identities` (Attributes List) List of federated identities (workload identity federation) allowed to authenticate as this client. (see [below for nested schema](#nestedatt--federated_identities))
 - `is_public` (Boolean) Whether this is a public client (no client secret). Defaults to false.

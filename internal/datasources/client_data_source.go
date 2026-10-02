@@ -34,6 +34,7 @@ type clientDataSourceModel struct {
 	Name                     types.String `tfsdk:"name"`
 	CallbackURLs             types.List   `tfsdk:"callback_urls"`
 	LogoutCallbackURLs       types.List   `tfsdk:"logout_callback_urls"`
+	BackchannelLogoutURL     types.String `tfsdk:"backchannel_logout_url"`
 	IsPublic                 types.Bool   `tfsdk:"is_public"`
 	PkceEnabled              types.Bool   `tfsdk:"pkce_enabled"`
 	AllowedUserGroups        types.List   `tfsdk:"allowed_user_groups"`
@@ -71,6 +72,10 @@ func (d *clientDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 				Description: "List of allowed logout callback URLs for the OIDC client.",
 				Computed:    true,
 				ElementType: types.StringType,
+			},
+			"backchannel_logout_url": schema.StringAttribute{
+				Description: "The OpenID Connect Back-Channel Logout URL of the client; null when it has none or the server predates Pocket ID 2.17.0.",
+				Computed:    true,
 			},
 			"is_public": schema.BoolAttribute{
 				Description: "Whether this is a public client (no client secret).",
@@ -157,6 +162,11 @@ func (d *clientDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 		state.LaunchURL = types.StringValue(clientResp.LaunchURL)
 	} else {
 		state.LaunchURL = types.StringNull()
+	}
+	if clientResp.BackchannelLogoutURL != "" {
+		state.BackchannelLogoutURL = types.StringValue(clientResp.BackchannelLogoutURL)
+	} else {
+		state.BackchannelLogoutURL = types.StringNull()
 	}
 
 	// Map callback URLs

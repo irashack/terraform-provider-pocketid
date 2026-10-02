@@ -10,8 +10,11 @@ outside Terraform. The new build takes over the same state and must not change
 the client's identity or secret, and must leave each identity's replay
 protection exactly as the server has it: through an unrelated update applied
 WITHOUT a refresh, while state still predates the attribute, and afterwards
-through an ordinary empty plan and another update. Everything lives in a
-temporary directory; only the fixture is touched.
+through an ordinary empty plan and another update. On Pocket ID 2.17.0 and
+later, a back-channel logout URL an administrator sets outside Terraform must
+likewise survive an unrefreshed update, show as a change on the next refreshed
+plan, and plan empty once configured. Everything lives in a temporary
+directory; only the fixture is touched.
 """
 import json
 import os
@@ -34,6 +37,9 @@ assert released, "released archive must keep its published file name"
 released_version, platform = released.groups()
 # Releases before 2.4.0 neither send nor record replay_protection.
 tracks_replay = tuple(int(part) for part in released_version.split(".")) >= (2, 4, 0)
+# Pocket ID 2.17.0 adds a back-channel logout URL to clients.
+backchannel = tuple(int(part) for part in os.environ["POCKETID_TEST_VERSION"].split(".")) >= (2, 17, 0)
+OUTSIDE_URL = "https://outside.example.invalid/backchannel-logout"
 cid = "upgrade-" + uuid.uuid4().hex[:12]
 OPEN_ISSUER = "https://open.example.invalid"  # stays unprotected
 GUARDED_ISSUER = "https://guarded.example.invalid"  # an administrator protects this one
@@ -45,6 +51,17 @@ def api(method="GET", body=None):
         data=json.dumps(body).encode() if body is not None else None)
     with urllib.request.urlopen(req, timeout=15) as response:
         return json.load(response)
+
+
+def secret_count():
+    req = urllib.request.Request(base+"/api/oidc/clients/"+cid+"/secrets",
+        headers={"X-API-KEY": os.environ["POCKETID_API_TOKEN"]})
+    with urllib.request.urlopen(req, timeout=15) as response:
+        return len(json.load(response) or [])
+
+
+def server_backchannel():
+    return api().get("backchannelLogoutURL", "")
 
 
 def server_replay_protection():
@@ -72,7 +89,8 @@ with tempfile.TemporaryDirectory(prefix="pocketid-upgrade-") as tmp:
         if key.startswith("TF_LOG") or key in ("TF_PLUGIN_CACHE_DIR", "TF_REATTACH_PROVIDERS"):
             del env[key]
 
-    def config(provider_version, name):
+    def config(provider_version, name, backchannel_url=None):
+        extra = " backchannel_logout_url = "+json.dumps(backchannel_url)+"\n" if backchannel_url else ""
         (work/"main.tf").write_text('''terraform {
  required_providers {
   pocketid = {
@@ -91,7 +109,7 @@ resource "pocketid_client" "test" {
   { issuer = "'''+OPEN_ISSUER+'''", subject = "upgrade" },
   { issuer = "'''+GUARDED_ISSUER+'''", subject = "upgrade" },
  ]
-}
+'''+extra+'''}
 ''')
 
     def run(*args, ok=(0,)):
@@ -116,16 +134,42 @@ resource "pocketid_client" "test" {
         # same-schema patch upgrade only has to change nothing.
         expected = {OPEN_ISSUER: True, GUARDED_ISSUER: True}
         assert server_replay_protection() == expected
+        released_secrets = secret_count()
         config(DEV_VERSION, "upgrade-fixture")
         run("init", "-upgrade", "-input=false")
         run("plan", "-detailed-exitcode", "-input=false")  # exit 2 would mean a planned change
-        config(DEV_VERSION, "upgrade-fixture-renamed")
+        url = None
+        if backchannel:
+            # An administrator sets a back-channel logout URL outside Terraform;
+            # state written by the released provider has no such attribute.
+            client = api()
+            client["backchannelLogoutURL"] = OUTSIDE_URL
+            api("PUT", client)
+            assert server_backchannel() == OUTSIDE_URL, "fixture could not set the back-channel logout URL"
+            # An unrelated update planned WITHOUT a refresh shows no change to
+            # the URL, so it must not clear it.
+            config(DEV_VERSION, "upgrade-fixture-unrefreshed")
+            run("apply", "-refresh=false", "-auto-approve", "-input=false")
+            assert server_backchannel() == OUTSIDE_URL, "an unrefreshed update cleared the back-channel logout URL"
+            assert state()["id"] == cid and state()["client_secret"] == secret, "upgrade changed identity or secret"
+            # The next refreshed plan shows the URL as a change; configuring it
+            # makes the plan empty again.
+            run("plan", "-detailed-exitcode", "-input=false", ok=(2,))
+            url = OUTSIDE_URL
+            config(DEV_VERSION, "upgrade-fixture-unrefreshed", url)
+            run("plan", "-detailed-exitcode", "-input=false")
+        config(DEV_VERSION, "upgrade-fixture-renamed", url)
         run("apply", "-auto-approve", "-input=false")
         assert state()["id"] == cid and state()["client_secret"] == secret, "upgrade changed identity or secret"
         assert server_replay_protection() == expected, "an unrelated update changed replay protection"
+        if backchannel:
+            assert server_backchannel() == OUTSIDE_URL, "an update changed the back-channel logout URL"
+            assert state()["backchannel_logout_url"] == OUTSIDE_URL, "state does not record the back-channel logout URL"
         run("plan", "-detailed-exitcode", "-input=false")
         run("destroy", "-auto-approve", "-input=false")
-        print("PASS native "+tool+" upgrade "+released_version+" -> new build: empty plan, identity/secret and replay protection kept through an update")
+        print("PASS native "+tool+" upgrade "+released_version+" -> new build: empty plan, identity/secret and replay protection kept through an update"
+              + ("; a back-channel logout URL set outside Terraform kept through an unrefreshed update, shown by the next refreshed plan, empty plan once configured" if backchannel else "")
+              + "; secrets on the client after the released provider created it: "+str(released_secrets))
         sys.exit(0)
 
     assert "replay_protection" not in state()["federated_identities"][0], "released provider state is not the expected shape"

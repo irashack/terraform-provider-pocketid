@@ -49,6 +49,7 @@ type clientResourceModel struct {
 	ClientID                            types.String `tfsdk:"client_id"`
 	CallbackURLs                        types.List   `tfsdk:"callback_urls"`
 	LogoutCallbackURLs                  types.List   `tfsdk:"logout_callback_urls"`
+	BackchannelLogoutURL                types.String `tfsdk:"backchannel_logout_url"`
 	IsPublic                            types.Bool   `tfsdk:"is_public"`
 	PkceEnabled                         types.Bool   `tfsdk:"pkce_enabled"`
 	AllowedUserGroups                   types.List   `tfsdk:"allowed_user_groups"`
@@ -128,6 +129,15 @@ func (r *clientResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				ElementType: types.StringType,
 				Validators: []validator.List{
 					listvalidator.ValueStringsAre(urlValidator{}),
+				},
+			},
+			"backchannel_logout_url": schema.StringAttribute{
+				Description: "URL to which Pocket ID sends an OpenID Connect Back-Channel Logout token when a user's access to this client is revoked: the user is disabled or deleted, loses access through a group change, or revokes the authorization, or the client is deleted. " +
+					"Must be an absolute http or https URL without a fragment; a public client (is_public = true) requires https. " +
+					"Requires Pocket ID 2.17.0 or later. When omitted, the client has no back-channel logout URL.",
+				Optional: true,
+				Validators: []validator.String{
+					backchannelLogoutURLValidator{},
 				},
 			},
 			"is_public": schema.BoolAttribute{
@@ -252,6 +262,17 @@ func (r *clientResource) ValidateConfig(ctx context.Context, req resource.Valida
 		return
 	}
 
+	// Pocket ID requires https for a public client's back-channel logout URL.
+	// Other problems with the URL are reported by its attribute validator.
+	if !config.BackchannelLogoutURL.IsNull() && !config.BackchannelLogoutURL.IsUnknown() && !config.IsPublic.IsUnknown() {
+		value := config.BackchannelLogoutURL.ValueString()
+		if backchannelLogoutURLProblem(value, false) == "" {
+			if problem := backchannelLogoutURLProblem(value, config.IsPublic.ValueBool()); problem != "" {
+				resp.Diagnostics.AddAttributeError(path.Root("backchannel_logout_url"), "Invalid back-channel logout URL", "backchannel_logout_url "+problem+".")
+			}
+		}
+	}
+
 	// Pocket-ID coerces requires_pushed_authorization_requests to false for
 	// public clients, so true + is_public is never satisfiable.
 	if config.IsPublic.ValueBool() && config.RequiresPushedAuthorizationRequests.ValueBool() {
@@ -304,6 +325,10 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 	// Resolve the API contract before making any client or secret mutation.
 	if err := checkFederatedPublicKeysSupport(r.client, createReq.Credentials); err != nil {
 		resp.Diagnostics.AddAttributeError(path.Root("federated_identities"), "Unsupported federated identity configuration", err.Error())
+		return
+	}
+	if err := checkBackchannelLogoutSupport(r.client, createReq.BackchannelLogoutURL); err != nil {
+		resp.Diagnostics.AddAttributeError(path.Root("backchannel_logout_url"), "Unsupported back-channel logout configuration", err.Error())
 		return
 	}
 	if !plan.IsPublic.ValueBool() {
@@ -464,6 +489,7 @@ func (r *clientResource) Read(ctx context.Context, req resource.ReadRequest, res
 	} else {
 		state.LaunchURL = types.StringNull()
 	}
+	state.BackchannelLogoutURL = optionalString(clientResp.BackchannelLogoutURL)
 
 	// Update callback URLs
 	callbackURLs, diags := types.ListValueFrom(ctx, types.StringType, clientResp.CallbackURLs)
@@ -576,6 +602,7 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 		Name:                                plan.Name.ValueString(),
 		CallbackURLs:                        callbackURLs,
 		LogoutCallbackURLs:                  logoutCallbackURLs,
+		BackchannelLogoutURL:                backchannelLogoutURLForUpdate(plan.BackchannelLogoutURL, state.BackchannelLogoutURL, current.BackchannelLogoutURL),
 		IsPublic:                            plan.IsPublic.ValueBool(),
 		RequiresReauthentication:            plan.RequiresReauthentication.ValueBool(),
 		RequiresPushedAuthorizationRequests: plan.RequiresPushedAuthorizationRequests.ValueBool(),
@@ -592,6 +619,10 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 	}
 	if err := checkFederatedPublicKeysSupport(r.client, updateReq.Credentials); err != nil {
 		resp.Diagnostics.AddAttributeError(path.Root("federated_identities"), "Unsupported federated identity configuration", err.Error())
+		return
+	}
+	if err := checkBackchannelLogoutSupport(r.client, stringPointer(plan.BackchannelLogoutURL)); err != nil {
+		resp.Diagnostics.AddAttributeError(path.Root("backchannel_logout_url"), "Unsupported back-channel logout configuration", err.Error())
 		return
 	}
 	if !plan.ClientID.IsNull() && !plan.ClientID.IsUnknown() && plan.ClientID.ValueString() != "" {
@@ -800,6 +831,7 @@ func buildCreateRequestFromPlan(ctx context.Context, plan *clientResourceModel) 
 		Name:                                plan.Name.ValueString(),
 		CallbackURLs:                        callbackURLs,
 		LogoutCallbackURLs:                  logoutCallbackURLs,
+		BackchannelLogoutURL:                stringPointer(plan.BackchannelLogoutURL),
 		IsPublic:                            plan.IsPublic.ValueBool(),
 		RequiresReauthentication:            plan.RequiresReauthentication.ValueBool(),
 		RequiresPushedAuthorizationRequests: plan.RequiresPushedAuthorizationRequests.ValueBool(),
@@ -909,6 +941,7 @@ func mapAPIClientToModel(ctx context.Context, api *client.OIDCClient) clientReso
 	} else {
 		model.LaunchURL = types.StringNull()
 	}
+	model.BackchannelLogoutURL = optionalString(api.BackchannelLogoutURL)
 
 	return model
 }

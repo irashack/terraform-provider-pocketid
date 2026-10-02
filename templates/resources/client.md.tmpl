@@ -60,6 +60,10 @@ resource "pocketid_client" "web_app" {
     "https://staging.example.com/logout"
   ]
 
+  # Pocket ID posts a logout token here when a user's access to the client
+  # is revoked, for example when the user is disabled (Pocket ID 2.17.0 or later).
+  backchannel_logout_url = "https://app.example.com/backchannel-logout"
+
   is_public    = false
   pkce_enabled = true
 }

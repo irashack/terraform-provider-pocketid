@@ -94,7 +94,7 @@ func lifecycleModel() clientResourceModel {
 		FederatedIdentities: types.ListNull(types.ObjectType{AttrTypes: federatedIdentityAttrTypes}),
 		IsPublic:            types.BoolValue(false), PkceEnabled: types.BoolValue(true), HasLogo: types.BoolUnknown(),
 		RequiresReauthentication: types.BoolValue(false), RequiresPushedAuthorizationRequests: types.BoolValue(false),
-		LaunchURL: types.StringNull(), ClientSecret: types.StringUnknown(),
+		LaunchURL: types.StringNull(), ClientSecret: types.StringUnknown(), BackchannelLogoutURL: types.StringNull(),
 	}
 }
 

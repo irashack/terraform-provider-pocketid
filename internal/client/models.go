@@ -24,13 +24,16 @@ type PaginatedResponse[T any] struct {
 
 // OIDCClient represents an OIDC client in Pocket-ID
 type OIDCClient struct {
-	ID                       string   `json:"id,omitempty"`
-	Name                     string   `json:"name"`
-	HasLogo                  bool     `json:"hasLogo,omitempty"`
-	CallbackURLs             []string `json:"callbackURLs"`
-	LogoutCallbackURLs       []string `json:"logoutCallbackURLs,omitempty"`
-	IsPublic                 bool     `json:"isPublic"`
-	RequiresReauthentication bool     `json:"requiresReauthentication,omitempty"`
+	ID                 string   `json:"id,omitempty"`
+	Name               string   `json:"name"`
+	HasLogo            bool     `json:"hasLogo,omitempty"`
+	CallbackURLs       []string `json:"callbackURLs"`
+	LogoutCallbackURLs []string `json:"logoutCallbackURLs,omitempty"`
+	// BackchannelLogoutURL is reported from Pocket ID 2.17.0; empty when unset
+	// or when the server predates it.
+	BackchannelLogoutURL     string `json:"backchannelLogoutURL,omitempty"`
+	IsPublic                 bool   `json:"isPublic"`
+	RequiresReauthentication bool   `json:"requiresReauthentication,omitempty"`
 	// Pointer so an absent field (Pocket-ID <= v2.8.0, which has no PAR support)
 	// is distinguishable from an explicit false.
 	RequiresPushedAuthorizationRequests *bool                 `json:"requiresPushedAuthorizationRequests,omitempty"`
@@ -93,10 +96,14 @@ type OIDCClientFederatedIdentity struct {
 
 // OIDCClientCreateRequest represents a request to create or update an OIDC client
 type OIDCClientCreateRequest struct {
-	Name                                string                `json:"name"`
-	ClientID                            *string               `json:"id,omitempty"`
-	CallbackURLs                        []string              `json:"callbackURLs"`
-	LogoutCallbackURLs                  []string              `json:"logoutCallbackURLs,omitempty"`
+	Name               string   `json:"name"`
+	ClientID           *string  `json:"id,omitempty"`
+	CallbackURLs       []string `json:"callbackURLs"`
+	LogoutCallbackURLs []string `json:"logoutCallbackURLs,omitempty"`
+	// BackchannelLogoutURL (Pocket ID 2.17.0+) is omitted when nil, so a
+	// server that predates it never receives the field. On 2.17 an omitted
+	// value clears it, because the update replaces the client in full.
+	BackchannelLogoutURL                *string               `json:"backchannelLogoutURL,omitempty"`
 	IsPublic                            bool                  `json:"isPublic"`
 	RequiresReauthentication            bool                  `json:"requiresReauthentication,omitempty"`
 	RequiresPushedAuthorizationRequests bool                  `json:"requiresPushedAuthorizationRequests"`

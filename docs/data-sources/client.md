@@ -67,6 +67,7 @@ output "existing_client_pkce_enabled" {
 ### Read-Only
 
 - `allowed_user_groups` (List of String) List of user group IDs that are allowed to use this client.
+- `backchannel_logout_url` (String) The OpenID Connect Back-Channel Logout URL of the client; null when it has none or the server predates Pocket ID 2.17.0.
 - `callback_urls` (List of String) List of allowed callback URLs for the OIDC client.
 - `has_logo` (Boolean) Whether the client has a logo configured.
 - `is_public` (Boolean) Whether this is a public client (no client secret).
