@@ -231,7 +231,7 @@ func TestClient_ListClients(t *testing.T) {
 
 	result, err := c.ListClients(context.Background())
 	assert.NoError(t, err)
-	assert.Equal(t, expectedResponse, result)
+	assert.Equal(t, expectedResponse.Data, result)
 }
 
 func TestClient_UpdateClientAllowedUserGroups(t *testing.T) {

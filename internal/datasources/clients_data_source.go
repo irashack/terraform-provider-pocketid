@@ -152,11 +152,11 @@ func (d *clientsDataSource) Read(ctx context.Context, req datasource.ReadRequest
 
 	// Map response to model
 	state := clientsDataSourceModel{
-		Clients: make([]clientModel, 0, len(clientsResp.Data)),
+		Clients: make([]clientModel, 0, len(clientsResp)),
 	}
 
 	// Convert each client
-	for _, clientResp := range clientsResp.Data {
+	for _, clientResp := range clientsResp {
 		clientState := clientModel{
 			ID:                       types.StringValue(clientResp.ID),
 			Name:                     types.StringValue(clientResp.Name),

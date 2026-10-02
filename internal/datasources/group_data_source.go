@@ -125,7 +125,7 @@ func (d *groupDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 
 	// Find the matching group
 	var foundGroup *client.UserGroup
-	for _, group := range groupsResp.Data {
+	for _, group := range groupsResp {
 		if (!data.ID.IsNull() && group.ID == data.ID.ValueString()) ||
 			(!data.Name.IsNull() && group.Name == data.Name.ValueString()) {
 			foundGroup = &group

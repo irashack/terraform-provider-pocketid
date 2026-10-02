@@ -210,8 +210,7 @@ func TestClient_ListUserGroups(t *testing.T) {
 
 	result, err := c.ListUserGroups(context.Background())
 	assert.NoError(t, err)
-	assert.Equal(t, expectedResponse, result)
-	assert.Equal(t, expectedGroups, result.Data)
+	assert.Equal(t, expectedGroups, result)
 }
 
 func TestClient_ListUserGroups_Error(t *testing.T) {

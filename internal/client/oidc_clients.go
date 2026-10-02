@@ -182,19 +182,10 @@ func (c *Client) DeleteClient(ctx context.Context, clientID string) error {
 	return err
 }
 
-// ListClients retrieves all OIDC clients
-func (c *Client) ListClients(ctx context.Context) (*PaginatedResponse[OIDCClient], error) {
-	body, err := c.doRequest(ctx, "GET", "/api/oidc/clients", nil)
-	if err != nil {
-		return nil, err
-	}
-
-	var result PaginatedResponse[OIDCClient]
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("error unmarshaling response: %w", err)
-	}
-
-	return &result, nil
+// ListClients returns every OIDC client, following all pages of
+// GET /api/oidc/clients (see listAll).
+func (c *Client) ListClients(ctx context.Context) ([]OIDCClient, error) {
+	return listAll(ctx, c, "OIDC clients", "/api/oidc/clients", nil, func(client OIDCClient) string { return client.ID })
 }
 
 // UpdateClientAllowedUserGroups updates the allowed user groups for an OIDC client

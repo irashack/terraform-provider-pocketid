@@ -5,6 +5,7 @@ package provider_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
@@ -76,4 +77,48 @@ func TestAccAPI_notFoundErrors(t *testing.T) {
 		only(t, err, client.ResourceSCIMServiceProvider)
 		only(t, c.DeleteScimServiceProvider(ctx, missingUUID), client.ResourceSCIMServiceProvider)
 	})
+}
+
+// Lists follow every page of the real server's pagination (100 per page at
+// most, 20 by default) and miss nothing.
+func TestAccAPI_listAllPages(t *testing.T) {
+	testAccPreCheck(t)
+	ctx := context.Background()
+	c, err := testClient()
+	require.NoError(t, err)
+
+	const n = 101
+	prefix := "tf-acc-page-" + acctest.RandString(6)
+	wantGroups := map[string]bool{}
+	wantClients := map[string]bool{}
+	for i := 0; i < n; i++ {
+		name := fmt.Sprintf("%s-%03d", prefix, i)
+		group, err := c.CreateUserGroup(ctx, &client.UserGroupCreateRequest{Name: name, FriendlyName: name})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = c.DeleteUserGroup(context.Background(), group.ID) })
+		wantGroups[group.ID] = true
+
+		created, err := c.CreateClient(ctx, &client.OIDCClientCreateRequest{
+			Name: name, CallbackURLs: []string{"https://example.com/callback"}, IsPublic: true, PkceEnabled: true,
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = c.DeleteClient(context.Background(), created.ID) })
+		wantClients[created.ID] = true
+	}
+
+	groups, err := c.ListUserGroups(ctx)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, len(groups), n)
+	for _, group := range groups {
+		delete(wantGroups, group.ID)
+	}
+	assert.Empty(t, wantGroups, "every created group is listed")
+
+	clients, err := c.ListClients(ctx)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, len(clients), n)
+	for _, listed := range clients {
+		delete(wantClients, listed.ID)
+	}
+	assert.Empty(t, wantClients, "every created client is listed")
 }

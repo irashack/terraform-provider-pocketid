@@ -90,17 +90,8 @@ func (c *Client) DeleteUserGroup(ctx context.Context, groupID string) error {
 	return err
 }
 
-// ListUserGroups retrieves all user groups
-func (c *Client) ListUserGroups(ctx context.Context) (*PaginatedResponse[UserGroup], error) {
-	body, err := c.doRequest(ctx, "GET", "/api/user-groups", nil)
-	if err != nil {
-		return nil, err
-	}
-
-	var result PaginatedResponse[UserGroup]
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("error unmarshaling response: %w", err)
-	}
-
-	return &result, nil
+// ListUserGroups returns every user group, following all pages of
+// GET /api/user-groups (see listAll).
+func (c *Client) ListUserGroups(ctx context.Context) ([]UserGroup, error) {
+	return listAll(ctx, c, "user groups", "/api/user-groups", nil, func(group UserGroup) string { return group.ID })
 }

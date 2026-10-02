@@ -126,12 +126,12 @@ func (d *groupsDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 	}
 
 	tflog.Debug(ctx, "Retrieved groups", map[string]interface{}{
-		"count": len(groupsResp.Data),
+		"count": len(groupsResp),
 	})
 
 	// Map response body to model
-	data.Groups = make([]groupModel, len(groupsResp.Data))
-	for i, group := range groupsResp.Data {
+	data.Groups = make([]groupModel, len(groupsResp))
+	for i, group := range groupsResp {
 		gm := groupModel{
 			ID:           types.StringValue(group.ID),
 			Name:         types.StringValue(group.Name),

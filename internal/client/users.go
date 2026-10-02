@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"strconv"
 )
 
 // User represents a user in Pocket-ID
@@ -126,72 +125,22 @@ func (c *Client) ListUsers(ctx context.Context) (*PaginatedResponse[User], error
 // themselves and must still follow pagination.
 func (c *Client) ListUsersPage(ctx context.Context, page, limit int, search string) (*PaginatedResponse[User], error) {
 	query := url.Values{}
-	if page > 0 {
-		query.Set("pagination[page]", strconv.Itoa(page))
-	}
-	if limit > 0 {
-		query.Set("pagination[limit]", strconv.Itoa(limit))
-	}
 	if search != "" {
 		query.Set("search", search)
 	}
-
-	endpoint := "/api/users"
-	if encoded := query.Encode(); encoded != "" {
-		endpoint += "?" + encoded
-	}
-
-	body, err := c.doRequest(ctx, "GET", endpoint, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	var result PaginatedResponse[User]
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("error unmarshaling response: %w", err)
-	}
-
-	return &result, nil
+	return getPage[User](ctx, c, "/api/users", query, page, limit)
 }
 
-// ListAllUsers retrieves every user across all pages, optionally narrowed by
-// the server's free-text search filter (empty string for no filter). It
-// requests a larger-than-default page size to bound the number of round
-// trips, and stops as soon as the server reports no further page. A hard
-// page-count ceiling defends against a non-advancing pagination response
-// looping forever; a nonempty page reporting no valid page count is treated
-// as malformed and returned as an error rather than silently assumed
-// complete, since that would truncate the result without any signal.
+// ListAllUsers returns every user, optionally narrowed by the server's
+// free-text search filter (empty string for no filter), following all pages
+// of GET /api/users (see listAll). The search matches substrings of several
+// fields, so a caller doing an exact lookup must still compare the results.
 func (c *Client) ListAllUsers(ctx context.Context, search string) ([]User, error) {
-	const maxPages = 1000 // defensive ceiling; a real instance won't approach this
-	const pageSize = 100  // larger than the server's own default (20), fewer round trips
-
-	var all []User
-	for page := 1; page <= maxPages; page++ {
-		resp, err := c.ListUsersPage(ctx, page, pageSize, search)
-		if err != nil {
-			return nil, err
-		}
-
-		if len(resp.Data) == 0 {
-			// An empty page unambiguously means there is nothing more,
-			// regardless of what the pagination metadata says.
-			return all, nil
-		}
-		if resp.Pagination.TotalPages <= 0 {
-			return nil, fmt.Errorf(
-				"listing users: page %d returned %d user(s) but pagination.totalPages was %d; refusing to guess whether more pages exist",
-				page, len(resp.Data), resp.Pagination.TotalPages,
-			)
-		}
-
-		all = append(all, resp.Data...)
-
-		if resp.Pagination.TotalPages <= page {
-			return all, nil
-		}
+	query := url.Values{}
+	if search != "" {
+		query.Set("search", search)
 	}
-	return nil, fmt.Errorf("listing users did not terminate after %d pages; refusing to loop further", maxPages)
+	return listAll(ctx, c, "users", "/api/users", query, func(user User) string { return user.ID })
 }
 
 // UpdateUserGroups updates the groups a user belongs to

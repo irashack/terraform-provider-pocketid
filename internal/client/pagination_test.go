@@ -1,0 +1,219 @@
+package client_test
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"sync"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/irashack/terraform-provider-pocketid/internal/client"
+)
+
+// pagedServer serves ids the way utils.Paginate does: pagination[limit]
+// defaults to 20 and is clamped to 100 (or fixed at forcedLimit when that is
+// set, for a server that ignores the requested size), a page past the end is
+// clamped to the last page, and totalPages is 1 for an empty list. It records
+// each request's query.
+type pagedServer struct {
+	mu          sync.Mutex
+	ids         []string
+	forcedLimit int
+	queries     []map[string]string
+	// mutate, when set, can change the response for a request (1-based count).
+	mutate func(request int, page int, resp map[string]any)
+}
+
+func (s *pagedServer) start(t *testing.T, path string) *client.Client {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		require.Equal(t, path, r.URL.Path)
+		query := map[string]string{}
+		for key := range r.URL.Query() {
+			query[key] = r.URL.Query().Get(key)
+		}
+		s.queries = append(s.queries, query)
+
+		limit, _ := strconv.Atoi(query["pagination[limit]"])
+		if limit < 1 {
+			limit = 20
+		} else if limit > 100 {
+			limit = 100
+		}
+		if s.forcedLimit > 0 {
+			limit = s.forcedLimit
+		}
+		page, _ := strconv.Atoi(query["pagination[page]"])
+		if page < 1 {
+			page = 1
+		}
+		totalPages := (len(s.ids) + limit - 1) / limit
+		if totalPages == 0 {
+			totalPages = 1
+		}
+		if page > totalPages {
+			page = totalPages
+		}
+		start := (page - 1) * limit
+		end := min(start+limit, len(s.ids))
+		data := []map[string]string{}
+		for _, id := range s.ids[start:end] {
+			data = append(data, map[string]string{"id": id, "name": "n-" + id})
+		}
+		resp := map[string]any{
+			"data": data,
+			"pagination": map[string]any{
+				"totalPages": totalPages, "totalItems": len(s.ids), "currentPage": page, "itemsPerPage": limit,
+			},
+		}
+		if s.mutate != nil {
+			s.mutate(len(s.queries), page, resp)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(server.Close)
+	c, err := client.NewClient(server.URL, "test-token", false, 30)
+	require.NoError(t, err)
+	return c
+}
+
+func makeIDs(n int) []string {
+	ids := make([]string, n)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("id-%04d", i)
+	}
+	return ids
+}
+
+func groupIDs(groups []client.UserGroup) []string {
+	ids := make([]string, 0, len(groups))
+	for _, g := range groups {
+		ids = append(ids, g.ID)
+	}
+	return ids
+}
+
+func clientIDs(clients []client.OIDCClient) []string {
+	ids := make([]string, 0, len(clients))
+	for _, c := range clients {
+		ids = append(ids, c.ID)
+	}
+	return ids
+}
+
+func TestListAll_ReturnsEveryPage(t *testing.T) {
+	for _, n := range []int{0, 1, 20, 21, 100, 101, 250} {
+		t.Run(fmt.Sprintf("%d groups", n), func(t *testing.T) {
+			s := &pagedServer{ids: makeIDs(n)}
+			groups, err := s.start(t, "/api/user-groups").ListUserGroups(context.Background())
+			require.NoError(t, err)
+			assert.Equal(t, s.ids, groupIDs(groups))
+			wantPages := max(1, (n+99)/100)
+			require.Len(t, s.queries, wantPages, "one request per page of 100")
+			for i, query := range s.queries {
+				assert.Equal(t, strconv.Itoa(i+1), query["pagination[page]"])
+				assert.Equal(t, "100", query["pagination[limit]"])
+				assert.Equal(t, "createdAt", query["sort[column]"])
+				assert.Equal(t, "asc", query["sort[direction]"])
+			}
+		})
+		t.Run(fmt.Sprintf("%d clients", n), func(t *testing.T) {
+			s := &pagedServer{ids: makeIDs(n)}
+			clients, err := s.start(t, "/api/oidc/clients").ListClients(context.Background())
+			require.NoError(t, err)
+			assert.Equal(t, s.ids, clientIDs(clients))
+		})
+	}
+}
+
+// A server that serves its own default page size whatever is asked still
+// yields every object, because the walk follows totalPages.
+func TestListAll_FollowsServerPageSize(t *testing.T) {
+	s := &pagedServer{ids: makeIDs(101), forcedLimit: 20}
+	clients, err := s.start(t, "/api/oidc/clients").ListClients(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, s.ids, clientIDs(clients))
+	assert.Len(t, s.queries, 6)
+}
+
+func TestListAll_MalformedPaginationIsError(t *testing.T) {
+	for name, mutate := range map[string]func(int, int, map[string]any){
+		"missing block": func(_ int, _ int, resp map[string]any) { delete(resp, "pagination") },
+		"zero pages": func(_ int, _ int, resp map[string]any) {
+			resp["pagination"].(map[string]any)["totalPages"] = 0
+		},
+		"never advances": func(_ int, _ int, resp map[string]any) {
+			resp["pagination"].(map[string]any)["currentPage"] = 1
+		},
+		"negative total": func(_ int, _ int, resp map[string]any) {
+			resp["pagination"].(map[string]any)["totalItems"] = -1
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := &pagedServer{ids: makeIDs(150), mutate: mutate}
+			groups, err := s.start(t, "/api/user-groups").ListUserGroups(context.Background())
+			require.Error(t, err)
+			assert.Nil(t, groups)
+			assert.Contains(t, err.Error(), "refusing to guess")
+		})
+	}
+}
+
+// Pages that do not add up (the list changed between requests) are read
+// again once; if they still do not add up, the call fails rather than return
+// a list with gaps or duplicates.
+func TestListAll_ChangedListIsReadAgainThenRefused(t *testing.T) {
+	duplicateSecondPage := func(page int, resp map[string]any) {
+		if page == 2 {
+			resp["data"].([]map[string]string)[0]["id"] = "id-0000"
+		}
+	}
+	t.Run("changed once", func(t *testing.T) {
+		s := &pagedServer{ids: makeIDs(150)}
+		s.mutate = func(request int, page int, resp map[string]any) {
+			if request <= 2 {
+				duplicateSecondPage(page, resp)
+			}
+		}
+		groups, err := s.start(t, "/api/user-groups").ListUserGroups(context.Background())
+		require.NoError(t, err)
+		assert.Equal(t, s.ids, groupIDs(groups))
+		assert.Len(t, s.queries, 4, "the walk is repeated once")
+	})
+	t.Run("object on two pages", func(t *testing.T) {
+		s := &pagedServer{ids: makeIDs(150)}
+		s.mutate = func(_ int, page int, resp map[string]any) { duplicateSecondPage(page, resp) }
+		_, err := s.start(t, "/api/user-groups").ListUserGroups(context.Background())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "changed while it was being read")
+		assert.Len(t, s.queries, 4, "two walks, no more")
+	})
+	t.Run("count does not add up", func(t *testing.T) {
+		s := &pagedServer{ids: makeIDs(150)}
+		s.mutate = func(_ int, page int, resp map[string]any) {
+			if page == 2 {
+				resp["pagination"].(map[string]any)["totalItems"] = 151
+			}
+		}
+		_, err := s.start(t, "/api/oidc/clients").ListClients(context.Background())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "changed while it was being read")
+	})
+}
+
+func TestListAll_StopsAtPageCeiling(t *testing.T) {
+	s := &pagedServer{ids: makeIDs(1500), forcedLimit: 1}
+	_, err := s.start(t, "/api/user-groups").ListUserGroups(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "did not end after 1000 pages")
+	assert.Len(t, s.queries, 1000)
+}
