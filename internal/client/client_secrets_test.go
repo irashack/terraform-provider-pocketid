@@ -1,6 +1,7 @@
 package client_test
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -37,7 +38,11 @@ func TestClient_CreateClient_CreatedSecret(t *testing.T) {
 			result, err := c.CreateClient(&client.OIDCClientCreateRequest{Name: "n"})
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, result.CreatedSecret)
-			assert.NotContains(t, fmt.Sprintf("%+v", *result), "synthetic-created-secret")
+			// Encoding walks every field, including through the pointer, so
+			// this fails if any decoded field holds the secret's value.
+			encoded, err := json.Marshal(result)
+			require.NoError(t, err)
+			assert.NotContains(t, string(encoded), "synthetic-created-secret")
 		})
 	}
 }

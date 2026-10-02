@@ -284,6 +284,8 @@ func TestClientReadBackchannelLogoutURL(t *testing.T) {
 			prior := publicClientModel()
 			prior.ID = types.StringValue("c1")
 			prior.HasLogo = types.BoolValue(false)
+			// A stale value that Read must replace in both cases.
+			prior.BackchannelLogoutURL = types.StringValue("https://stale.example/logout")
 			state := tfsdk.State{Schema: schemaResp.Schema}
 			require.False(t, state.Set(ctx, &prior).HasError())
 			resp := resource.ReadResponse{State: state}
