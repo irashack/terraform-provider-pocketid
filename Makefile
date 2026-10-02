@@ -6,7 +6,7 @@ LINT := $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
 DOCS := $(GO) run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs@v0.25.0
 
 .DEFAULT_GOAL := help
-.PHONY: help build test test-scripts test-coverage fmt fmt-check vet lint check docs docs-check test-acc test-acc-matrix test-acc-provider vuln actionlint release-check clean
+.PHONY: help build test test-scripts test-coverage fmt fmt-check vet lint check docs docs-check test-acc test-acc-matrix test-acc-provider test-acc-supported vuln actionlint release-check clean
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "%-24s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
@@ -50,11 +50,17 @@ ACC_PACKAGES := ./internal/provider ./internal/datasources
 test-acc: ## Run client (resource and data sources), application-config and API-contract acceptance on one disposable official image
 	python3 scripts/disposable-pocketid.py $(POCKETID_VERSION) -- $(GO) test -v -count=1 -p 1 -timeout 15m $(ACC_PACKAGES) -tags=acc -run '^TestAcc(Resource(Client|ApplicationConfig)|ClientDataSources|API_)'
 
-test-acc-matrix: ## Run client and application-config acceptance on every fixture version
+test-acc-matrix: ## Run test-acc (client, application-config and API-contract acceptance) on every fixture version
 	@for version in 2.14.0 2.15.0 2.16.0 2.17.0; do $(MAKE) test-acc POCKETID_VERSION=$$version || exit $$?; done
 
 test-acc-provider: ## Run the full provider and data-source acceptance suites on one disposable official image
 	python3 scripts/disposable-pocketid.py $(POCKETID_VERSION) -- $(GO) test -v -count=1 -p 1 -timeout 20m $(ACC_PACKAGES) -tags=acc
+
+# The supported servers: each gets the full provider and data-source suites.
+SUPPORTED_POCKETID_VERSIONS := 2.16.0 2.17.0
+
+test-acc-supported: ## Run test-acc-provider on every supported Pocket ID version (2.16.0, 2.17.0)
+	@for version in $(SUPPORTED_POCKETID_VERSIONS); do $(MAKE) test-acc-provider POCKETID_VERSION=$$version || exit $$?; done
 
 vuln: ## Check reachable Go vulnerabilities
 	$(GO) run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
