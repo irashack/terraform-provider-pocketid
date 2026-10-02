@@ -214,6 +214,15 @@ func (f *scimFake) serve(w http.ResponseWriter, r *http.Request) {
 		f.endpoint, _ = record.Body["endpoint"].(string)
 		f.token, _ = record.Body["token"].(string)
 		provider()
+	case r.Method == http.MethodPost && r.URL.Path == "/api/scim/service-provider/"+scimTestProviderID+"/sync":
+		if !f.exists {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(scimNotFoundBody))
+			return
+		}
+		now := "2026-02-01T00:00:00Z"
+		f.synced = &now
+		w.WriteHeader(http.StatusOK)
 	case r.Method == http.MethodDelete && r.URL.Path == "/api/scim/service-provider/"+scimTestProviderID:
 		if !f.exists {
 			w.WriteHeader(http.StatusNotFound)

@@ -3,6 +3,7 @@ package client_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -130,4 +131,62 @@ func TestClient_DeleteScimServiceProvider(t *testing.T) {
 
 	err = c.DeleteScimServiceProvider(context.Background(), "33333333-3333-4333-8333-333333333333")
 	assert.NoError(t, err)
+}
+
+func TestClient_SyncScimServiceProvider(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "/api/scim/service-provider/33333333-3333-4333-8333-333333333333/sync", r.URL.Path)
+		assert.Equal(t, "test-token", r.Header.Get("X-API-Key"))
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		assert.Empty(t, body, "the sync takes no request body")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	c, err := client.NewClient(server.URL, "test-token", false, 30)
+	require.NoError(t, err)
+
+	require.NoError(t, c.SyncScimServiceProvider(context.Background(), "33333333-3333-4333-8333-333333333333"))
+	assert.Equal(t, 1, requests)
+}
+
+// The sync is a POST: a failure, a rate limit or a server error is reported
+// after one request, never retried.
+func TestClient_SyncScimServiceProviderIsNeverRetried(t *testing.T) {
+	for _, status := range []int{http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusTooManyRequests} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			var requests int
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				w.Header().Set("Retry-After", "1")
+				w.WriteHeader(status)
+			}))
+			defer server.Close()
+
+			c, err := client.NewClient(server.URL, "test-token", false, 30)
+			require.NoError(t, err)
+
+			err = c.SyncScimServiceProvider(context.Background(), "33333333-3333-4333-8333-333333333333")
+			require.Error(t, err)
+			assert.Equal(t, 1, requests)
+		})
+	}
+}
+
+func TestClient_SyncScimServiceProviderRefusesAnInvalidID(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests++ }))
+	defer server.Close()
+	c, err := client.NewClient(server.URL, "test-token", false, 30)
+	require.NoError(t, err)
+
+	for _, id := range []string{"", "not-a-uuid", "../scim/service-provider/x", "33333333-3333-4333-8333-333333333333/sync#"} {
+		err := c.SyncScimServiceProvider(context.Background(), id)
+		require.ErrorIs(t, err, client.ErrInvalidIdentifier, "id %q", id)
+	}
+	assert.Zero(t, requests)
 }

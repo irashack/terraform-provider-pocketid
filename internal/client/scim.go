@@ -98,3 +98,23 @@ func (c *Client) DeleteScimServiceProvider(ctx context.Context, id string) error
 	_, err = c.doRequest(ctx, "DELETE", "/api/scim/service-provider/"+segment, nil)
 	return err
 }
+
+// SyncScimServiceProvider runs a synchronization of users and groups to the
+// SCIM service provider and returns when it has finished.
+//
+// Pocket ID runs it inside the request (scimsync handler: "The sync runs
+// inline rather than through the actor so the response reports whether it
+// succeeded"), so a nil error means every user and group was pushed and the
+// provider's lastSyncedAt moved, and a failure of the remote SCIM endpoint
+// comes back as an HTTP 500 whose body is not read. Part of the work may
+// already be applied when it fails. The POST is never retried, and a sync that
+// takes longer than the client's timeout leaves its outcome unknown: the
+// server carries on after the client gives up.
+func (c *Client) SyncScimServiceProvider(ctx context.Context, id string) error {
+	segment, err := uuidSegment("SCIM service provider", id)
+	if err != nil {
+		return err
+	}
+	_, err = c.doRequest(ctx, "POST", "/api/scim/service-provider/"+segment+"/sync", nil)
+	return err
+}

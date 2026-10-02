@@ -20,3 +20,12 @@
   it again. `token_wo` conflicts with `token` and needs `token_wo_version`.
   Write-only attributes need Terraform or OpenTofu 1.11 or later; `token`
   keeps working everywhere.
+- New resource `pocketid_scim_sync`: runs a SCIM synchronization of one
+  `pocketid_scim_service_provider` during the apply, like `pocketid_ldap_sync`
+  does for LDAP. It is created once, and replaced (so it syncs again) when its
+  `triggers` map or `service_provider_id` changes. Pocket ID runs the sync
+  inside the request, so the apply waits for it and fails if the SCIM endpoint
+  fails; the request is never repeated automatically. A sync that takes longer
+  than the provider's `timeout` (30 seconds by default) fails the apply with a
+  message that its outcome is unknown: raise `timeout`, and check
+  `last_synced_at` on the service provider.
