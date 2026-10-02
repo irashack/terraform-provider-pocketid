@@ -94,6 +94,14 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body in
 	if deadline, ok := ctx.Deadline(); ok && deadline.Before(retryDeadline) {
 		retryDeadline = deadline
 	}
+	var payload []byte
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling request body: %w", err)
+		}
+		payload = encoded
+	}
 
 	var lastErr error
 	for attempt := 1; ; attempt++ {
@@ -104,7 +112,7 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body in
 			return nil, fmt.Errorf("request not sent: %w", err)
 		}
 
-		respBody, err := c.doSingleRequest(ctx, method, endpoint, body)
+		respBody, err := c.send(ctx, method, endpoint, "application/json", payload)
 		if err == nil {
 			return respBody, nil
 		}
@@ -187,15 +195,14 @@ func isRetryableError(err error) bool {
 	return false
 }
 
-// doSingleRequest performs a single HTTP request without retries
-func (c *Client) doSingleRequest(ctx context.Context, method, endpoint string, body interface{}) ([]byte, error) {
+// send performs one HTTP request, never retried: the body (payload, sent with
+// contentType; nil for none) goes out once, and the response is read within
+// its size limit and classified. Neither the request nor the response body is
+// logged, and errors carry only the status and Pocket ID's error code.
+func (c *Client) send(ctx context.Context, method, endpoint, contentType string, payload []byte) ([]byte, error) {
 	var reqBody io.Reader
-	if body != nil {
-		jsonBody, err := json.Marshal(body)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling request body: %w", err)
-		}
-		reqBody = bytes.NewBuffer(jsonBody)
+	if payload != nil {
+		reqBody = bytes.NewReader(payload)
 	}
 
 	url := fmt.Sprintf("%s%s", c.baseURL, endpoint)
@@ -205,7 +212,7 @@ func (c *Client) doSingleRequest(ctx context.Context, method, endpoint string, b
 	}
 
 	// Set headers
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-API-KEY", c.apiToken) // Note: Using X-API-KEY header, not Authorization Bearer
 
