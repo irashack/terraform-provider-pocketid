@@ -5,27 +5,13 @@ package datasources_test
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
-	"golang.org/x/mod/semver"
 )
-
-// testAccServerAtLeast reports whether the fixture runs at least version. A
-// missing or malformed POCKETID_TEST_VERSION fails the test rather than
-// silently selecting the older server's checks.
-func testAccServerAtLeast(t *testing.T, version string) bool {
-	t.Helper()
-	running := "v" + os.Getenv("POCKETID_TEST_VERSION")
-	if !semver.IsValid(running) {
-		t.Fatalf("POCKETID_TEST_VERSION must be the fixture's Pocket ID version, got %q", os.Getenv("POCKETID_TEST_VERSION"))
-	}
-	return semver.Compare(running, "v"+version) >= 0
-}
 
 // testAccCheckListedClient checks one attribute of the client with the given
 // resource's ID inside the pocketid_clients list; want "" means absent.

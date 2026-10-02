@@ -4,48 +4,14 @@
 package provider_test
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
-
-// testAccAPI calls the fixture's API directly. Response bodies are decoded
-// into out and never printed.
-func testAccAPI(method, path string, body, out any) (int, error) {
-	var reader io.Reader
-	if body != nil {
-		encoded, err := json.Marshal(body)
-		if err != nil {
-			return 0, err
-		}
-		reader = bytes.NewReader(encoded)
-	}
-	req, err := http.NewRequest(method, os.Getenv("POCKETID_BASE_URL")+path, reader)
-	if err != nil {
-		return 0, err
-	}
-	req.Header.Set("X-API-KEY", os.Getenv("POCKETID_API_TOKEN"))
-	req.Header.Set("Content-Type", "application/json")
-	response, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("%s %s failed", method, path)
-	}
-	defer func() { _ = response.Body.Close() }()
-	if out != nil && response.StatusCode < 300 {
-		if err := json.NewDecoder(response.Body).Decode(out); err != nil {
-			return response.StatusCode, fmt.Errorf("%s %s returned an unreadable body", method, path)
-		}
-	}
-	return response.StatusCode, nil
-}
 
 type testAccSecretMetadata struct {
 	ID     string `json:"id"`

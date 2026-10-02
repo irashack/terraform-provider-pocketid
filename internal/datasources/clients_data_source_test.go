@@ -13,10 +13,10 @@ import (
 	"github.com/irashack/terraform-provider-pocketid/internal/datasources"
 )
 
-// Test Groups Data Source
-func TestGroupsDataSource_Metadata(t *testing.T) {
+// Test Clients Data Source
+func TestClientsDataSource_Metadata(t *testing.T) {
 	ctx := context.Background()
-	ds := datasources.NewGroupsDataSource()
+	ds := datasources.NewClientsDataSource()
 
 	req := datasource.MetadataRequest{
 		ProviderTypeName: "pocketid",
@@ -25,12 +25,12 @@ func TestGroupsDataSource_Metadata(t *testing.T) {
 
 	ds.Metadata(ctx, req, resp)
 
-	assert.Equal(t, "pocketid_groups", resp.TypeName)
+	assert.Equal(t, "pocketid_clients", resp.TypeName)
 }
 
-func TestGroupsDataSource_Schema(t *testing.T) {
+func TestClientsDataSource_Schema(t *testing.T) {
 	ctx := context.Background()
-	ds := datasources.NewGroupsDataSource()
+	ds := datasources.NewClientsDataSource()
 
 	req := datasource.SchemaRequest{}
 	resp := &datasource.SchemaResponse{}
@@ -39,41 +39,28 @@ func TestGroupsDataSource_Schema(t *testing.T) {
 
 	assert.False(t, resp.Diagnostics.HasError())
 	assert.NotNil(t, resp.Schema)
-	assert.NotEmpty(t, resp.Schema.Description)
 
-	// Verify groups attribute
-	groupsAttr, ok := resp.Schema.Attributes["groups"]
-	assert.True(t, ok, "Schema should have groups attribute")
+	// Verify clients attribute exists
+	clientsAttr, ok := resp.Schema.Attributes["clients"]
+	assert.True(t, ok, "Schema should have clients attribute")
 
-	listAttr, ok := groupsAttr.(schema.ListNestedAttribute)
-	assert.True(t, ok, "groups should be a ListNestedAttribute")
-	assert.True(t, listAttr.Computed)
+	listAttr, ok := clientsAttr.(schema.ListNestedAttribute)
+	assert.True(t, ok, "clients should be a ListNestedAttribute")
 
 	// Verify nested attributes
 	expectedNestedAttributes := []string{
-		"id", "name", "friendly_name",
+		"id", "name", "has_logo", "callback_urls", "logout_callback_urls",
+		"is_public", "pkce_enabled", "allowed_user_groups", "requires_reauthentication",
+		"launch_url",
 	}
 
 	for _, attr := range expectedNestedAttributes {
 		_, ok := listAttr.NestedObject.Attributes[attr]
 		assert.True(t, ok, "Nested object should have %s attribute", attr)
 	}
-
-	// Check nested attribute types
-	idAttr, ok := listAttr.NestedObject.Attributes["id"].(schema.StringAttribute)
-	assert.True(t, ok)
-	assert.True(t, idAttr.Computed)
-
-	nameAttr, ok := listAttr.NestedObject.Attributes["name"].(schema.StringAttribute)
-	assert.True(t, ok)
-	assert.True(t, nameAttr.Computed)
-
-	friendlyNameAttr, ok := listAttr.NestedObject.Attributes["friendly_name"].(schema.StringAttribute)
-	assert.True(t, ok)
-	assert.True(t, friendlyNameAttr.Computed)
 }
 
-func TestGroupsDataSource_Configure(t *testing.T) {
+func TestClientsDataSource_Configure(t *testing.T) {
 	ctx := context.Background()
 
 	testCases := []struct {
@@ -94,7 +81,7 @@ func TestGroupsDataSource_Configure(t *testing.T) {
 		},
 		{
 			name:          "invalid_provider_data_type",
-			providerData:  42,
+			providerData:  123,
 			expectError:   true,
 			errorContains: "Expected *client.Client",
 		},
@@ -102,7 +89,7 @@ func TestGroupsDataSource_Configure(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			ds := datasources.NewGroupsDataSource()
+			ds := datasources.NewClientsDataSource()
 
 			configurable, ok := ds.(datasource.DataSourceWithConfigure)
 			require.True(t, ok)

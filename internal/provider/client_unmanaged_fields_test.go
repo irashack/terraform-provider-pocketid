@@ -6,7 +6,6 @@ package provider_test
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
 )
@@ -16,15 +15,6 @@ const (
 	canaryAccessTokenMins  = int64(120)
 	canaryRefreshTokenMins = int64(4320)
 )
-
-func testClient() (*client.Client, error) {
-	return client.NewClient(
-		os.Getenv("POCKETID_BASE_URL"),
-		os.Getenv("POCKETID_API_TOKEN"),
-		false,
-		30,
-	)
-}
 
 // setUnmanagedClientFields sets, directly through the API, the client settings
 // the provider does not expose as attributes.

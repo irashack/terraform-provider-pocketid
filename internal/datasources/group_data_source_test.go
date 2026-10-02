@@ -1,165 +1,119 @@
-//go:build acc
-// +build acc
-
 package datasources_test
 
 import (
-	"fmt"
-	"os"
-	"regexp"
+	"context"
 	"testing"
 
-	"github.com/hashicorp/terraform-plugin-framework/providerserver"
-	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
-	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
-	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
-	"github.com/irashack/terraform-provider-pocketid/internal/provider"
+	"github.com/irashack/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/datasources"
 )
 
-// testAccProtoV6ProviderFactories are used to instantiate a provider during
-// acceptance testing. The factory function will be invoked for every Terraform
-// CLI command executed to create a provider server to which the CLI can
-// reattach.
-var testAccProtoV6ProviderFactories = map[string]func() (tfprotov6.ProviderServer, error){
-	"pocketid": providerserver.NewProtocol6WithError(provider.New("test")()),
+// Test Group Data Source
+func TestGroupDataSource_Metadata(t *testing.T) {
+	ctx := context.Background()
+	ds := datasources.NewGroupDataSource()
+
+	req := datasource.MetadataRequest{
+		ProviderTypeName: "pocketid",
+	}
+	resp := &datasource.MetadataResponse{}
+
+	ds.Metadata(ctx, req, resp)
+
+	assert.Equal(t, "pocketid_group", resp.TypeName)
 }
 
-func testAccPreCheck(t *testing.T) {
-	// Check for required environment variables
-	if v := os.Getenv("POCKETID_BASE_URL"); v == "" {
-		t.Fatal("POCKETID_BASE_URL must be set for acceptance tests")
+func TestGroupDataSource_Schema(t *testing.T) {
+	ctx := context.Background()
+	ds := datasources.NewGroupDataSource()
+
+	req := datasource.SchemaRequest{}
+	resp := &datasource.SchemaResponse{}
+
+	ds.Schema(ctx, req, resp)
+
+	assert.False(t, resp.Diagnostics.HasError())
+	assert.NotNil(t, resp.Schema)
+	assert.NotEmpty(t, resp.Schema.Description)
+
+	// Verify attributes exist
+	expectedAttributes := []string{
+		"id", "name", "friendly_name",
 	}
 
-	if v := os.Getenv("POCKETID_API_TOKEN"); v == "" {
-		t.Fatal("POCKETID_API_TOKEN must be set for acceptance tests")
+	for _, attr := range expectedAttributes {
+		_, ok := resp.Schema.Attributes[attr]
+		assert.True(t, ok, "Schema should have %s attribute", attr)
 	}
+
+	// Check specific attribute types and properties
+	idAttr, ok := resp.Schema.Attributes["id"].(schema.StringAttribute)
+	assert.True(t, ok)
+	assert.True(t, idAttr.Optional)
+	assert.True(t, idAttr.Computed)
+
+	nameAttr, ok := resp.Schema.Attributes["name"].(schema.StringAttribute)
+	assert.True(t, ok)
+	assert.True(t, nameAttr.Optional)
+	assert.True(t, nameAttr.Computed)
+
+	friendlyNameAttr, ok := resp.Schema.Attributes["friendly_name"].(schema.StringAttribute)
+	assert.True(t, ok)
+	assert.True(t, friendlyNameAttr.Computed)
 }
 
-func TestAccGroupDataSource_LookupByID(t *testing.T) {
-	rName := acctest.RandomWithPrefix("tf-acc-test")
+func TestGroupDataSource_Configure(t *testing.T) {
+	ctx := context.Background()
 
-	resource.Test(t, resource.TestCase{
-		PreCheck:                 func() { testAccPreCheck(t) },
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			// First create a group
-			{
-				Config: testAccGroupDataSourceConfig_CreateGroup(rName, "Test Group"),
-			},
-			// Then look it up by ID
-			{
-				Config: testAccGroupDataSourceConfig_LookupByID(rName, "Test Group"),
-				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("data.pocketid_group.test", "name", rName),
-					resource.TestCheckResourceAttr("data.pocketid_group.test", "friendly_name", "Test Group"),
-					resource.TestCheckResourceAttrSet("data.pocketid_group.test", "id"),
-					resource.TestCheckResourceAttrSet("data.pocketid_group.test", "created_at"),
-					// Group is not LDAP-managed, so ldap_id is null.
-					resource.TestCheckNoResourceAttr("data.pocketid_group.test", "ldap_id"),
-				),
-			},
+	testCases := []struct {
+		name          string
+		providerData  interface{}
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name:         "valid_client",
+			providerData: &client.Client{},
+			expectError:  false,
 		},
-	})
-}
-
-func TestAccGroupDataSource_LookupByName(t *testing.T) {
-	rName := acctest.RandomWithPrefix("tf-acc-test")
-
-	resource.Test(t, resource.TestCase{
-		PreCheck:                 func() { testAccPreCheck(t) },
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			// First create a group
-			{
-				Config: testAccGroupDataSourceConfig_CreateGroup(rName, "Test Group By Name"),
-			},
-			// Then look it up by name
-			{
-				Config: testAccGroupDataSourceConfig_LookupByName(rName, "Test Group By Name"),
-				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("data.pocketid_group.test", "name", rName),
-					resource.TestCheckResourceAttr("data.pocketid_group.test", "friendly_name", "Test Group By Name"),
-					resource.TestCheckResourceAttrSet("data.pocketid_group.test", "id"),
-				),
-			},
+		{
+			name:         "nil_provider_data",
+			providerData: nil,
+			expectError:  false,
 		},
-	})
-}
-
-func TestAccGroupDataSource_ErrorWhenNoIdentifier(t *testing.T) {
-	resource.Test(t, resource.TestCase{
-		PreCheck:                 func() { testAccPreCheck(t) },
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{
-				Config:      testAccGroupDataSourceConfig_NoIdentifier(),
-				ExpectError: regexp.MustCompile(`Either 'id' or 'name' must be provided`),
-			},
+		{
+			name:          "invalid_provider_data_type",
+			providerData:  struct{ Name string }{Name: "invalid"},
+			expectError:   true,
+			errorContains: "Expected *client.Client",
 		},
-	})
-}
+	}
 
-func TestAccGroupDataSource_ErrorWhenNotFound(t *testing.T) {
-	resource.Test(t, resource.TestCase{
-		PreCheck:                 func() { testAccPreCheck(t) },
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{
-			{
-				Config:      testAccGroupDataSourceConfig_NotFound(),
-				ExpectError: regexp.MustCompile(`No group found`),
-			},
-		},
-	})
-}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ds := datasources.NewGroupDataSource()
 
-func testAccGroupDataSourceConfig_CreateGroup(name, friendlyName string) string {
-	return fmt.Sprintf(`
-resource "pocketid_group" "test" {
-  name          = %[1]q
-  friendly_name = %[2]q
-}
-`, name, friendlyName)
-}
+			configurable, ok := ds.(datasource.DataSourceWithConfigure)
+			require.True(t, ok)
 
-func testAccGroupDataSourceConfig_LookupByID(name, friendlyName string) string {
-	return fmt.Sprintf(`
-resource "pocketid_group" "test" {
-  name          = %[1]q
-  friendly_name = %[2]q
-}
+			req := datasource.ConfigureRequest{
+				ProviderData: tc.providerData,
+			}
+			resp := &datasource.ConfigureResponse{}
 
-data "pocketid_group" "test" {
-  id = pocketid_group.test.id
-}
-`, name, friendlyName)
-}
+			configurable.Configure(ctx, req, resp)
 
-func testAccGroupDataSourceConfig_LookupByName(name, friendlyName string) string {
-	return fmt.Sprintf(`
-resource "pocketid_group" "test" {
-  name          = %[1]q
-  friendly_name = %[2]q
-}
-
-data "pocketid_group" "test" {
-  name = pocketid_group.test.name
-}
-`, name, friendlyName)
-}
-
-func testAccGroupDataSourceConfig_NoIdentifier() string {
-	return `
-data "pocketid_group" "test" {
-  # Neither ID nor name provided
-}
-`
-}
-
-func testAccGroupDataSourceConfig_NotFound() string {
-	return `
-data "pocketid_group" "test" {
-  name = "non_existent_group_12345"
-}
-`
+			if tc.expectError {
+				assert.True(t, resp.Diagnostics.HasError())
+				assert.Contains(t, resp.Diagnostics.Errors()[0].Detail(), tc.errorContains)
+			} else {
+				assert.False(t, resp.Diagnostics.HasError())
+			}
+		})
+	}
 }

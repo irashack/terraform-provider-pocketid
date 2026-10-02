@@ -6,7 +6,6 @@ package provider_test
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"reflect"
 	"regexp"
 	"strings"
@@ -14,7 +13,6 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
-	"golang.org/x/mod/semver"
 )
 
 // Two public EC keys, written the way a person would: padded, and with members
@@ -25,18 +23,6 @@ const (
 	testAccPublicJWK3 = `{ "kid": "acc-key-3", "kty": "RSA", "alg": "RS256", "use": "sig", "e": "AQAB", "n": "sIPHqPy041TwYYbGzl5NlxnztjKPOU_4ebbrgnzymmwHsgpY2akPR_v7GBXq2yPWAfROPtUr8toGjkRH_ziqyKlCgRYsE7SeLeloHeqT3bam-rzdnaOfufBwC_ucXZHHcNbxG0eZ5gjtH6kCMG196clznrDp6VpoXruIfFYqJ2SiKI5DqnN7MFHKXyv9H4sIT12CGd2U5YuD45FxcdKChVfX4Zg8k2J2ajNJD2XqCIsAczTfGmoSi8sSTcrd32_mUEP2U5pywiipx9F6lGibJXEKLrZQje6oyGV4yPOgAZzkUooHC2uzum__bbGfHw-04OrrFrWCHj-mYcZvu8X20Q" }`
 	testAccPublicJWK2 = `{ "kid": "acc-key-2", "kty": "EC", "crv": "P-256", "x": "m2wurk4shfFqJEUlpHs2GZHmmdhlOueqM-uyDdxjHpc", "y": "D6fLveG4tLP5RE6asPlhYsOYFbvnai3RYjfex0OEXs4" }`
 )
-
-// testAccServerAtLeast selects version-specific assertions. A missing or
-// malformed POCKETID_TEST_VERSION fails the test: comparing it would read as
-// "older" and silently skip the newer server's checks.
-func testAccServerAtLeast(t *testing.T, version string) bool {
-	t.Helper()
-	running := "v" + os.Getenv("POCKETID_TEST_VERSION")
-	if !semver.IsValid(running) {
-		t.Fatalf("POCKETID_TEST_VERSION must be the fixture's Pocket ID version, got %q", os.Getenv("POCKETID_TEST_VERSION"))
-	}
-	return semver.Compare(running, "v"+version) >= 0
-}
 
 func testAccFederatedClient(identities ...string) string {
 	return fmt.Sprintf(`

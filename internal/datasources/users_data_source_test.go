@@ -20,6 +20,104 @@ import (
 	"github.com/irashack/terraform-provider-pocketid/internal/datasources"
 )
 
+// Test Users Data Source
+func TestUsersDataSource_Metadata(t *testing.T) {
+	ctx := context.Background()
+	ds := datasources.NewUsersDataSource()
+
+	req := datasource.MetadataRequest{
+		ProviderTypeName: "pocketid",
+	}
+	resp := &datasource.MetadataResponse{}
+
+	ds.Metadata(ctx, req, resp)
+
+	assert.Equal(t, "pocketid_users", resp.TypeName)
+}
+
+func TestUsersDataSource_Schema(t *testing.T) {
+	ctx := context.Background()
+	ds := datasources.NewUsersDataSource()
+
+	req := datasource.SchemaRequest{}
+	resp := &datasource.SchemaResponse{}
+
+	ds.Schema(ctx, req, resp)
+
+	assert.False(t, resp.Diagnostics.HasError())
+	assert.NotNil(t, resp.Schema)
+
+	// Verify users attribute
+	usersAttr, ok := resp.Schema.Attributes["users"]
+	assert.True(t, ok)
+
+	listAttr, ok := usersAttr.(schema.ListNestedAttribute)
+	assert.True(t, ok, "users should be a ListNestedAttribute")
+
+	// Verify nested attributes
+	expectedNestedAttributes := []string{
+		"id", "username", "email", "first_name", "last_name",
+		"display_name", "email_verified",
+		"is_admin", "locale", "disabled", "groups",
+	}
+
+	for _, attr := range expectedNestedAttributes {
+		_, ok := listAttr.NestedObject.Attributes[attr]
+		assert.True(t, ok, "Nested object should have %s attribute", attr)
+	}
+}
+
+func TestUsersDataSource_Configure(t *testing.T) {
+	ctx := context.Background()
+
+	testCases := []struct {
+		name          string
+		providerData  interface{}
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name:         "valid_client",
+			providerData: &client.Client{},
+			expectError:  false,
+		},
+		{
+			name:         "nil_provider_data",
+			providerData: nil,
+			expectError:  false,
+		},
+		{
+			name:          "invalid_provider_data_type",
+			providerData:  map[string]string{"invalid": "type"},
+			expectError:   true,
+			errorContains: "Expected *client.Client",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ds := datasources.NewUsersDataSource()
+
+			configurable, ok := ds.(datasource.DataSourceWithConfigure)
+			require.True(t, ok)
+
+			req := datasource.ConfigureRequest{
+				ProviderData: tc.providerData,
+			}
+			resp := &datasource.ConfigureResponse{}
+
+			configurable.Configure(ctx, req, resp)
+
+			if tc.expectError {
+				assert.True(t, resp.Diagnostics.HasError())
+				assert.Contains(t, resp.Diagnostics.Errors()[0].Detail(), tc.errorContains)
+			} else {
+				assert.False(t, resp.Diagnostics.HasError())
+			}
+		})
+	}
+}
+
 // paginatedUsersDataSourceServer serves GET /api/users honoring
 // pagination[page] and pagination[limit], actually splitting users across
 // pages instead of returning everything on the first response. This is what
