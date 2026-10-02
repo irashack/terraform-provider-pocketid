@@ -21,8 +21,16 @@ Supported servers are now Pocket ID 2.17.0 and 2.16.0. One new optional attribut
   exactly one secret: the one in state. The revoke is never retried. If it
   fails, a read of the client's secrets decides: a secret confirmed gone counts
   as revoked; otherwise a rejected revoke rolls the new client back, and an
-  ambiguous one keeps the client ID in state and names the secret that may still
-  be valid. The secret's value is never decoded, stored or reported.
+  ambiguous one keeps the client ID in state and says the secret, named by ID,
+  may still be valid. The secret's value is never decoded, stored or reported.
+- **Rollback verification of a half-created client:** when the cleanup DELETE
+  after a failed creation step itself fails, the client now counts as gone only
+  on Pocket ID's own not-found error for an OIDC client (`code: "not_found"`,
+  `details.resource: "OIDC client"`, the same from 2.14.0 to 2.17.0). Earlier
+  releases accepted any 404, so a proxy's or a wrong path's 404 while the client
+  still existed dropped its ID from state and orphaned it, with any secret
+  already generated. Now the ID, and that secret, stay in state and the error
+  says the client's absence could not be confirmed.
 - **Clients created by 2.4.103 or earlier on 2.17.0 keep their extra secret.** This
   release does not remove it. In the admin UI, revoke the secret whose prefix
   does not match the start of the client's `client_secret`.
@@ -44,8 +52,10 @@ Supported servers are now Pocket ID 2.17.0 and 2.16.0. One new optional attribut
   make: disabling or deleting a user, removing a user from a group (including
   through `pocketid_user.groups` and `pocketid_group_membership`), deleting a
   group, changing a client's allowed groups, and deleting a client.
-- `make test-acc-matrix` covers Pocket ID 2.14.0, 2.15.0, 2.16.0 and 2.17.0; CI runs
-  the full suite on 2.16.0 and 2.17.0. Upstream's #122 is adapted; #117 is not
+- `make test-acc-matrix` covers Pocket ID 2.14.0, 2.15.0, 2.16.0 and 2.17.0, now
+  including the client data-source test. `make test-acc-provider` runs the
+  provider and data-source acceptance suites together; CI runs it on 2.16.0 and
+  2.17.0. Data-source acceptance was previously not in any target or CI job. Upstream's #122 is adapted; #117 is not
   ported because the fork has no in-place secret rotation. See
   [UPSTREAM.md](UPSTREAM.md).
 

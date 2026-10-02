@@ -45,9 +45,12 @@ an empty subsequent plan. No development overrides are used.
 
 Pocket ID 2.17.0 support; supported servers move to 2.17.0 and 2.16.0. macOS ARM64,
 Docker via OrbStack, Go 1.27.1, golangci-lint 2.13.2, tfplugindocs 0.25.0,
-govulncheck 1.7.0, actionlint 1.7.12, OpenTofu 1.12.6, Terraform 1.16.4. The final
-results below were produced from the source of commit `d47b611`; the
-release-notes commit after it changes documentation only.
+govulncheck 1.7.0, actionlint 1.7.12, OpenTofu 1.12.6, Terraform 1.16.4. The checks
+and acceptance results below were produced from commit `67f35dc`, after the review
+fixes described at the end of this section; the native results come from commit
+`d47b611` and were not repeated after those fixes, which touch only the
+cleanup-failure path, messages, tests and Make/CI targets, none of them exercised
+by the native scripts.
 
 The 2.16.0 to 2.17.0 server source was compared directly
 (`backend/internal/dto`, `controller`, `model`, `appconfig`, `service`). The
@@ -75,8 +78,10 @@ Final results:
 - `python3 scripts/disposable-pocketid.py VERSION -- go test -v -count=1 -timeout 20m ./internal/provider -tags=acc`:
   **68 of 68** on 2.16.0 and on 2.17.0.
 - The same for `./internal/datasources`: **41 of 41** on 2.16.0 and on 2.17.0.
-- `make test-acc-matrix` (client and application-config acceptance): **27 of 27**
-  on each of 2.14.0, 2.15.0, 2.16.0 and 2.17.0.
+- `make test-acc-provider POCKETID_VERSION=VERSION` (both packages, one fixture):
+  **109 of 109** on 2.16.0 and on 2.17.0.
+- `make test-acc-matrix` (client resource and data-source, and application-config
+  acceptance): **28 of 28** on each of 2.14.0, 2.15.0, 2.16.0 and 2.17.0.
 - New acceptance coverage: exactly one secret after creating a confidential client,
   matching the prefix of `client_secret`, and none on a public client, with a
   direct API call first proving 2.17.0 does create a secret of its own;
@@ -99,6 +104,25 @@ Final results:
   `tests/native/application_config.py` (old payload rejected, SMTP-only update
   preserving every returned setting, data source, removal) with both tools on
   2.17.0.
+
+Review fixes (commits `d5cf11b` to `67f35dc`):
+
+- After a failed rollback DELETE, a client counts as gone only on Pocket ID's
+  structured not-found error for an OIDC client. The v2.14.0, v2.15.0, v2.16.0 and
+  v2.17.0 source all return `apperror.NotFound("OIDC client")` from
+  `getClientInternal` and `DeleteClient`, serialized by the error handler as
+  `{"error":"OIDC client not found","code":"not_found","details":{"resource":"OIDC client"},...}`.
+  Unit cases: a bare, HTML, missing-route and other-resource 404 each keep the
+  client ID in state (`TestClientPartialCreation`); a rejected revoke followed by
+  a failed cleanup keeps the ID with a bare or HTML 404 and is a verified rollback
+  with the structured body; a rejected allowed-groups update after secret
+  generation, followed by a failed cleanup, keeps both the ID and the generated
+  secret. With the previous any-404 check restored, the four new
+  `TestClientPartialCreation` 404 cases fail.
+- With the Read assignment removed, both `TestClientReadBackchannelLogoutURL`
+  cases fail now that they start from a stale value.
+- Data-source acceptance now runs in `test-acc-provider` and, for the client data
+  sources, in `test-acc` and `test-acc-matrix`.
 
 Not run: Linux or any other cross-built platform; `make release-check`
 (GoReleaser is not installed here); the native lifecycle and application-config
