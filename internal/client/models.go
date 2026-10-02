@@ -62,8 +62,9 @@ type OIDCClient struct {
 }
 
 // CreatedClientSecret identifies a secret the server generated while creating
-// a client. Only the ID is decoded: the provider revokes that secret, and the
-// value returned beside it is never decoded, stored or logged.
+// a client. Only the ID is decoded: the provider revokes that secret. The value
+// is still present in the raw response bytes the client reads, but it is never
+// decoded into a field, stored or logged.
 type CreatedClientSecret struct {
 	ID string `json:"id"`
 }

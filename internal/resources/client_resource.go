@@ -980,7 +980,7 @@ func (r *clientResource) revokeServerCreatedSecret(ctx context.Context, clientID
 			return nil
 		}
 	}
-	return fmt.Errorf("could not revoke the secret Pocket ID created with the client (secret ID %s), which stays valid until it is revoked or the client is deleted: %w", secretID, err)
+	return fmt.Errorf("could not confirm revocation of the secret Pocket ID created with the client (secret ID %s); it may still be valid until it is revoked or the client is deleted: %w", secretID, err)
 }
 
 // failedCreate only rolls back a newly created client after a definite API
