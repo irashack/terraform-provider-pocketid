@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -267,27 +268,41 @@ func (c *Client) doSingleRequest(ctx context.Context, method, endpoint string, b
 			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
 		}
 	}
+	return nil, classifyError(resp.StatusCode, respBody, readErr == nil)
+}
+
+var (
+	errorCodePattern     = regexp.MustCompile(`^[a-z][a-z_]{0,63}$`)
+	errorResourcePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z ]{0,63}$`)
+)
+
+// classifyError builds the HTTPError for a non-2xx, non-429 response. body is
+// used only when complete is true (it was read in full within its limit); a
+// truncated or unread body never yields a code.
+func classifyError(status int, body []byte, complete bool) *HTTPError {
+	result := &HTTPError{StatusCode: status}
+	if !complete {
+		return result
+	}
 	var payload struct {
 		Error   string         `json:"error"`
 		Code    string         `json:"code"`
 		Details map[string]any `json:"details"`
 	}
-	parsed := readErr == nil && json.Unmarshal(respBody, &payload) == nil
-	missing := resp.StatusCode == 404 && parsed && payload.Error == "API endpoint not found"
-	// Pocket-ID's structured errors (dto.ErrorDto) carry a stable "code"
-	// alongside the human-readable "error" message. A missing user is
-	// reported with the code below by every endpoint that looks one up
-	// (confirmed against the pinned v2.14.0/v2.15.0 source: apperror.UserNotFound(),
-	// serialized by middleware.ErrorHandlerMiddleware). The unmatched-route
-	// 404 above is a bare gin.H with no "code" field, so the two never collide.
-	userNotFound := resp.StatusCode == 404 && parsed && payload.Code == "user_not_found"
-	// A missing OIDC client is apperror.NotFound("OIDC client"): code
-	// "not_found" with details.resource "OIDC client", identical in the
-	// v2.14.0 to v2.17.0 source (getClientInternal and DeleteClient). Other
-	// resources share the "not_found" code, so the resource must match too.
-	resource, _ := payload.Details["resource"].(string)
-	clientNotFound := resp.StatusCode == 404 && parsed && payload.Code == "not_found" && resource == "OIDC client"
-	return nil, &HTTPError{StatusCode: resp.StatusCode, MissingEndpoint: missing, UserNotFound: userNotFound, ClientNotFound: clientNotFound}
+	if json.Unmarshal(body, &payload) != nil {
+		return result
+	}
+	// The router's 404 for an unknown /api route is a bare gin.H with no
+	// code (frontend/frontend_included.go), so it never collides with a
+	// structured error.
+	result.MissingEndpoint = status == http.StatusNotFound && payload.Code == "" && payload.Error == "API endpoint not found"
+	if errorCodePattern.MatchString(payload.Code) {
+		result.Code = payload.Code
+		if resource, ok := payload.Details["resource"].(string); ok && errorResourcePattern.MatchString(resource) {
+			result.Resource = resource
+		}
+	}
+	return result
 }
 
 // Response size limits. Pocket ID's largest admin responses (a 100-item

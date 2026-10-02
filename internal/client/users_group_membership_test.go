@@ -296,7 +296,7 @@ func TestClient_UserHasGroupMembership_UserNotFound(t *testing.T) {
 	var status *client.HTTPError
 	require.ErrorAs(t, err, &status)
 	assert.Equal(t, 404, status.StatusCode)
-	assert.True(t, status.UserNotFound)
+	assert.Equal(t, "user_not_found", status.Code)
 	assert.True(t, client.IsUserNotFound(err))
 }
 
@@ -318,6 +318,6 @@ func TestClient_UserHasGroupMembership_GenericNotFound(t *testing.T) {
 
 	var status *client.HTTPError
 	require.ErrorAs(t, err, &status)
-	assert.False(t, status.UserNotFound)
+	assert.Empty(t, status.Code)
 	assert.False(t, client.IsUserNotFound(err))
 }
