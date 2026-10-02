@@ -27,6 +27,8 @@ var (
 	_ resource.ResourceWithImportState = &userResource{}
 )
 
+func init() { register(NewUserResource) }
+
 // NewUserResource is a helper function to simplify the provider implementation.
 func NewUserResource() resource.Resource {
 	return &userResource{}

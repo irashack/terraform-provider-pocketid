@@ -22,6 +22,8 @@ var (
 	_ resource.ResourceWithConfigure = &ldapSyncResource{}
 )
 
+func init() { register(NewLdapSyncResource) }
+
 // NewLdapSyncResource is a helper function to simplify the provider implementation.
 func NewLdapSyncResource() resource.Resource {
 	return &ldapSyncResource{}

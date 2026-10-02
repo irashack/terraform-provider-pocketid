@@ -20,6 +20,8 @@ var (
 	_ datasource.DataSourceWithConfigure = &applicationConfigDataSource{}
 )
 
+func init() { register(NewApplicationConfigDataSource) }
+
 // NewApplicationConfigDataSource creates a new application configuration data source.
 func NewApplicationConfigDataSource() datasource.DataSource {
 	return &applicationConfigDataSource{}

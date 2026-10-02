@@ -23,6 +23,8 @@ const maxOneTimeAccessTokenTTL = 31 * 24 * time.Hour
 var _ resource.Resource = &OneTimeAccessTokenResource{}
 var _ resource.ResourceWithImportState = &OneTimeAccessTokenResource{}
 
+func init() { register(NewOneTimeAccessTokenResource) }
+
 func NewOneTimeAccessTokenResource() resource.Resource {
 	return &OneTimeAccessTokenResource{}
 }

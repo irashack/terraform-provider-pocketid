@@ -24,6 +24,8 @@ var (
 	_ resource.ResourceWithImportState = &groupResource{}
 )
 
+func init() { register(NewGroupResource) }
+
 // NewGroupResource is a helper function to simplify the provider implementation.
 func NewGroupResource() resource.Resource {
 	return &groupResource{}

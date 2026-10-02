@@ -24,6 +24,8 @@ var (
 	_ resource.ResourceWithImportState = &scimServiceProviderResource{}
 )
 
+func init() { register(NewScimServiceProviderResource) }
+
 // NewScimServiceProviderResource is a helper function to simplify the provider implementation.
 func NewScimServiceProviderResource() resource.Resource {
 	return &scimServiceProviderResource{}

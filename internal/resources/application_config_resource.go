@@ -27,6 +27,8 @@ var (
 	_ resource.ResourceWithImportState = &applicationConfigResource{}
 )
 
+func init() { register(NewApplicationConfigResource) }
+
 // NewApplicationConfigResource is a helper function to simplify the provider implementation.
 func NewApplicationConfigResource() resource.Resource {
 	return &applicationConfigResource{}

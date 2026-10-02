@@ -18,6 +18,8 @@ var (
 	_ datasource.DataSourceWithConfigure = &usersDataSource{}
 )
 
+func init() { register(NewUsersDataSource) }
+
 // NewUsersDataSource is a helper function to simplify the provider implementation.
 func NewUsersDataSource() datasource.DataSource {
 	return &usersDataSource{}

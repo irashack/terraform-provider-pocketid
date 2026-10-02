@@ -32,6 +32,8 @@ var (
 	_ resource.ResourceWithValidateConfig = &clientResource{}
 )
 
+func init() { register(NewClientResource) }
+
 // NewClientResource is a helper function to simplify the provider implementation.
 func NewClientResource() resource.Resource {
 	return &clientResource{}

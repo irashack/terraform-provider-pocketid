@@ -2,13 +2,15 @@ package provider_test
 
 import (
 	"context"
-	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/stretchr/testify/assert"
@@ -351,39 +353,60 @@ func TestProvider_Configure(t *testing.T) {
 	}
 }
 
+// The provider serves every registered data source exactly once, in type-name
+// order, each under the provider's prefix.
 func TestProvider_DataSources(t *testing.T) {
 	ctx := context.Background()
 	p := pocketidprovider.New("test")()
 
-	dataSources := p.DataSources(ctx)
-
-	// Should have 7 data sources
-	assert.Len(t, dataSources, 7)
-
-	// Verify each data source can be created
-	for i, dsFunc := range dataSources {
-		t.Run(fmt.Sprintf("data_source_%d", i), func(t *testing.T) {
-			ds := dsFunc()
-			assert.NotNil(t, ds)
-		})
+	var names []string
+	for _, factory := range p.DataSources(ctx) {
+		ds := factory()
+		require.NotNil(t, ds)
+		resp := &datasource.MetadataResponse{}
+		ds.Metadata(ctx, datasource.MetadataRequest{ProviderTypeName: "pocketid"}, resp)
+		names = append(names, resp.TypeName)
 	}
+	assertRegistered(t, names, []string{
+		"pocketid_application_config", "pocketid_client", "pocketid_clients",
+		"pocketid_group", "pocketid_groups", "pocketid_user", "pocketid_users",
+	})
 }
 
+// The provider serves every registered resource exactly once, in type-name
+// order, each under the provider's prefix.
 func TestProvider_Resources(t *testing.T) {
 	ctx := context.Background()
 	p := pocketidprovider.New("test")()
 
-	resources := p.Resources(ctx)
+	var names []string
+	for _, factory := range p.Resources(ctx) {
+		res := factory()
+		require.NotNil(t, res)
+		resp := &resource.MetadataResponse{}
+		res.Metadata(ctx, resource.MetadataRequest{ProviderTypeName: "pocketid"}, resp)
+		names = append(names, resp.TypeName)
+	}
+	assertRegistered(t, names, []string{
+		"pocketid_application_config", "pocketid_client", "pocketid_group", "pocketid_group_membership",
+		"pocketid_ldap_sync", "pocketid_one_time_access_token", "pocketid_scim_service_provider", "pocketid_user",
+	})
+}
 
-	// Should have 8 resources
-	assert.Len(t, resources, 8)
-
-	// Verify each resource can be created
-	for i, resFunc := range resources {
-		t.Run(fmt.Sprintf("resource_%d", i), func(t *testing.T) {
-			res := resFunc()
-			assert.NotNil(t, res)
-		})
+// assertRegistered checks that names are sorted, unique and prefixed, and
+// that the types present before per-file registration are still there. It
+// does not fix the count: adding a type must not require editing this test.
+func assertRegistered(t *testing.T, names, established []string) {
+	t.Helper()
+	assert.True(t, sort.StringsAreSorted(names), "sorted by type name: %v", names)
+	seen := map[string]bool{}
+	for _, name := range names {
+		assert.True(t, strings.HasPrefix(name, "pocketid_"), name)
+		assert.False(t, seen[name], "%s served twice", name)
+		seen[name] = true
+	}
+	for _, name := range established {
+		assert.True(t, seen[name], "%s is registered", name)
 	}
 }
 

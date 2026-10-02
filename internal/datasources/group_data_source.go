@@ -18,6 +18,8 @@ var (
 	_ datasource.DataSourceWithConfigure = &groupDataSource{}
 )
 
+func init() { register(NewGroupDataSource) }
+
 // NewGroupDataSource creates a new group data source.
 func NewGroupDataSource() datasource.DataSource {
 	return &groupDataSource{}

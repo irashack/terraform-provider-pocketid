@@ -21,6 +21,8 @@ var (
 	_ datasource.DataSourceWithConfigValidators = &userDataSource{}
 )
 
+func init() { register(NewUserDataSource) }
+
 // NewUserDataSource is a helper function to simplify the provider implementation.
 func NewUserDataSource() datasource.DataSource {
 	return &userDataSource{}

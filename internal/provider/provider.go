@@ -192,29 +192,14 @@ func (p *pocketIDProvider) Configure(ctx context.Context, req provider.Configure
 	tflog.Info(ctx, "Configured Pocket-ID client", map[string]any{"success": true})
 }
 
-// DataSources defines the data sources implemented in the provider.
+// DataSources returns every data source. Each registers itself from its own
+// file (datasources.All), so this list never needs editing.
 func (p *pocketIDProvider) DataSources(_ context.Context) []func() datasource.DataSource {
-	return []func() datasource.DataSource{
-		datasources.NewClientDataSource,
-		datasources.NewClientsDataSource,
-		datasources.NewUserDataSource,
-		datasources.NewUsersDataSource,
-		datasources.NewGroupDataSource,
-		datasources.NewGroupsDataSource,
-		datasources.NewApplicationConfigDataSource,
-	}
+	return datasources.All()
 }
 
-// Resources defines the resources implemented in the provider.
+// Resources returns every resource. Each registers itself from its own file
+// (resources.All), so this list never needs editing.
 func (p *pocketIDProvider) Resources(_ context.Context) []func() resource.Resource {
-	return []func() resource.Resource{
-		resources.NewClientResource,
-		resources.NewUserResource,
-		resources.NewGroupResource,
-		resources.NewGroupMembershipResource,
-		resources.NewOneTimeAccessTokenResource,
-		resources.NewApplicationConfigResource,
-		resources.NewScimServiceProviderResource,
-		resources.NewLdapSyncResource,
-	}
+	return resources.All()
 }
