@@ -345,7 +345,7 @@ func TestClientResource_APIErrors(t *testing.T) {
 			testClient := createMockServer(t, handler)
 
 			// Test that the client returns an error
-			_, err := testClient.CreateClient(&client.OIDCClientCreateRequest{
+			_, err := testClient.CreateClient(context.Background(), &client.OIDCClientCreateRequest{
 				Name:         "test",
 				CallbackURLs: []string{"https://example.com"},
 			})
@@ -366,7 +366,7 @@ func TestUserResource_APIErrors(t *testing.T) {
 	testClient := createMockServer(t, handler)
 
 	// Test that the client returns an error
-	_, err := testClient.CreateUser(&client.UserCreateRequest{
+	_, err := testClient.CreateUser(context.Background(), &client.UserCreateRequest{
 		Username: "testuser",
 		Email:    "test@example.com",
 	})
@@ -385,7 +385,7 @@ func TestGroupResource_APIErrors(t *testing.T) {
 	testClient := createMockServer(t, handler)
 
 	// Test that the client returns an error
-	_, err := testClient.CreateUserGroup(&client.UserGroupCreateRequest{
+	_, err := testClient.CreateUserGroup(context.Background(), &client.UserGroupCreateRequest{
 		Name:         "test-group",
 		FriendlyName: "Test Group",
 	})

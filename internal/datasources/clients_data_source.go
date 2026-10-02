@@ -141,7 +141,7 @@ func (d *clientsDataSource) Read(ctx context.Context, req datasource.ReadRequest
 	tflog.Debug(ctx, "Reading OIDC clients data source")
 
 	// Get clients from API
-	clientsResp, err := d.client.ListClients()
+	clientsResp, err := d.client.ListClients(ctx)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error reading OIDC clients",

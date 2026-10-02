@@ -4,6 +4,7 @@
 package provider_test
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -33,7 +34,7 @@ func setUnmanagedClientFields(id string) error {
 		return err
 	}
 
-	current, err := c.GetClient(id)
+	current, err := c.GetClient(context.Background(), id)
 	if err != nil {
 		return err
 	}
@@ -52,7 +53,7 @@ func setUnmanagedClientFields(id string) error {
 		RefreshTokenDurationMinutes: canaryRefreshTokenMins,
 	}
 
-	_, err = c.UpdateClient(id, req)
+	_, err = c.UpdateClient(context.Background(), id, req)
 	return err
 }
 
@@ -64,7 +65,7 @@ func checkUnmanagedClientFieldsPreserved(id string) error {
 		return err
 	}
 
-	got, err := c.GetClient(id)
+	got, err := c.GetClient(context.Background(), id)
 	if err != nil {
 		return err
 	}

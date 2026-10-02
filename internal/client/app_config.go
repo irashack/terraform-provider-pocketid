@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -121,8 +122,8 @@ func appConfigVariablesToConfig(vars []AppConfigVariable) *ApplicationConfig {
 
 // GetApplicationConfig retrieves the full application configuration, including
 // private values, from GET /api/application-configuration/all.
-func (c *Client) GetApplicationConfig() (*ApplicationConfig, error) {
-	body, err := c.doRequest("GET", "/api/application-configuration/all", nil)
+func (c *Client) GetApplicationConfig(ctx context.Context) (*ApplicationConfig, error) {
+	body, err := c.doRequest(ctx, "GET", "/api/application-configuration/all", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -138,8 +139,8 @@ func (c *Client) GetApplicationConfig() (*ApplicationConfig, error) {
 // UpdateApplicationConfig updates the application configuration via
 // PUT /api/application-configuration. The provided config is sent in full; any
 // empty string field is reset to its server-side default by Pocket-ID.
-func (c *Client) UpdateApplicationConfig(cfg *ApplicationConfig) (*ApplicationConfig, error) {
-	body, err := c.doRequest("PUT", "/api/application-configuration", cfg)
+func (c *Client) UpdateApplicationConfig(ctx context.Context, cfg *ApplicationConfig) (*ApplicationConfig, error) {
+	body, err := c.doRequest(ctx, "PUT", "/api/application-configuration", cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +155,7 @@ func (c *Client) UpdateApplicationConfig(cfg *ApplicationConfig) (*ApplicationCo
 
 // SyncLdap triggers an LDAP synchronization. It returns an error if LDAP is not
 // enabled or the sync fails.
-func (c *Client) SyncLdap() error {
-	_, err := c.doRequest("POST", "/api/application-configuration/sync-ldap", nil)
+func (c *Client) SyncLdap(ctx context.Context) error {
+	_, err := c.doRequest(ctx, "POST", "/api/application-configuration/sync-ldap", nil)
 	return err
 }

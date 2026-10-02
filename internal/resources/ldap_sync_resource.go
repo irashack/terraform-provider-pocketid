@@ -99,7 +99,7 @@ func (r *ldapSyncResource) Create(ctx context.Context, req resource.CreateReques
 	}
 
 	tflog.Debug(ctx, "triggering LDAP sync")
-	if err := r.client.SyncLdap(); err != nil {
+	if err := r.client.SyncLdap(ctx); err != nil {
 		resp.Diagnostics.AddError(
 			"Error syncing LDAP",
 			"Could not trigger LDAP sync: "+err.Error(),

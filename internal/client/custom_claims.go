@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 )
@@ -13,11 +14,11 @@ type CustomClaim struct {
 
 // UpdateUserCustomClaims replaces all custom claims for a user. The API
 // performs a full replace: claims not present in the list are removed.
-func (c *Client) UpdateUserCustomClaims(userID string, claims []CustomClaim) ([]CustomClaim, error) {
+func (c *Client) UpdateUserCustomClaims(ctx context.Context, userID string, claims []CustomClaim) ([]CustomClaim, error) {
 	if claims == nil {
 		claims = []CustomClaim{}
 	}
-	body, err := c.doRequest("PUT", fmt.Sprintf("/api/custom-claims/user/%s", userID), claims)
+	body, err := c.doRequest(ctx, "PUT", fmt.Sprintf("/api/custom-claims/user/%s", userID), claims)
 	if err != nil {
 		return nil, err
 	}
@@ -32,11 +33,11 @@ func (c *Client) UpdateUserCustomClaims(userID string, claims []CustomClaim) ([]
 
 // UpdateGroupCustomClaims replaces all custom claims for a user group. The API
 // performs a full replace: claims not present in the list are removed.
-func (c *Client) UpdateGroupCustomClaims(groupID string, claims []CustomClaim) ([]CustomClaim, error) {
+func (c *Client) UpdateGroupCustomClaims(ctx context.Context, groupID string, claims []CustomClaim) ([]CustomClaim, error) {
 	if claims == nil {
 		claims = []CustomClaim{}
 	}
-	body, err := c.doRequest("PUT", fmt.Sprintf("/api/custom-claims/user-group/%s", groupID), claims)
+	body, err := c.doRequest(ctx, "PUT", fmt.Sprintf("/api/custom-claims/user-group/%s", groupID), claims)
 	if err != nil {
 		return nil, err
 	}

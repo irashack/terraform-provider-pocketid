@@ -136,7 +136,7 @@ func (r *scimServiceProviderResource) Create(ctx context.Context, req resource.C
 		"endpoint":  createReq.Endpoint,
 	})
 
-	providerResp, err := r.client.CreateScimServiceProvider(createReq)
+	providerResp, err := r.client.CreateScimServiceProvider(ctx, createReq)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error creating SCIM service provider",
@@ -165,7 +165,7 @@ func (r *scimServiceProviderResource) Read(ctx context.Context, req resource.Rea
 		"client_id": state.ClientID.ValueString(),
 	})
 
-	providerResp, err := r.client.GetClientScimServiceProvider(state.ClientID.ValueString())
+	providerResp, err := r.client.GetClientScimServiceProvider(ctx, state.ClientID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error reading SCIM service provider",
@@ -208,7 +208,7 @@ func (r *scimServiceProviderResource) Update(ctx context.Context, req resource.U
 		"endpoint":  updateReq.Endpoint,
 	})
 
-	providerResp, err := r.client.UpdateScimServiceProvider(state.ID.ValueString(), updateReq)
+	providerResp, err := r.client.UpdateScimServiceProvider(ctx, state.ID.ValueString(), updateReq)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error updating SCIM service provider",
@@ -236,7 +236,7 @@ func (r *scimServiceProviderResource) Delete(ctx context.Context, req resource.D
 		"id": state.ID.ValueString(),
 	})
 
-	err := r.client.DeleteScimServiceProvider(state.ID.ValueString())
+	err := r.client.DeleteScimServiceProvider(ctx, state.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error deleting SCIM service provider",

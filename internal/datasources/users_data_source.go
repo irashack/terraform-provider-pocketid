@@ -145,7 +145,7 @@ func (d *usersDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 
 	// Get every user from the API. ListUsers alone would silently return only
 	// the first page (server default 20 items); this lists the whole set.
-	users, err := d.client.ListAllUsers("")
+	users, err := d.client.ListAllUsers(ctx, "")
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error reading users",

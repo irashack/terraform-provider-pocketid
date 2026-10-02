@@ -1,6 +1,7 @@
 package client_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -38,7 +39,7 @@ func TestGetApplicationConfig(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	cfg, err := c.GetApplicationConfig()
+	cfg, err := c.GetApplicationConfig(context.Background())
 	require.NoError(t, err)
 
 	assert.Equal(t, "My App", cfg.AppName)
@@ -73,7 +74,7 @@ func TestUpdateApplicationConfig(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	updated, err := c.UpdateApplicationConfig(&client.ApplicationConfig{
+	updated, err := c.UpdateApplicationConfig(context.Background(), &client.ApplicationConfig{
 		AppName:  "Updated App",
 		SmtpHost: "smtp.example.com",
 	})
@@ -117,11 +118,11 @@ func TestApplicationConfigAutoCreateOIDCClientSecret(t *testing.T) {
 			c, err := client.NewClient(server.URL, "test-token", false, 30)
 			require.NoError(t, err)
 
-			cfg, err := c.GetApplicationConfig()
+			cfg, err := c.GetApplicationConfig(context.Background())
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, cfg.AutoCreateOIDCClientSecret)
 
-			_, err = c.UpdateApplicationConfig(cfg)
+			_, err = c.UpdateApplicationConfig(context.Background(), cfg)
 			require.NoError(t, err)
 			if tc.want == nil {
 				assert.NotContains(t, sent, "autoCreateOidcClientSecret")

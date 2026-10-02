@@ -187,7 +187,7 @@ func (d *applicationConfigDataSource) Configure(_ context.Context, req datasourc
 func (d *applicationConfigDataSource) Read(ctx context.Context, _ datasource.ReadRequest, resp *datasource.ReadResponse) {
 	tflog.Debug(ctx, "Reading application configuration")
 
-	cfg, err := d.client.GetApplicationConfig()
+	cfg, err := d.client.GetApplicationConfig(ctx)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Unable to Read Application Configuration",

@@ -1,6 +1,7 @@
 package client_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -34,7 +35,7 @@ func TestClient_UpdateUserCustomClaims(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	claims, err := c.UpdateUserCustomClaims("test-user-id", []client.CustomClaim{
+	claims, err := c.UpdateUserCustomClaims(context.Background(), "test-user-id", []client.CustomClaim{
 		{Key: "department", Value: "engineering"},
 		{Key: "level", Value: "senior"},
 	})
@@ -60,7 +61,7 @@ func TestClient_UpdateUserCustomClaims_Clear(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	claims, err := c.UpdateUserCustomClaims("test-user-id", nil)
+	claims, err := c.UpdateUserCustomClaims(context.Background(), "test-user-id", nil)
 	require.NoError(t, err)
 	assert.Empty(t, claims)
 }
@@ -83,7 +84,7 @@ func TestClient_UpdateGroupCustomClaims(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	claims, err := c.UpdateGroupCustomClaims("test-group-id", []client.CustomClaim{
+	claims, err := c.UpdateGroupCustomClaims(context.Background(), "test-group-id", []client.CustomClaim{
 		{Key: "role", Value: "admin"},
 	})
 	require.NoError(t, err)

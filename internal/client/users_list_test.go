@@ -1,6 +1,7 @@
 package client_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -88,7 +89,7 @@ func makeUsers(n int) []client.User {
 func TestClient_ListUsersPage_SetsQueryParams(t *testing.T) {
 	c, queries := paginatedUsersServer(t, makeUsers(1), 20)
 
-	_, err := c.ListUsersPage(2, 50, "alice")
+	_, err := c.ListUsersPage(context.Background(), 2, 50, "alice")
 	require.NoError(t, err)
 
 	require.Len(t, *queries, 1)
@@ -101,7 +102,7 @@ func TestClient_ListUsersPage_SetsQueryParams(t *testing.T) {
 func TestClient_ListUsersPage_NoParamsWhenZero(t *testing.T) {
 	c, queries := paginatedUsersServer(t, makeUsers(1), 20)
 
-	_, err := c.ListUsersPage(0, 0, "")
+	_, err := c.ListUsersPage(context.Background(), 0, 0, "")
 	require.NoError(t, err)
 
 	require.Len(t, *queries, 1)
@@ -117,7 +118,7 @@ func TestClient_ListAllUsers_FollowsPagination(t *testing.T) {
 	want := makeUsers(250)
 	c, queries := paginatedUsersServer(t, want, 20)
 
-	got, err := c.ListAllUsers("")
+	got, err := c.ListAllUsers(context.Background(), "")
 	require.NoError(t, err)
 	assert.Equal(t, want, got)
 	assert.Equal(t, 3, len(*queries), "250 users at ListAllUsers' page size of 100 must take exactly 3 requests")
@@ -133,7 +134,7 @@ func TestClient_ListAllUsers_FindsUserOnPageTwo(t *testing.T) {
 	users := makeUsers(150) // user149 is index 149: page 2 of 100
 	c, queries := paginatedUsersServer(t, users, 20)
 
-	all, err := c.ListAllUsers("")
+	all, err := c.ListAllUsers(context.Background(), "")
 	require.NoError(t, err)
 	require.Len(t, *queries, 2, "150 users at 100/page must take exactly 2 requests")
 
@@ -151,7 +152,7 @@ func TestClient_ListAllUsers_FindsUserOnPageTwo(t *testing.T) {
 func TestClient_ListAllUsers_EmptyResult(t *testing.T) {
 	c, queries := paginatedUsersServer(t, nil, 20)
 
-	got, err := c.ListAllUsers("")
+	got, err := c.ListAllUsers(context.Background(), "")
 	require.NoError(t, err)
 	assert.Empty(t, got)
 	assert.Len(t, *queries, 1, "an empty first page must stop immediately, not loop")
@@ -167,7 +168,7 @@ func TestClient_ListAllUsers_PropagatesError(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	_, err = c.ListAllUsers("")
+	_, err = c.ListAllUsers(context.Background(), "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "HTTP 500")
 }
@@ -197,7 +198,7 @@ func TestClient_ListAllUsers_MalformedPaginationIsError(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	got, err := c.ListAllUsers("")
+	got, err := c.ListAllUsers(context.Background(), "")
 	assert.Error(t, err)
 	assert.Nil(t, got)
 	assert.Contains(t, err.Error(), "totalPages")

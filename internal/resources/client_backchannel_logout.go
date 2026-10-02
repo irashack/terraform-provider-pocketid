@@ -63,11 +63,11 @@ func (backchannelLogoutURLValidator) ValidateString(_ context.Context, req valid
 // checkBackchannelLogoutSupport refuses, before any mutation, to send a
 // back-channel logout URL to a server that would silently drop it: the next
 // plan would show the same change again, forever.
-func checkBackchannelLogoutSupport(api *client.Client, value *string) error {
+func checkBackchannelLogoutSupport(ctx context.Context, api *client.Client, value *string) error {
 	if value == nil {
 		return nil
 	}
-	supported, err := api.VersionAtLeast(backchannelLogoutMinVersion)
+	supported, err := api.VersionAtLeast(ctx, backchannelLogoutMinVersion)
 	if err != nil {
 		return fmt.Errorf("could not verify that the server supports backchannel_logout_url: %w", err)
 	}

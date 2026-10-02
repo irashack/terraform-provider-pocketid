@@ -1,6 +1,7 @@
 package client_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -42,7 +43,7 @@ func TestClient_CreateScimServiceProvider(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.CreateScimServiceProvider(&client.ScimServiceProviderCreateRequest{
+	result, err := c.CreateScimServiceProvider(context.Background(), &client.ScimServiceProviderCreateRequest{
 		Endpoint:     "https://scim.example.com/v2",
 		Token:        "secret-token",
 		OidcClientID: "client-123",
@@ -77,7 +78,7 @@ func TestClient_GetClientScimServiceProvider(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.GetClientScimServiceProvider("client-123")
+	result, err := c.GetClientScimServiceProvider(context.Background(), "client-123")
 	assert.NoError(t, err)
 	assert.Equal(t, "scim-1", result.ID)
 	assert.Equal(t, "decrypted-token", result.Token)
@@ -107,7 +108,7 @@ func TestClient_UpdateScimServiceProvider(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.UpdateScimServiceProvider("scim-1", &client.ScimServiceProviderCreateRequest{
+	result, err := c.UpdateScimServiceProvider(context.Background(), "scim-1", &client.ScimServiceProviderCreateRequest{
 		Endpoint:     "https://scim.example.com/v2/updated",
 		Token:        "new-token",
 		OidcClientID: "client-123",
@@ -127,6 +128,6 @@ func TestClient_DeleteScimServiceProvider(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	err = c.DeleteScimServiceProvider("scim-1")
+	err = c.DeleteScimServiceProvider(context.Background(), "scim-1")
 	assert.NoError(t, err)
 }

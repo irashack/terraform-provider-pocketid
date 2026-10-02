@@ -20,6 +20,7 @@ type Client struct {
 	baseURL    string
 	apiToken   string
 	httpClient *http.Client
+	retry      retryPolicy
 }
 
 // NewClient creates a new Pocket-ID API client
@@ -51,68 +52,101 @@ func NewClient(baseURL, apiToken string, skipTLSVerify bool, timeout int64) (*Cl
 	}, nil
 }
 
-// doRequest performs an HTTP request to the Pocket-ID API
-func (c *Client) doRequest(method, endpoint string, body interface{}) ([]byte, error) {
-	return c.doRequestWithContext(context.Background(), method, endpoint, body)
+// Retry limits for reads. Only GET is ever retried; a mutation is sent once.
+const (
+	// maxReadAttempts is the most times one GET is sent.
+	maxReadAttempts = 4
+	// maxRetryWait caps a single wait between attempts. A server asking for a
+	// longer wait (Retry-After) gets no retry: the error is returned at once.
+	maxRetryWait = 10 * time.Second
+	// maxRetryElapsed bounds the time a GET spends retrying: no wait starts
+	// that would end more than this long after the first attempt began, nor
+	// after the context's deadline, whichever is earlier.
+	maxRetryElapsed = 30 * time.Second
+)
+
+// retryPolicy holds the limits above. It is a field so tests can shorten it.
+type retryPolicy struct {
+	maxAttempts int
+	backoffUnit time.Duration
+	maxWait     time.Duration
+	maxElapsed  time.Duration
 }
 
-// doRequestWithContext performs an HTTP request to the Pocket-ID API with context support
-func (c *Client) doRequestWithContext(ctx context.Context, method, endpoint string, body interface{}) ([]byte, error) {
-	const maxRetries = 3
+var defaultRetryPolicy = retryPolicy{
+	maxAttempts: maxReadAttempts,
+	backoffUnit: time.Second,
+	maxWait:     maxRetryWait,
+	maxElapsed:  maxRetryElapsed,
+}
+
+// doRequest performs an HTTP request to the Pocket-ID API. ctx bounds the
+// whole call: cancelling it aborts an in-flight request and any wait before a
+// retry, and its deadline also bounds how long a GET keeps retrying.
+func (c *Client) doRequest(ctx context.Context, method, endpoint string, body interface{}) ([]byte, error) {
+	policy := c.retry
+	if policy.maxAttempts == 0 {
+		policy = defaultRetryPolicy
+	}
+	retryDeadline := time.Now().Add(policy.maxElapsed)
+	if deadline, ok := ctx.Deadline(); ok && deadline.Before(retryDeadline) {
+		retryDeadline = deadline
+	}
+
 	var lastErr error
-
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		var backoff time.Duration
-
-		if attempt > 0 {
-			// Exponential backoff: 1s, 2s, 4s
-			backoff = time.Duration(1<<(attempt-1)) * time.Second
-
-			// Special handling for rate limit errors to respect Retry-After header
-			if rateLimitErr, ok := lastErr.(*RateLimitError); ok && rateLimitErr.RetryAfter != "" {
-				retryAfterSeconds := parseRetryAfter(rateLimitErr.RetryAfter)
-				if retryAfterSeconds > 0 {
-					backoff = time.Duration(retryAfterSeconds) * time.Second
-					tflog.Info(ctx, "Rate limited, using Retry-After header", map[string]interface{}{
-						"retry_after":     rateLimitErr.RetryAfter,
-						"backoff_seconds": retryAfterSeconds,
-					})
-				}
+	for attempt := 1; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			if lastErr != nil {
+				return nil, fmt.Errorf("request abandoned before attempt %d: %w (previous attempt: %w)", attempt, err, lastErr)
 			}
-
-			tflog.Debug(ctx, "Retrying request after backoff", map[string]interface{}{
-				"attempt": attempt,
-				"backoff": backoff.String(),
-			})
-
-			select {
-			case <-time.After(backoff):
-				// Continue with retry
-			case <-ctx.Done():
-				return nil, fmt.Errorf("context cancelled during retry backoff: %w", ctx.Err())
-			}
+			return nil, fmt.Errorf("request not sent: %w", err)
 		}
 
 		respBody, err := c.doSingleRequest(ctx, method, endpoint, body)
 		if err == nil {
 			return respBody, nil
 		}
-
 		lastErr = err
 
-		// Determine if error is retryable
-		if method != http.MethodGet || !isRetryableError(err) {
+		// Mutations are never retried, and neither is anything once the
+		// caller has given up.
+		if method != http.MethodGet || ctx.Err() != nil || !isRetryableError(err) {
 			return nil, err
+		}
+		if attempt >= policy.maxAttempts {
+			return nil, fmt.Errorf("request failed after %d attempts: %w", attempt, lastErr)
+		}
+
+		// Exponential backoff (1, 2, 4 units) unless the server asked for a
+		// specific wait.
+		wait := policy.backoffUnit * time.Duration(1<<(attempt-1))
+		if rateLimitErr, ok := lastErr.(*RateLimitError); ok && rateLimitErr.RetryAfter != "" {
+			if requested := time.Duration(parseRetryAfter(rateLimitErr.RetryAfter)) * time.Second; requested > 0 {
+				wait = requested
+			}
+		}
+		if wait > policy.maxWait {
+			return nil, fmt.Errorf("not retrying: the server asked to wait %s, longer than the %s this provider waits: %w", wait, policy.maxWait, lastErr)
+		}
+		if time.Now().Add(wait).After(retryDeadline) {
+			return nil, fmt.Errorf("not retrying: waiting %s would pass the time allowed for this request after %d attempt(s): %w", wait, attempt, lastErr)
 		}
 
 		tflog.Warn(ctx, "Request failed with retryable error", map[string]interface{}{
 			"error":        err.Error(),
-			"attempt":      attempt + 1,
-			"max_attempts": maxRetries + 1,
+			"attempt":      attempt,
+			"max_attempts": policy.maxAttempts,
+			"backoff":      wait.String(),
 		})
-	}
 
-	return nil, fmt.Errorf("request failed after %d attempts: %w", maxRetries+1, lastErr)
+		timer := time.NewTimer(wait)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, fmt.Errorf("context cancelled during retry backoff: %w (previous attempt: %w)", ctx.Err(), lastErr)
+		}
+	}
 }
 
 // isRetryableError determines if an error is retryable

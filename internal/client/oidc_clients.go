@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -108,8 +109,8 @@ type UpdateAllowedUserGroupsRequest struct {
 }
 
 // CreateClient creates a new OIDC client
-func (c *Client) CreateClient(createReq *OIDCClientCreateRequest) (*OIDCClient, error) {
-	body, err := c.doRequest("POST", "/api/oidc/clients", createReq)
+func (c *Client) CreateClient(ctx context.Context, createReq *OIDCClientCreateRequest) (*OIDCClient, error) {
+	body, err := c.doRequest(ctx, "POST", "/api/oidc/clients", createReq)
 	if err != nil {
 		return nil, err
 	}
@@ -126,8 +127,8 @@ func (c *Client) CreateClient(createReq *OIDCClientCreateRequest) (*OIDCClient, 
 }
 
 // GetClient retrieves an OIDC client by ID
-func (c *Client) GetClient(clientID string) (*OIDCClient, error) {
-	body, err := c.doRequest("GET", fmt.Sprintf("/api/oidc/clients/%s", url.PathEscape(clientID)), nil)
+func (c *Client) GetClient(ctx context.Context, clientID string) (*OIDCClient, error) {
+	body, err := c.doRequest(ctx, "GET", fmt.Sprintf("/api/oidc/clients/%s", url.PathEscape(clientID)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -141,8 +142,8 @@ func (c *Client) GetClient(clientID string) (*OIDCClient, error) {
 }
 
 // UpdateClient updates an existing OIDC client
-func (c *Client) UpdateClient(clientID string, updateReq *OIDCClientCreateRequest) (*OIDCClient, error) {
-	body, err := c.doRequest("PUT", fmt.Sprintf("/api/oidc/clients/%s", url.PathEscape(clientID)), updateReq)
+func (c *Client) UpdateClient(ctx context.Context, clientID string, updateReq *OIDCClientCreateRequest) (*OIDCClient, error) {
+	body, err := c.doRequest(ctx, "PUT", fmt.Sprintf("/api/oidc/clients/%s", url.PathEscape(clientID)), updateReq)
 	if err != nil {
 		return nil, err
 	}
@@ -156,14 +157,14 @@ func (c *Client) UpdateClient(clientID string, updateReq *OIDCClientCreateReques
 }
 
 // DeleteClient deletes an OIDC client
-func (c *Client) DeleteClient(clientID string) error {
-	_, err := c.doRequest("DELETE", fmt.Sprintf("/api/oidc/clients/%s", url.PathEscape(clientID)), nil)
+func (c *Client) DeleteClient(ctx context.Context, clientID string) error {
+	_, err := c.doRequest(ctx, "DELETE", fmt.Sprintf("/api/oidc/clients/%s", url.PathEscape(clientID)), nil)
 	return err
 }
 
 // ListClients retrieves all OIDC clients
-func (c *Client) ListClients() (*PaginatedResponse[OIDCClient], error) {
-	body, err := c.doRequest("GET", "/api/oidc/clients", nil)
+func (c *Client) ListClients(ctx context.Context) (*PaginatedResponse[OIDCClient], error) {
+	body, err := c.doRequest(ctx, "GET", "/api/oidc/clients", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -177,8 +178,8 @@ func (c *Client) ListClients() (*PaginatedResponse[OIDCClient], error) {
 }
 
 // UpdateClientAllowedUserGroups updates the allowed user groups for an OIDC client
-func (c *Client) UpdateClientAllowedUserGroups(clientID string, groupIDs []string) error {
+func (c *Client) UpdateClientAllowedUserGroups(ctx context.Context, clientID string, groupIDs []string) error {
 	req := UpdateAllowedUserGroupsRequest{UserGroupIDs: groupIDs}
-	_, err := c.doRequest("PUT", fmt.Sprintf("/api/oidc/clients/%s/allowed-user-groups", url.PathEscape(clientID)), req)
+	_, err := c.doRequest(ctx, "PUT", fmt.Sprintf("/api/oidc/clients/%s/allowed-user-groups", url.PathEscape(clientID)), req)
 	return err
 }

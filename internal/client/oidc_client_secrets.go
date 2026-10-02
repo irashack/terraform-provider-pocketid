@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -21,8 +22,8 @@ type ClientSecretResponse struct {
 }
 
 // GenerateClientSecret generates a new client secret for an OIDC client
-func (c *Client) GenerateClientSecret(clientID string) (string, error) {
-	version, err := c.GetCurrentVersion()
+func (c *Client) GenerateClientSecret(ctx context.Context, clientID string) (string, error) {
+	version, err := c.GetCurrentVersion(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -32,7 +33,7 @@ func (c *Client) GenerateClientSecret(clientID string) (string, error) {
 		url += "s"
 	}
 
-	body, err := c.doRequest("POST", url, nil)
+	body, err := c.doRequest(ctx, "POST", url, nil)
 	if err != nil {
 		return "", err
 	}
@@ -52,8 +53,8 @@ func (c *Client) GenerateClientSecret(clientID string) (string, error) {
 
 // ListClientSecrets lists an OIDC client's secrets without their values.
 // Pocket ID 2.14.0 and later only.
-func (c *Client) ListClientSecrets(clientID string) ([]ClientSecretMetadata, error) {
-	body, err := c.doRequest("GET", fmt.Sprintf("/api/oidc/clients/%s/secrets", url.PathEscape(clientID)), nil)
+func (c *Client) ListClientSecrets(ctx context.Context, clientID string) ([]ClientSecretMetadata, error) {
+	body, err := c.doRequest(ctx, "GET", fmt.Sprintf("/api/oidc/clients/%s/secrets", url.PathEscape(clientID)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +71,7 @@ func (c *Client) ListClientSecrets(clientID string) ([]ClientSecretMetadata, err
 // returned unchanged: a 404 alone does not prove the secret is gone (it may be
 // a wrong base URL or a proxy's page), so a caller that needs that answer
 // confirms it with ListClientSecrets.
-func (c *Client) DeleteClientSecret(clientID, secretID string) error {
-	_, err := c.doRequest("DELETE", fmt.Sprintf("/api/oidc/clients/%s/secrets/%s", url.PathEscape(clientID), url.PathEscape(secretID)), nil)
+func (c *Client) DeleteClientSecret(ctx context.Context, clientID, secretID string) error {
+	_, err := c.doRequest(ctx, "DELETE", fmt.Sprintf("/api/oidc/clients/%s/secrets/%s", url.PathEscape(clientID), url.PathEscape(secretID)), nil)
 	return err
 }

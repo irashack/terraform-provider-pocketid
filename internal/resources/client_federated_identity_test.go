@@ -294,20 +294,20 @@ func TestCheckFederatedPublicKeysSupport(t *testing.T) {
 
 	t.Run("no keys asks the server nothing", func(t *testing.T) {
 		api, requests := serverReporting(t, "2.14.0")
-		assert.NoError(t, checkFederatedPublicKeysSupport(api, withoutKeys))
+		assert.NoError(t, checkFederatedPublicKeysSupport(context.Background(), api, withoutKeys))
 		assert.Zero(t, *requests)
 	})
 	t.Run("2.14 refuses before mutation", func(t *testing.T) {
 		api, _ := serverReporting(t, "2.14.0")
-		assert.ErrorContains(t, checkFederatedPublicKeysSupport(api, withKeys), "2.15.0 or later")
+		assert.ErrorContains(t, checkFederatedPublicKeysSupport(context.Background(), api, withKeys), "2.15.0 or later")
 	})
 	t.Run("2.15 accepts", func(t *testing.T) {
 		api, _ := serverReporting(t, "v2.15.0")
-		assert.NoError(t, checkFederatedPublicKeysSupport(api, withKeys))
+		assert.NoError(t, checkFederatedPublicKeysSupport(context.Background(), api, withKeys))
 	})
 	t.Run("unverifiable version refuses", func(t *testing.T) {
 		api, _ := serverReporting(t, "not-a-version")
-		assert.Error(t, checkFederatedPublicKeysSupport(api, withKeys))
+		assert.Error(t, checkFederatedPublicKeysSupport(context.Background(), api, withKeys))
 	})
 }
 

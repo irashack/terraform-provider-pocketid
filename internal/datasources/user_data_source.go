@@ -195,7 +195,7 @@ func (d *userDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 		tflog.Debug(ctx, "Reading user data source by ID", map[string]any{
 			"id": config.ID.ValueString(),
 		})
-		userResp, err = d.client.GetUser(config.ID.ValueString())
+		userResp, err = d.client.GetUser(ctx, config.ID.ValueString())
 		if err != nil {
 			resp.Diagnostics.AddError(
 				"Error reading user",
@@ -211,7 +211,7 @@ func (d *userDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 			"username": config.Username.ValueString(),
 		})
 
-		users, err := d.client.ListAllUsers(config.Username.ValueString())
+		users, err := d.client.ListAllUsers(ctx, config.Username.ValueString())
 		if err != nil {
 			resp.Diagnostics.AddError(
 				"Error listing users",
@@ -243,7 +243,7 @@ func (d *userDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 			"email": config.Email.ValueString(),
 		})
 
-		users, err := d.client.ListAllUsers(config.Email.ValueString())
+		users, err := d.client.ListAllUsers(ctx, config.Email.ValueString())
 		if err != nil {
 			resp.Diagnostics.AddError(
 				"Error listing users",

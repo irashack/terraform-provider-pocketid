@@ -335,7 +335,7 @@ func (r *applicationConfigResource) Configure(_ context.Context, req resource.Co
 // applyConfig merges the plan with the current server config, performs the PUT
 // and writes the response back into the plan model.
 func (r *applicationConfigResource) applyConfig(ctx context.Context, plan *applicationConfigModel, diags *diag.Diagnostics) {
-	current, err := r.client.GetApplicationConfig()
+	current, err := r.client.GetApplicationConfig(ctx)
 	if err != nil {
 		diags.AddError(
 			"Error reading application configuration",
@@ -348,7 +348,7 @@ func (r *applicationConfigResource) applyConfig(ctx context.Context, plan *appli
 
 	tflog.Debug(ctx, "Updating application configuration")
 
-	updated, err := r.client.UpdateApplicationConfig(payload)
+	updated, err := r.client.UpdateApplicationConfig(ctx, payload)
 	if err != nil {
 		diags.AddError(
 			"Error updating application configuration",
@@ -386,7 +386,7 @@ func (r *applicationConfigResource) Read(ctx context.Context, req resource.ReadR
 
 	tflog.Debug(ctx, "Reading application configuration")
 
-	cfg, err := r.client.GetApplicationConfig()
+	cfg, err := r.client.GetApplicationConfig(ctx)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error reading application configuration",

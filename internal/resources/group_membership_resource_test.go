@@ -445,7 +445,7 @@ func TestGroupMembershipResource_Create_ConcurrentAddsSameUser(t *testing.T) {
 		}
 	}
 
-	final, err := c.GetUser("user-1")
+	final, err := c.GetUser(context.Background(), "user-1")
 	require.NoError(t, err)
 	var gotGroups []string
 	for _, g := range final.UserGroups {
@@ -516,7 +516,7 @@ func TestGroupMembershipResource_ConcurrentMixedAddsAndRemoves(t *testing.T) {
 		}
 	}
 
-	final, err := c.GetUser("user-1")
+	final, err := c.GetUser(context.Background(), "user-1")
 	require.NoError(t, err)
 	var gotGroups []string
 	for _, g := range final.UserGroups {

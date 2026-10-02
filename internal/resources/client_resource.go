@@ -323,16 +323,16 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 	})
 
 	// Resolve the API contract before making any client or secret mutation.
-	if err := checkFederatedPublicKeysSupport(r.client, createReq.Credentials); err != nil {
+	if err := checkFederatedPublicKeysSupport(ctx, r.client, createReq.Credentials); err != nil {
 		resp.Diagnostics.AddAttributeError(path.Root("federated_identities"), "Unsupported federated identity configuration", err.Error())
 		return
 	}
-	if err := checkBackchannelLogoutSupport(r.client, createReq.BackchannelLogoutURL); err != nil {
+	if err := checkBackchannelLogoutSupport(ctx, r.client, createReq.BackchannelLogoutURL); err != nil {
 		resp.Diagnostics.AddAttributeError(path.Root("backchannel_logout_url"), "Unsupported back-channel logout configuration", err.Error())
 		return
 	}
 	if !plan.IsPublic.ValueBool() {
-		if err := r.client.CheckSecretAPI(); err != nil {
+		if err := r.client.CheckSecretAPI(ctx); err != nil {
 			resp.Diagnostics.AddError("Cannot verify secret API compatibility", err.Error())
 			return
 		}
@@ -340,14 +340,14 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 	// A caller-supplied ID is checked before creation. Never claim or clean up
 	// an existing client just because POST failed (including a conflict).
 	if createReq.ClientID != nil {
-		_, err := r.client.GetClient(*createReq.ClientID)
+		_, err := r.client.GetClient(ctx, *createReq.ClientID)
 		var status *client.HTTPError
 		if err == nil || !errors.As(err, &status) || status.StatusCode != 404 {
 			resp.Diagnostics.AddError("Cannot create fixed-ID OIDC client", "The client already exists or its absence could not be verified. Import an existing client instead; no mutation was attempted.")
 			return
 		}
 	}
-	clientResp, err := r.client.CreateClient(createReq)
+	clientResp, err := r.client.CreateClient(ctx, createReq)
 	if err != nil {
 		detail := "Client creation failed: " + err.Error()
 		if !client.IsDefiniteRejection(err) {
@@ -359,7 +359,7 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 				if plan.LaunchURL.IsUnknown() {
 					plan.LaunchURL = types.StringNull()
 				}
-				if found, readErr := r.client.GetClient(*createReq.ClientID); readErr == nil {
+				if found, readErr := r.client.GetClient(ctx, *createReq.ClientID); readErr == nil {
 					plan.HasLogo = types.BoolValue(found.HasLogo)
 					detail += " A read found the fixed-ID client; its identity is retained in state."
 				} else {
@@ -410,7 +410,7 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 	// Generate client secret for non-public clients
 	if !plan.IsPublic.ValueBool() {
 		tflog.Debug(ctx, "Generating client secret for non-public client")
-		secret, err := r.client.GenerateClientSecret(clientResp.ID)
+		secret, err := r.client.GenerateClientSecret(ctx, clientResp.ID)
 		if err != nil {
 			plan.ClientSecret = types.StringNull()
 			r.failedCreate(ctx, &plan, err, resp)
@@ -431,7 +431,7 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 			tflog.Debug(ctx, "Updating allowed user groups", map[string]any{
 				"groups": groupIDs,
 			})
-			err = r.client.UpdateClientAllowedUserGroups(clientResp.ID, groupIDs)
+			err = r.client.UpdateClientAllowedUserGroups(ctx, clientResp.ID, groupIDs)
 			if err != nil {
 				r.failedCreate(ctx, &plan, err, resp)
 
@@ -460,7 +460,7 @@ func (r *clientResource) Read(ctx context.Context, req resource.ReadRequest, res
 	})
 
 	// Get client from API
-	clientResp, err := r.client.GetClient(state.ID.ValueString())
+	clientResp, err := r.client.GetClient(ctx, state.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error reading OIDC client",
@@ -584,7 +584,7 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 	// to false and the token durations fall back to their defaults. Pocket ID
 	// likewise replaces the whole federated identity list, so a
 	// replay_protection value the plan could not determine is taken from here.
-	current, err := r.client.GetClient(plan.ID.ValueString())
+	current, err := r.client.GetClient(ctx, plan.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error reading OIDC client",
@@ -617,11 +617,11 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 		IsGroupRestricted: isGroupRestricted,
 		Credentials:       buildCredentialsFromPlan(ctx, &plan, currentIdentities),
 	}
-	if err := checkFederatedPublicKeysSupport(r.client, updateReq.Credentials); err != nil {
+	if err := checkFederatedPublicKeysSupport(ctx, r.client, updateReq.Credentials); err != nil {
 		resp.Diagnostics.AddAttributeError(path.Root("federated_identities"), "Unsupported federated identity configuration", err.Error())
 		return
 	}
-	if err := checkBackchannelLogoutSupport(r.client, stringPointer(plan.BackchannelLogoutURL)); err != nil {
+	if err := checkBackchannelLogoutSupport(ctx, r.client, stringPointer(plan.BackchannelLogoutURL)); err != nil {
 		resp.Diagnostics.AddAttributeError(path.Root("backchannel_logout_url"), "Unsupported back-channel logout configuration", err.Error())
 		return
 	}
@@ -637,7 +637,7 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 		"name": updateReq.Name,
 	})
 
-	clientResp, err := r.client.UpdateClient(plan.ID.ValueString(), updateReq)
+	clientResp, err := r.client.UpdateClient(ctx, plan.ID.ValueString(), updateReq)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error updating OIDC client",
@@ -696,7 +696,7 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 			tflog.Debug(ctx, "Updating allowed user groups", map[string]any{
 				"groups": plannedGroupIDs,
 			})
-			err = r.client.UpdateClientAllowedUserGroups(plan.ID.ValueString(), plannedGroupIDs)
+			err = r.client.UpdateClientAllowedUserGroups(ctx, plan.ID.ValueString(), plannedGroupIDs)
 			if err != nil {
 				resp.Diagnostics.AddError(
 					"Error updating allowed user groups",
@@ -730,7 +730,7 @@ func (r *clientResource) Delete(ctx context.Context, req resource.DeleteRequest,
 	})
 
 	// Delete the client
-	err := r.client.DeleteClient(state.ID.ValueString())
+	err := r.client.DeleteClient(ctx, state.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error deleting OIDC client",
@@ -964,11 +964,11 @@ func (r *clientResource) revokeServerCreatedSecret(ctx context.Context, clientID
 		"id":        clientID,
 		"secret_id": secretID,
 	})
-	err := r.client.DeleteClientSecret(clientID, secretID)
+	err := r.client.DeleteClientSecret(ctx, clientID, secretID)
 	if err == nil {
 		return nil
 	}
-	if remaining, listErr := r.client.ListClientSecrets(clientID); listErr == nil {
+	if remaining, listErr := r.client.ListClientSecrets(ctx, clientID); listErr == nil {
 		present := false
 		for _, secret := range remaining {
 			if secret.ID == secretID {
@@ -988,7 +988,7 @@ func (r *clientResource) revokeServerCreatedSecret(ctx context.Context, clientID
 func (r *clientResource) failedCreate(ctx context.Context, plan *clientResourceModel, cause error, resp *resource.CreateResponse) {
 	id := plan.ID.ValueString()
 	if client.IsDefiniteRejection(cause) || errors.Is(cause, errUnidentifiedCreatedSecret) {
-		if cleanupErr := r.client.DeleteClient(id); cleanupErr == nil {
+		if cleanupErr := r.client.DeleteClient(ctx, id); cleanupErr == nil {
 			resp.Diagnostics.AddError("OIDC client creation rolled back", "The newly created client was deleted after a rejected operation: "+cause.Error())
 			return
 		} else {
@@ -996,7 +996,7 @@ func (r *clientResource) failedCreate(ctx context.Context, plan *clientResourceM
 			// not-found error for the client confirms that; a bare, proxy or
 			// missing-route 404 does not, and dropping the ID on one would
 			// orphan the client together with any secret it holds.
-			_, readErr := r.client.GetClient(id)
+			_, readErr := r.client.GetClient(ctx, id)
 			if client.IsOIDCClientNotFound(readErr) {
 				resp.Diagnostics.AddError("OIDC client rollback verified", "Cleanup returned an error, but a subsequent read confirmed the client is absent: "+cause.Error())
 				return
@@ -1010,7 +1010,7 @@ func (r *clientResource) failedCreate(ctx context.Context, plan *clientResourceM
 			return
 		}
 	}
-	_, readErr := r.client.GetClient(id)
+	_, readErr := r.client.GetClient(ctx, id)
 	detail := "A read confirmed the client still exists."
 	if readErr != nil {
 		detail = "Read-only inspection could not confirm the client: " + readErr.Error()

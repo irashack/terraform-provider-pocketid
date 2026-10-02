@@ -4,6 +4,7 @@
 package provider_test
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strings"
@@ -34,7 +35,7 @@ func createTestUser(t *testing.T, username string) string {
 		t.Fatalf("failed to create test client: %s", err)
 	}
 
-	user, err := c.CreateUser(&client.UserCreateRequest{
+	user, err := c.CreateUser(context.Background(), &client.UserCreateRequest{
 		Username: username,
 		Email:    username + "@example.com",
 	})
@@ -43,7 +44,7 @@ func createTestUser(t *testing.T, username string) string {
 	}
 
 	t.Cleanup(func() {
-		_ = c.DeleteUser(user.ID)
+		_ = c.DeleteUser(context.Background(), user.ID)
 	})
 
 	return user.ID
@@ -172,7 +173,7 @@ func TestAccResourceGroupMembership_preservesUnmanagedMember(t *testing.T) {
 						if err != nil {
 							return err
 						}
-						return c.AddUserToGroup(unmanagedUserID, groupID)
+						return c.AddUserToGroup(context.Background(), unmanagedUserID, groupID)
 					},
 				),
 			},
@@ -185,7 +186,7 @@ func TestAccResourceGroupMembership_preservesUnmanagedMember(t *testing.T) {
 					if err != nil {
 						return err
 					}
-					has, err := c.UserHasGroupMembership(unmanagedUserID, groupID)
+					has, err := c.UserHasGroupMembership(context.Background(), unmanagedUserID, groupID)
 					if err != nil {
 						return err
 					}
@@ -263,7 +264,7 @@ func TestAccResourceGroupMembership_deleteWhenUserAlreadyGone(t *testing.T) {
 						if err != nil {
 							return err
 						}
-						return c.DeleteUser(userID)
+						return c.DeleteUser(context.Background(), userID)
 					},
 				),
 				ExpectNonEmptyPlan: true,
@@ -309,7 +310,7 @@ func testAccCheckGroupMembershipExists(groupResourceName, userID string) resourc
 		if err != nil {
 			return err
 		}
-		has, err := c.UserHasGroupMembership(userID, groupRS.Primary.ID)
+		has, err := c.UserHasGroupMembership(context.Background(), userID, groupRS.Primary.ID)
 		if err != nil {
 			return err
 		}
@@ -330,7 +331,7 @@ func testAccCheckGroupMembershipAbsent(groupResourceName, userID string) resourc
 		if err != nil {
 			return err
 		}
-		has, err := c.UserHasGroupMembership(userID, groupRS.Primary.ID)
+		has, err := c.UserHasGroupMembership(context.Background(), userID, groupRS.Primary.ID)
 		if err != nil {
 			return err
 		}
@@ -353,7 +354,7 @@ func testAccDriftRemoveGroupMembership(groupResourceName, userID string) resourc
 		if err != nil {
 			return err
 		}
-		return c.RemoveUserFromGroup(userID, groupRS.Primary.ID)
+		return c.RemoveUserFromGroup(context.Background(), userID, groupRS.Primary.ID)
 	}
 }
 
@@ -467,7 +468,7 @@ func testAccCheckUserGroupCount(userID string, want int) resource.TestCheckFunc 
 		if err != nil {
 			return err
 		}
-		user, err := c.GetUser(userID)
+		user, err := c.GetUser(context.Background(), userID)
 		if err != nil {
 			return err
 		}

@@ -217,11 +217,11 @@ func credentialsUsePublicKeys(credentials client.OIDCClientCredentials) bool {
 
 // checkFederatedPublicKeysSupport refuses, before any mutation, to send
 // public_keys to a server that would silently drop them.
-func checkFederatedPublicKeysSupport(api *client.Client, credentials client.OIDCClientCredentials) error {
+func checkFederatedPublicKeysSupport(ctx context.Context, api *client.Client, credentials client.OIDCClientCredentials) error {
 	if !credentialsUsePublicKeys(credentials) {
 		return nil
 	}
-	supported, err := api.VersionAtLeast(federatedPublicKeysMinVersion)
+	supported, err := api.VersionAtLeast(ctx, federatedPublicKeysMinVersion)
 	if err != nil {
 		return fmt.Errorf("could not verify that the server supports federated identity public_keys: %w", err)
 	}

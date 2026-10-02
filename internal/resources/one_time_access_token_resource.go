@@ -141,7 +141,7 @@ func (r *OneTimeAccessTokenResource) Create(ctx context.Context, req resource.Cr
 		"ttl":     ttlStr,
 	})
 
-	token, err := r.client.CreateOneTimeAccessToken(data.UserID.ValueString(), &client.OneTimeAccessTokenRequest{TTL: ttlStr})
+	token, err := r.client.CreateOneTimeAccessToken(ctx, data.UserID.ValueString(), &client.OneTimeAccessTokenRequest{TTL: ttlStr})
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error creating one-time access token",

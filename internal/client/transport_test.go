@@ -1,10 +1,12 @@
 package client_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -125,7 +127,7 @@ func TestClient_ErrorHandling(t *testing.T) {
 			c, err := client.NewClient(server.URL, "test-token", false, 30)
 			require.NoError(t, err)
 
-			_, err = c.GetClient("test-client-id")
+			_, err = c.GetClient(context.Background(), "test-client-id")
 			assert.Error(t, err)
 			assert.Contains(t, err.Error(), tt.expectedErrMsg)
 		})
@@ -158,7 +160,7 @@ func TestClient_RetryLogic(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.GetClient("test-client-id")
+	result, err := c.GetClient(context.Background(), "test-client-id")
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Equal(t, "test-client-id", result.ID)
@@ -180,7 +182,7 @@ func TestClient_RetryExhaustion(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	_, err = c.GetClient("test-client-id")
+	_, err = c.GetClient(context.Background(), "test-client-id")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "request failed after 4 attempts")
 	assert.Equal(t, 4, attempts, "Should have made 4 attempts (initial + 3 retries)")
@@ -202,28 +204,174 @@ func TestClient_NonRetryableError(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	_, err = c.GetClient("test-client-id")
+	_, err = c.GetClient(context.Background(), "test-client-id")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "HTTP 404: Not Found")
 	assert.Equal(t, 1, attempts, "Should have made only 1 attempt (no retries for 404)")
 }
 
-func TestClient_ContextCancellation(t *testing.T) {
+// A cancelled context aborts a request that is already in flight: the call
+// returns as soon as the context is cancelled, not when the server answers.
+func TestClient_CancelAbortsInFlightRequest(t *testing.T) {
+	var attempts atomic.Int32
+	release := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Simulate slow response
-		time.Sleep(100 * time.Millisecond)
-		w.WriteHeader(http.StatusOK)
+		attempts.Add(1)
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer server.Close()
+	defer close(release)
+
+	c, err := client.NewClient(server.URL, "test-token", false, 30)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+
+	start := time.Now()
+	_, err = c.GetClient(ctx, "test-client-id")
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Less(t, elapsed, 2*time.Second, "the call must end when the context is cancelled")
+	assert.Equal(t, int32(1), attempts.Load(), "a cancelled request is not retried")
+}
+
+// A cancelled context aborts the wait before a retry.
+func TestClient_CancelAbortsRetryWait(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		w.Header().Set("Retry-After", "8")
+		w.WriteHeader(http.StatusTooManyRequests)
 	}))
 	defer server.Close()
 
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	// Note: The current client doesn't expose context-aware methods,
-	// but this test is prepared for when they are added
-	_, err = c.GetClient("test-client-id")
-	// The error might be a timeout or context cancellation depending on timing
-	assert.Error(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(200*time.Millisecond, cancel)
+
+	start := time.Now()
+	_, err = c.GetClient(ctx, "test-client-id")
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Less(t, elapsed, 2*time.Second, "the retry wait must end when the context is cancelled")
+	assert.Equal(t, int32(1), attempts.Load())
+}
+
+// A context that is already cancelled sends nothing, so a mutation is never
+// started for a caller that has given up.
+func TestClient_CancelledContextSendsNoMutation(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	c, err := client.NewClient(server.URL, "test-token", false, 30)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err = c.DeleteClient(ctx, "test-client-id")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, int32(0), attempts.Load(), "no request may be sent with a cancelled context")
+}
+
+// A server asking for a longer wait than the provider allows gets no retry:
+// the error is returned at once instead of blocking for the requested time.
+func TestClient_OversizedRetryAfterIsNotWaited(t *testing.T) {
+	for name, value := range map[string]string{
+		"seconds":   "86400",
+		"http-date": time.Now().Add(24 * time.Hour).UTC().Format(http.TimeFormat),
+	} {
+		t.Run(name, func(t *testing.T) {
+			var attempts atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				attempts.Add(1)
+				w.Header().Set("Retry-After", value)
+				w.WriteHeader(http.StatusTooManyRequests)
+			}))
+			defer server.Close()
+
+			c, err := client.NewClient(server.URL, "test-token", false, 30)
+			require.NoError(t, err)
+
+			start := time.Now()
+			_, err = c.GetClient(context.Background(), "test-client-id")
+			elapsed := time.Since(start)
+
+			require.Error(t, err)
+			var rateLimited *client.RateLimitError
+			assert.ErrorAs(t, err, &rateLimited)
+			assert.Contains(t, err.Error(), "not retrying")
+			assert.Less(t, elapsed, 2*time.Second, "an oversized Retry-After must not be waited for")
+			assert.Equal(t, int32(1), attempts.Load())
+		})
+	}
+}
+
+// A wait that would end after the context's deadline is not started.
+func TestClient_RetryStopsBeforeContextDeadline(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		w.Header().Set("Retry-After", "5")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	c, err := client.NewClient(server.URL, "test-token", false, 30)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	_, err = c.GetClient(ctx, "test-client-id")
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not retrying")
+	assert.Contains(t, err.Error(), "HTTP 429")
+	assert.Less(t, elapsed, time.Second, "no wait may start that ends after the deadline")
+	assert.Equal(t, int32(1), attempts.Load())
+}
+
+// The total time a GET spends retrying is bounded even when every single
+// wait is short.
+func TestClient_RetryTimeIsBounded(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	c, err := client.NewClient(server.URL, "test-token", false, 30)
+	require.NoError(t, err)
+	client.SetRetryPolicyForTest(c, 20, 50*time.Millisecond, time.Second, 400*time.Millisecond)
+
+	start := time.Now()
+	_, err = c.GetClient(context.Background(), "test-client-id")
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not retrying")
+	assert.Less(t, elapsed, 600*time.Millisecond)
+	// 50ms, 100ms and 200ms waits fit in 400ms; the 400ms one does not.
+	assert.Equal(t, int32(4), attempts.Load())
 }
 
 func TestClient_RateLimitHandling(t *testing.T) {
@@ -255,7 +403,7 @@ func TestClient_RateLimitHandling(t *testing.T) {
 	require.NoError(t, err)
 
 	start := time.Now()
-	result, err := c.GetClient("test-client-id")
+	result, err := c.GetClient(context.Background(), "test-client-id")
 	elapsed := time.Since(start)
 
 	assert.NoError(t, err)
@@ -294,7 +442,7 @@ func TestClient_RateLimitWithoutRetryAfter(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.GetClient("test-client-id")
+	result, err := c.GetClient(context.Background(), "test-client-id")
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
@@ -327,7 +475,7 @@ func TestClient_RateLimitWithRetryAfterSeconds(t *testing.T) {
 	require.NoError(t, err)
 
 	start := time.Now()
-	result, err := c.GetClient("test-id")
+	result, err := c.GetClient(context.Background(), "test-id")
 	elapsed := time.Since(start)
 
 	assert.NoError(t, err)
@@ -355,7 +503,7 @@ func TestClient_RequestTimeout(t *testing.T) {
 	require.NoError(t, err)
 
 	start := time.Now()
-	result, err := c.GetClient("test-id")
+	result, err := c.GetClient(context.Background(), "test-id")
 	elapsed := time.Since(start)
 
 	assert.Error(t, err)
@@ -377,7 +525,7 @@ func TestClient_ErrorResponseEmptyBody(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.GetClient("test-id")
+	result, err := c.GetClient(context.Background(), "test-id")
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "HTTP 500")
@@ -432,7 +580,7 @@ func TestClient_NonRetryableErrors(t *testing.T) {
 			c, err := client.NewClient(server.URL, "test-token", false, 30)
 			require.NoError(t, err)
 
-			result, err := c.GetClient("test-id")
+			result, err := c.GetClient(context.Background(), "test-id")
 			assert.Error(t, err)
 			assert.Nil(t, result)
 			assert.Contains(t, err.Error(), fmt.Sprintf("HTTP %d", tc.statusCode))

@@ -1,6 +1,7 @@
 package client_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -52,7 +53,7 @@ func TestClient_CreateUser(t *testing.T) {
 		LastName:  "User",
 	}
 
-	result, err := c.CreateUser(createReq)
+	result, err := c.CreateUser(context.Background(), createReq)
 	assert.NoError(t, err)
 	assert.Equal(t, expectedUser, result)
 }
@@ -87,7 +88,7 @@ func TestClient_GetUser(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.GetUser("test-user-id")
+	result, err := c.GetUser(context.Background(), "test-user-id")
 	assert.NoError(t, err)
 	assert.Equal(t, expectedUser, result)
 }
@@ -104,7 +105,7 @@ func TestClient_GetUser_Error(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.GetUser("nonexistent-id")
+	result, err := c.GetUser(context.Background(), "nonexistent-id")
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "HTTP 404")
@@ -151,7 +152,7 @@ func TestClient_UpdateUser(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.UpdateUser("test-user-id", updateReq)
+	result, err := c.UpdateUser(context.Background(), "test-user-id", updateReq)
 	assert.NoError(t, err)
 	assert.Equal(t, expectedUser, result)
 }
@@ -168,7 +169,7 @@ func TestClient_DeleteUser(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	err = c.DeleteUser("test-user-id")
+	err = c.DeleteUser(context.Background(), "test-user-id")
 	assert.NoError(t, err)
 }
 
@@ -184,7 +185,7 @@ func TestClient_DeleteUser_Error(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	err = c.DeleteUser("test-user-id")
+	err = c.DeleteUser(context.Background(), "test-user-id")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "HTTP 403")
 }
@@ -236,7 +237,7 @@ func TestClient_ListUsers(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.ListUsers()
+	result, err := c.ListUsers(context.Background())
 	assert.NoError(t, err)
 	assert.Equal(t, expectedResponse, result)
 	assert.Equal(t, expectedUsers, result.Data)
@@ -267,7 +268,7 @@ func TestClient_ListUsers_Empty(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.ListUsers()
+	result, err := c.ListUsers(context.Background())
 	assert.NoError(t, err)
 	assert.Equal(t, expectedResponse, result)
 	assert.Empty(t, result.Data)
@@ -290,7 +291,7 @@ func TestClient_UpdateUserGroups(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	err = c.UpdateUserGroups("test-user-id", []string{"group1", "group2"})
+	err = c.UpdateUserGroups(context.Background(), "test-user-id", []string{"group1", "group2"})
 	assert.NoError(t, err)
 }
 
@@ -312,7 +313,7 @@ func TestClient_CreateUser_UnmarshalError(t *testing.T) {
 		Email:    "test@example.com",
 	}
 
-	result, err := c.CreateUser(createReq)
+	result, err := c.CreateUser(context.Background(), createReq)
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "error unmarshaling response")
@@ -336,7 +337,7 @@ func TestClient_UpdateUser_UnmarshalError(t *testing.T) {
 		Email:    "test@example.com",
 	}
 
-	result, err := c.UpdateUser("test-id", updateReq)
+	result, err := c.UpdateUser(context.Background(), "test-id", updateReq)
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "error unmarshaling response")
@@ -355,7 +356,7 @@ func TestClient_ListUsers_UnmarshalError(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.ListUsers()
+	result, err := c.ListUsers(context.Background())
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "error unmarshaling response")
@@ -374,7 +375,7 @@ func TestClient_GetUser_UnmarshalError(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.GetUser("test-id")
+	result, err := c.GetUser(context.Background(), "test-id")
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "error unmarshaling response")

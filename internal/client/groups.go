@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 )
@@ -24,8 +25,8 @@ type UserGroupCreateRequest struct {
 }
 
 // CreateUserGroup creates a new user group
-func (c *Client) CreateUserGroup(group *UserGroupCreateRequest) (*UserGroup, error) {
-	body, err := c.doRequest("POST", "/api/user-groups", group)
+func (c *Client) CreateUserGroup(ctx context.Context, group *UserGroupCreateRequest) (*UserGroup, error) {
+	body, err := c.doRequest(ctx, "POST", "/api/user-groups", group)
 	if err != nil {
 		return nil, err
 	}
@@ -39,8 +40,8 @@ func (c *Client) CreateUserGroup(group *UserGroupCreateRequest) (*UserGroup, err
 }
 
 // GetUserGroup retrieves a user group by ID
-func (c *Client) GetUserGroup(groupID string) (*UserGroup, error) {
-	body, err := c.doRequest("GET", fmt.Sprintf("/api/user-groups/%s", groupID), nil)
+func (c *Client) GetUserGroup(ctx context.Context, groupID string) (*UserGroup, error) {
+	body, err := c.doRequest(ctx, "GET", fmt.Sprintf("/api/user-groups/%s", groupID), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -54,8 +55,8 @@ func (c *Client) GetUserGroup(groupID string) (*UserGroup, error) {
 }
 
 // UpdateUserGroup updates an existing user group
-func (c *Client) UpdateUserGroup(groupID string, group *UserGroupCreateRequest) (*UserGroup, error) {
-	body, err := c.doRequest("PUT", fmt.Sprintf("/api/user-groups/%s", groupID), group)
+func (c *Client) UpdateUserGroup(ctx context.Context, groupID string, group *UserGroupCreateRequest) (*UserGroup, error) {
+	body, err := c.doRequest(ctx, "PUT", fmt.Sprintf("/api/user-groups/%s", groupID), group)
 	if err != nil {
 		return nil, err
 	}
@@ -69,14 +70,14 @@ func (c *Client) UpdateUserGroup(groupID string, group *UserGroupCreateRequest) 
 }
 
 // DeleteUserGroup deletes a user group
-func (c *Client) DeleteUserGroup(groupID string) error {
-	_, err := c.doRequest("DELETE", fmt.Sprintf("/api/user-groups/%s", groupID), nil)
+func (c *Client) DeleteUserGroup(ctx context.Context, groupID string) error {
+	_, err := c.doRequest(ctx, "DELETE", fmt.Sprintf("/api/user-groups/%s", groupID), nil)
 	return err
 }
 
 // ListUserGroups retrieves all user groups
-func (c *Client) ListUserGroups() (*PaginatedResponse[UserGroup], error) {
-	body, err := c.doRequest("GET", "/api/user-groups", nil)
+func (c *Client) ListUserGroups(ctx context.Context) (*PaginatedResponse[UserGroup], error) {
+	body, err := c.doRequest(ctx, "GET", "/api/user-groups", nil)
 	if err != nil {
 		return nil, err
 	}

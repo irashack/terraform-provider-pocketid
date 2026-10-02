@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 )
@@ -33,8 +34,8 @@ type ScimServiceProviderCreateRequest struct {
 }
 
 // CreateScimServiceProvider creates a new SCIM service provider configuration.
-func (c *Client) CreateScimServiceProvider(req *ScimServiceProviderCreateRequest) (*ScimServiceProvider, error) {
-	body, err := c.doRequest("POST", "/api/scim/service-provider", req)
+func (c *Client) CreateScimServiceProvider(ctx context.Context, req *ScimServiceProviderCreateRequest) (*ScimServiceProvider, error) {
+	body, err := c.doRequest(ctx, "POST", "/api/scim/service-provider", req)
 	if err != nil {
 		return nil, err
 	}
@@ -49,8 +50,8 @@ func (c *Client) CreateScimServiceProvider(req *ScimServiceProviderCreateRequest
 
 // GetClientScimServiceProvider retrieves the SCIM service provider configuration
 // for an OIDC client. The token is returned decrypted.
-func (c *Client) GetClientScimServiceProvider(clientID string) (*ScimServiceProvider, error) {
-	body, err := c.doRequest("GET", fmt.Sprintf("/api/oidc/clients/%s/scim-service-provider", clientID), nil)
+func (c *Client) GetClientScimServiceProvider(ctx context.Context, clientID string) (*ScimServiceProvider, error) {
+	body, err := c.doRequest(ctx, "GET", fmt.Sprintf("/api/oidc/clients/%s/scim-service-provider", clientID), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -64,8 +65,8 @@ func (c *Client) GetClientScimServiceProvider(clientID string) (*ScimServiceProv
 }
 
 // UpdateScimServiceProvider updates an existing SCIM service provider configuration.
-func (c *Client) UpdateScimServiceProvider(id string, req *ScimServiceProviderCreateRequest) (*ScimServiceProvider, error) {
-	body, err := c.doRequest("PUT", fmt.Sprintf("/api/scim/service-provider/%s", id), req)
+func (c *Client) UpdateScimServiceProvider(ctx context.Context, id string, req *ScimServiceProviderCreateRequest) (*ScimServiceProvider, error) {
+	body, err := c.doRequest(ctx, "PUT", fmt.Sprintf("/api/scim/service-provider/%s", id), req)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +80,7 @@ func (c *Client) UpdateScimServiceProvider(id string, req *ScimServiceProviderCr
 }
 
 // DeleteScimServiceProvider deletes a SCIM service provider configuration by ID.
-func (c *Client) DeleteScimServiceProvider(id string) error {
-	_, err := c.doRequest("DELETE", fmt.Sprintf("/api/scim/service-provider/%s", id), nil)
+func (c *Client) DeleteScimServiceProvider(ctx context.Context, id string) error {
+	_, err := c.doRequest(ctx, "DELETE", fmt.Sprintf("/api/scim/service-provider/%s", id), nil)
 	return err
 }

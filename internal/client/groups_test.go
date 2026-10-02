@@ -1,6 +1,7 @@
 package client_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -46,7 +47,7 @@ func TestClient_CreateUserGroup(t *testing.T) {
 		FriendlyName: "Test Group",
 	}
 
-	result, err := c.CreateUserGroup(createReq)
+	result, err := c.CreateUserGroup(context.Background(), createReq)
 	assert.NoError(t, err)
 	assert.Equal(t, expectedGroup, result)
 }
@@ -72,7 +73,7 @@ func TestClient_GetUserGroup(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.GetUserGroup("test-group-id")
+	result, err := c.GetUserGroup(context.Background(), "test-group-id")
 	assert.NoError(t, err)
 	assert.Equal(t, expectedGroup, result)
 }
@@ -89,7 +90,7 @@ func TestClient_GetUserGroup_NotFound(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.GetUserGroup("nonexistent-id")
+	result, err := c.GetUserGroup(context.Background(), "nonexistent-id")
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "HTTP 404")
@@ -126,7 +127,7 @@ func TestClient_UpdateUserGroup(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.UpdateUserGroup("test-group-id", updateReq)
+	result, err := c.UpdateUserGroup(context.Background(), "test-group-id", updateReq)
 	assert.NoError(t, err)
 	assert.Equal(t, expectedGroup, result)
 }
@@ -143,7 +144,7 @@ func TestClient_DeleteUserGroup(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	err = c.DeleteUserGroup("test-group-id")
+	err = c.DeleteUserGroup(context.Background(), "test-group-id")
 	assert.NoError(t, err)
 }
 
@@ -159,7 +160,7 @@ func TestClient_DeleteUserGroup_InUse(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	err = c.DeleteUserGroup("test-group-id")
+	err = c.DeleteUserGroup(context.Background(), "test-group-id")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "HTTP 409")
 }
@@ -207,7 +208,7 @@ func TestClient_ListUserGroups(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.ListUserGroups()
+	result, err := c.ListUserGroups(context.Background())
 	assert.NoError(t, err)
 	assert.Equal(t, expectedResponse, result)
 	assert.Equal(t, expectedGroups, result.Data)
@@ -225,7 +226,7 @@ func TestClient_ListUserGroups_Error(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.ListUserGroups()
+	result, err := c.ListUserGroups(context.Background())
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "HTTP 500")
@@ -249,7 +250,7 @@ func TestClient_CreateUserGroup_UnmarshalError(t *testing.T) {
 		FriendlyName: "Test Group",
 	}
 
-	result, err := c.CreateUserGroup(createReq)
+	result, err := c.CreateUserGroup(context.Background(), createReq)
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "error unmarshaling response")
@@ -273,7 +274,7 @@ func TestClient_UpdateUserGroup_UnmarshalError(t *testing.T) {
 		FriendlyName: "Test Group",
 	}
 
-	result, err := c.UpdateUserGroup("test-id", updateReq)
+	result, err := c.UpdateUserGroup(context.Background(), "test-id", updateReq)
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "error unmarshaling response")
@@ -292,7 +293,7 @@ func TestClient_GetUserGroup_UnmarshalError(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.GetUserGroup("test-id")
+	result, err := c.GetUserGroup(context.Background(), "test-id")
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "error unmarshaling response")
@@ -311,7 +312,7 @@ func TestClient_ListUserGroups_UnmarshalError(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.ListUserGroups()
+	result, err := c.ListUserGroups(context.Background())
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "error unmarshaling response")

@@ -124,7 +124,7 @@ func (r *groupResource) Create(ctx context.Context, req resource.CreateRequest, 
 		"friendlyName": createReq.FriendlyName,
 	})
 
-	groupResp, err := r.client.CreateUserGroup(createReq)
+	groupResp, err := r.client.CreateUserGroup(ctx, createReq)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error creating user group",
@@ -151,10 +151,10 @@ func (r *groupResource) Create(ctx context.Context, req resource.CreateRequest, 
 			tflog.Debug(ctx, "Updating user group custom claims", map[string]any{
 				"id": groupResp.ID,
 			})
-			updatedClaims, err := r.client.UpdateGroupCustomClaims(groupResp.ID, claims)
+			updatedClaims, err := r.client.UpdateGroupCustomClaims(ctx, groupResp.ID, claims)
 			if err != nil {
 				// Try to clean up the created group
-				_ = r.client.DeleteUserGroup(groupResp.ID)
+				_ = r.client.DeleteUserGroup(ctx, groupResp.ID)
 				resp.Diagnostics.AddError(
 					"Error updating user group custom claims",
 					"Could not update user group custom claims, the group was deleted. Error: "+err.Error(),
@@ -190,7 +190,7 @@ func (r *groupResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	})
 
 	// Get group from API
-	groupResp, err := r.client.GetUserGroup(state.ID.ValueString())
+	groupResp, err := r.client.GetUserGroup(ctx, state.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error reading user group",
@@ -244,7 +244,7 @@ func (r *groupResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		"friendlyName": updateReq.FriendlyName,
 	})
 
-	_, err := r.client.UpdateUserGroup(plan.ID.ValueString(), updateReq)
+	_, err := r.client.UpdateUserGroup(ctx, plan.ID.ValueString(), updateReq)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error updating user group",
@@ -265,7 +265,7 @@ func (r *groupResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		tflog.Debug(ctx, "Updating user group custom claims", map[string]any{
 			"id": plan.ID.ValueString(),
 		})
-		updatedClaims, err := r.client.UpdateGroupCustomClaims(plan.ID.ValueString(), claims)
+		updatedClaims, err := r.client.UpdateGroupCustomClaims(ctx, plan.ID.ValueString(), claims)
 		if err != nil {
 			resp.Diagnostics.AddError(
 				"Error updating user group custom claims",
@@ -302,7 +302,7 @@ func (r *groupResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	})
 
 	// Delete the group
-	err := r.client.DeleteUserGroup(state.ID.ValueString())
+	err := r.client.DeleteUserGroup(ctx, state.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error deleting user group",

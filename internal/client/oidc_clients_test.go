@@ -1,6 +1,7 @@
 package client_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -57,7 +58,7 @@ func TestClient_CreateClient(t *testing.T) {
 		LaunchURL:                &launchUrl,
 	}
 
-	result, err := c.CreateClient(createReq)
+	result, err := c.CreateClient(context.Background(), createReq)
 	assert.NoError(t, err)
 	assert.Equal(t, expectedClient, result)
 }
@@ -83,7 +84,7 @@ func TestClient_CreateClient_CreatedSecret(t *testing.T) {
 			c, err := client.NewClient(server.URL, "test-token", false, 30)
 			require.NoError(t, err)
 
-			result, err := c.CreateClient(&client.OIDCClientCreateRequest{Name: "n"})
+			result, err := c.CreateClient(context.Background(), &client.OIDCClientCreateRequest{Name: "n"})
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, result.CreatedSecret)
 			// Encoding walks every field, including through the pointer, so
@@ -122,7 +123,7 @@ func TestClient_GetClient(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.GetClient("test-client-id")
+	result, err := c.GetClient(context.Background(), "test-client-id")
 	assert.NoError(t, err)
 	assert.Equal(t, expectedClient, result)
 }
@@ -169,7 +170,7 @@ func TestClient_UpdateClient(t *testing.T) {
 		LaunchURL:                &launchUrl,
 	}
 
-	result, err := c.UpdateClient("test-client-id", updateReq)
+	result, err := c.UpdateClient(context.Background(), "test-client-id", updateReq)
 	assert.NoError(t, err)
 	assert.Equal(t, expectedClient, result)
 }
@@ -187,7 +188,7 @@ func TestClient_DeleteClient(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	err = c.DeleteClient("test-client-id")
+	err = c.DeleteClient(context.Background(), "test-client-id")
 	assert.NoError(t, err)
 }
 
@@ -225,7 +226,7 @@ func TestClient_ListClients(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.ListClients()
+	result, err := c.ListClients(context.Background())
 	assert.NoError(t, err)
 	assert.Equal(t, expectedResponse, result)
 }
@@ -247,7 +248,7 @@ func TestClient_UpdateClientAllowedUserGroups(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	err = c.UpdateClientAllowedUserGroups("test-client-id", []string{"group1", "group2"})
+	err = c.UpdateClientAllowedUserGroups(context.Background(), "test-client-id", []string{"group1", "group2"})
 	assert.NoError(t, err)
 }
 
@@ -271,7 +272,7 @@ func TestClient_CreateClient_UnmarshalError(t *testing.T) {
 		PkceEnabled:  true,
 	}
 
-	result, err := c.CreateClient(createReq)
+	result, err := c.CreateClient(context.Background(), createReq)
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "error unmarshaling response")
@@ -297,7 +298,7 @@ func TestClient_UpdateClient_UnmarshalError(t *testing.T) {
 		PkceEnabled:  true,
 	}
 
-	result, err := c.UpdateClient("test-id", updateReq)
+	result, err := c.UpdateClient(context.Background(), "test-id", updateReq)
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "error unmarshaling response")
@@ -316,7 +317,7 @@ func TestClient_ListClients_UnmarshalError(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.ListClients()
+	result, err := c.ListClients(context.Background())
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "error unmarshaling response")

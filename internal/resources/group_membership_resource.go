@@ -183,7 +183,7 @@ func (r *groupMembershipResource) Create(ctx context.Context, req resource.Creat
 	lock.Lock()
 	defer lock.Unlock()
 
-	if err := r.client.AddUserToGroup(userID, groupID); err != nil {
+	if err := r.client.AddUserToGroup(ctx, userID, groupID); err != nil {
 		resp.Diagnostics.AddError(
 			"Error adding user to group",
 			fmt.Sprintf("Could not add user %s to group %s: %s", userID, groupID, err),
@@ -207,7 +207,7 @@ func (r *groupMembershipResource) Read(ctx context.Context, req resource.ReadReq
 	groupID := state.GroupID.ValueString()
 	userID := state.UserID.ValueString()
 
-	exists, err := r.client.UserHasGroupMembership(userID, groupID)
+	exists, err := r.client.UserHasGroupMembership(ctx, userID, groupID)
 	if err != nil {
 		// Only a positively confirmed missing user (client.IsUserNotFound)
 		// means the membership is gone. Any other error - including a
@@ -278,7 +278,7 @@ func (r *groupMembershipResource) Delete(ctx context.Context, req resource.Delet
 	// user as "nothing left to remove" (including re-confirming with a GET
 	// after a 404 from the update itself, which does not by itself prove the
 	// user is gone). Any error it returns here is a real error.
-	if err := r.client.RemoveUserFromGroup(userID, groupID); err != nil {
+	if err := r.client.RemoveUserFromGroup(ctx, userID, groupID); err != nil {
 		resp.Diagnostics.AddError(
 			"Error removing user from group",
 			fmt.Sprintf("Could not remove user %s from group %s: %s", userID, groupID, err),

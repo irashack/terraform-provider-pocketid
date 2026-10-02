@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,8 +45,8 @@ type UpdateUserGroupsRequest struct {
 }
 
 // CreateUser creates a new user
-func (c *Client) CreateUser(user *UserCreateRequest) (*User, error) {
-	body, err := c.doRequest("POST", "/api/users", user)
+func (c *Client) CreateUser(ctx context.Context, user *UserCreateRequest) (*User, error) {
+	body, err := c.doRequest(ctx, "POST", "/api/users", user)
 	if err != nil {
 		return nil, err
 	}
@@ -59,8 +60,8 @@ func (c *Client) CreateUser(user *UserCreateRequest) (*User, error) {
 }
 
 // GetUser retrieves a user by ID
-func (c *Client) GetUser(userID string) (*User, error) {
-	body, err := c.doRequest("GET", fmt.Sprintf("/api/users/%s", userID), nil)
+func (c *Client) GetUser(ctx context.Context, userID string) (*User, error) {
+	body, err := c.doRequest(ctx, "GET", fmt.Sprintf("/api/users/%s", userID), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -74,8 +75,8 @@ func (c *Client) GetUser(userID string) (*User, error) {
 }
 
 // UpdateUser updates an existing user
-func (c *Client) UpdateUser(userID string, user *UserCreateRequest) (*User, error) {
-	body, err := c.doRequest("PUT", fmt.Sprintf("/api/users/%s", userID), user)
+func (c *Client) UpdateUser(ctx context.Context, userID string, user *UserCreateRequest) (*User, error) {
+	body, err := c.doRequest(ctx, "PUT", fmt.Sprintf("/api/users/%s", userID), user)
 	if err != nil {
 		return nil, err
 	}
@@ -89,16 +90,16 @@ func (c *Client) UpdateUser(userID string, user *UserCreateRequest) (*User, erro
 }
 
 // DeleteUser deletes a user
-func (c *Client) DeleteUser(userID string) error {
-	_, err := c.doRequest("DELETE", fmt.Sprintf("/api/users/%s", userID), nil)
+func (c *Client) DeleteUser(ctx context.Context, userID string) error {
+	_, err := c.doRequest(ctx, "DELETE", fmt.Sprintf("/api/users/%s", userID), nil)
 	return err
 }
 
 // ListUsers retrieves one page of users (the server's default: page 1, 20
 // items). Pocket-ID paginates GET /api/users, so this alone silently misses
 // any user past the first page. Prefer ListAllUsers to see every user.
-func (c *Client) ListUsers() (*PaginatedResponse[User], error) {
-	return c.ListUsersPage(0, 0, "")
+func (c *Client) ListUsers(ctx context.Context) (*PaginatedResponse[User], error) {
+	return c.ListUsersPage(ctx, 0, 0, "")
 }
 
 // ListUsersPage retrieves one page of users. page and limit are 1-based;
@@ -108,7 +109,7 @@ func (c *Client) ListUsers() (*PaginatedResponse[User], error) {
 // username/email/name — not guaranteed to be exact or to fit on one page),
 // so callers doing an exact lookup must still filter the returned users
 // themselves and must still follow pagination.
-func (c *Client) ListUsersPage(page, limit int, search string) (*PaginatedResponse[User], error) {
+func (c *Client) ListUsersPage(ctx context.Context, page, limit int, search string) (*PaginatedResponse[User], error) {
 	query := url.Values{}
 	if page > 0 {
 		query.Set("pagination[page]", strconv.Itoa(page))
@@ -125,7 +126,7 @@ func (c *Client) ListUsersPage(page, limit int, search string) (*PaginatedRespon
 		endpoint += "?" + encoded
 	}
 
-	body, err := c.doRequest("GET", endpoint, nil)
+	body, err := c.doRequest(ctx, "GET", endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -146,13 +147,13 @@ func (c *Client) ListUsersPage(page, limit int, search string) (*PaginatedRespon
 // looping forever; a nonempty page reporting no valid page count is treated
 // as malformed and returned as an error rather than silently assumed
 // complete, since that would truncate the result without any signal.
-func (c *Client) ListAllUsers(search string) ([]User, error) {
+func (c *Client) ListAllUsers(ctx context.Context, search string) ([]User, error) {
 	const maxPages = 1000 // defensive ceiling; a real instance won't approach this
 	const pageSize = 100  // larger than the server's own default (20), fewer round trips
 
 	var all []User
 	for page := 1; page <= maxPages; page++ {
-		resp, err := c.ListUsersPage(page, pageSize, search)
+		resp, err := c.ListUsersPage(ctx, page, pageSize, search)
 		if err != nil {
 			return nil, err
 		}
@@ -179,13 +180,13 @@ func (c *Client) ListAllUsers(search string) ([]User, error) {
 }
 
 // UpdateUserGroups updates the groups a user belongs to
-func (c *Client) UpdateUserGroups(userID string, groupIDs []string) error {
+func (c *Client) UpdateUserGroups(ctx context.Context, userID string, groupIDs []string) error {
 	// Ensure groupIDs is never nil to serialize as empty array instead of null
 	if groupIDs == nil {
 		groupIDs = []string{}
 	}
 	req := UpdateUserGroupsRequest{UserGroupIDs: groupIDs}
-	_, err := c.doRequest("PUT", fmt.Sprintf("/api/users/%s/user-groups", userID), req)
+	_, err := c.doRequest(ctx, "PUT", fmt.Sprintf("/api/users/%s/user-groups", userID), req)
 	return err
 }
 
@@ -199,8 +200,8 @@ func (c *Client) UpdateUserGroups(userID string, groupIDs []string) error {
 // as an onboarding broker) that runs between the read and the write can have
 // its change silently overwritten; there is no compare-and-swap primitive
 // that would close this window.
-func (c *Client) AddUserToGroup(userID, groupID string) error {
-	user, err := c.GetUser(userID)
+func (c *Client) AddUserToGroup(ctx context.Context, userID, groupID string) error {
+	user, err := c.GetUser(ctx, userID)
 	if err != nil {
 		return err
 	}
@@ -215,7 +216,7 @@ func (c *Client) AddUserToGroup(userID, groupID string) error {
 	}
 	groupIDs = append(groupIDs, groupID)
 
-	return c.UpdateUserGroups(userID, groupIDs)
+	return c.UpdateUserGroups(ctx, userID, groupIDs)
 }
 
 // RemoveUserFromGroup removes a user from a group without changing the
@@ -226,8 +227,8 @@ func (c *Client) AddUserToGroup(userID, groupID string) error {
 // server - does not by itself prove the user is gone, and is returned as an
 // error instead. See AddUserToGroup for the read-modify-write mechanism this
 // relies on and the race window it leaves.
-func (c *Client) RemoveUserFromGroup(userID, groupID string) error {
-	user, err := c.GetUser(userID)
+func (c *Client) RemoveUserFromGroup(ctx context.Context, userID, groupID string) error {
+	user, err := c.GetUser(ctx, userID)
 	if err != nil {
 		if IsUserNotFound(err) {
 			return nil
@@ -249,14 +250,14 @@ func (c *Client) RemoveUserFromGroup(userID, groupID string) error {
 		return nil
 	}
 
-	if err := c.UpdateUserGroups(userID, groupIDs); err != nil {
+	if err := c.UpdateUserGroups(ctx, userID, groupIDs); err != nil {
 		// A 404 from this PUT does not by itself prove the user is gone: it
 		// could be a wrong path or a proxy's generic not-found response.
 		// Re-check with a GET, which does positively identify a missing
 		// user, before treating the removal as already satisfied.
 		var status *HTTPError
 		if errors.As(err, &status) && status.StatusCode == 404 {
-			if _, getErr := c.GetUser(userID); IsUserNotFound(getErr) {
+			if _, getErr := c.GetUser(ctx, userID); IsUserNotFound(getErr) {
 				return nil
 			}
 		}
@@ -270,8 +271,8 @@ func (c *Client) RemoveUserFromGroup(userID, groupID string) error {
 // IsUserNotFound to distinguish a confirmed-missing user from any other
 // error (including a merely-generic 404) and from the user simply not
 // belonging to the group.
-func (c *Client) UserHasGroupMembership(userID, groupID string) (bool, error) {
-	user, err := c.GetUser(userID)
+func (c *Client) UserHasGroupMembership(ctx context.Context, userID, groupID string) (bool, error) {
+	user, err := c.GetUser(ctx, userID)
 	if err != nil {
 		return false, err
 	}

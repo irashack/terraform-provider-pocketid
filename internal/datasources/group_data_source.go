@@ -114,7 +114,7 @@ func (d *groupDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 	}
 
 	// Get all groups
-	groupsResp, err := d.client.ListUserGroups()
+	groupsResp, err := d.client.ListUserGroups(ctx)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Unable to Read Groups",

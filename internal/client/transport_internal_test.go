@@ -23,7 +23,7 @@ func TestHTTPLogsAndDiagnosticsExcludeCredentials(t *testing.T) {
 			}))
 			defer s.Close()
 			c, _ := NewClient(s.URL, "fixture-token", false, 1)
-			_, err := c.doRequestWithContext(ctx, "POST", "/api/oidc/clients/fixture/secrets", map[string]string{"secret": "fixture-secret"})
+			_, err := c.doRequest(ctx, "POST", "/api/oidc/clients/fixture/secrets", map[string]string{"secret": "fixture-secret"})
 			require.NotEmpty(t, logs.String())
 			require.NotContains(t, logs.String(), "fixture-token")
 			require.NotContains(t, logs.String(), "fixture-secret")

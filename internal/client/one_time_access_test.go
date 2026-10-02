@@ -1,6 +1,7 @@
 package client_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -35,7 +36,7 @@ func TestClient_CreateOneTimeAccessToken(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	token, err := c.CreateOneTimeAccessToken("test-user-id", &client.OneTimeAccessTokenRequest{TTL: "15m"})
+	token, err := c.CreateOneTimeAccessToken(context.Background(), "test-user-id", &client.OneTimeAccessTokenRequest{TTL: "15m"})
 	assert.NoError(t, err)
 	assert.Equal(t, "test-token-123456", token.Token)
 }
@@ -59,7 +60,7 @@ func TestClient_CreateOneTimeAccessToken_SendsTTL(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	token, err := c.CreateOneTimeAccessToken("test-user-id", &client.OneTimeAccessTokenRequest{TTL: "1h"})
+	token, err := c.CreateOneTimeAccessToken(context.Background(), "test-user-id", &client.OneTimeAccessTokenRequest{TTL: "1h"})
 	assert.NoError(t, err)
 	assert.Equal(t, "tok", token.Token)
 }
@@ -79,7 +80,7 @@ func TestClient_CreateOneTimeAccessToken_Error(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	_, err = c.CreateOneTimeAccessToken("test-user-id", &client.OneTimeAccessTokenRequest{TTL: "1s"})
+	_, err = c.CreateOneTimeAccessToken(context.Background(), "test-user-id", &client.OneTimeAccessTokenRequest{TTL: "1s"})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "HTTP 400")
 }

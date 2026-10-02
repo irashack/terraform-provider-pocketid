@@ -21,14 +21,13 @@ type OneTimeAccessTokenRequest struct {
 }
 
 // CreateOneTimeAccessToken creates a new one-time access token for a user
-func (c *Client) CreateOneTimeAccessToken(userID string, req *OneTimeAccessTokenRequest) (*OneTimeAccessToken, error) {
-	ctx := context.Background()
+func (c *Client) CreateOneTimeAccessToken(ctx context.Context, userID string, req *OneTimeAccessTokenRequest) (*OneTimeAccessToken, error) {
 	tflog.Debug(ctx, "CreateOneTimeAccessToken request", map[string]interface{}{
 		"user_id": userID,
 		"ttl":     req.TTL,
 	})
 
-	body, err := c.doRequestWithContext(ctx, "POST", fmt.Sprintf("/api/users/%s/one-time-access-token", userID), req)
+	body, err := c.doRequest(ctx, "POST", fmt.Sprintf("/api/users/%s/one-time-access-token", userID), req)
 	if err != nil {
 		return nil, err
 	}

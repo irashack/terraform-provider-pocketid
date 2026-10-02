@@ -139,7 +139,7 @@ func (d *clientDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 	})
 
 	// Get client from API
-	clientResp, err := d.client.GetClient(config.ID.ValueString())
+	clientResp, err := d.client.GetClient(ctx, config.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error reading OIDC client",

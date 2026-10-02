@@ -1,6 +1,7 @@
 package client_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -33,7 +34,7 @@ func TestClient_GetCurrentVersion(t *testing.T) {
 		c, err := client.NewClient(server.URL, "test-token", false, 30)
 		require.NoError(t, err)
 
-		version, err := c.GetCurrentVersion()
+		version, err := c.GetCurrentVersion(context.Background())
 		assert.NoError(t, err)
 		assert.Equal(t, "1.2.3", version)
 	})
@@ -50,7 +51,7 @@ func TestClient_GetCurrentVersion(t *testing.T) {
 		c, err := client.NewClient(server.URL, "test-token", false, 30)
 		require.NoError(t, err)
 
-		version, err := c.GetCurrentVersion()
+		version, err := c.GetCurrentVersion(context.Background())
 		assert.NoError(t, err)
 		assert.Empty(t, version)
 	})

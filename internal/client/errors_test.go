@@ -1,6 +1,7 @@
 package client_test
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -38,7 +39,7 @@ func TestIsOIDCClientNotFound(t *testing.T) {
 			c, err := client.NewClient(server.URL, "test-token", false, 30)
 			require.NoError(t, err)
 
-			_, err = c.GetClient("c1")
+			_, err = c.GetClient(context.Background(), "c1")
 			require.Error(t, err)
 			assert.Equal(t, tc.want, client.IsOIDCClientNotFound(err))
 			assert.False(t, client.IsUserNotFound(err) && tc.want, "the two signals never coincide")

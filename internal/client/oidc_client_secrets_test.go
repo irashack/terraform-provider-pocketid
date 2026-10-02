@@ -1,6 +1,7 @@
 package client_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -82,7 +83,7 @@ func TestClient_GenerateClientSecret(t *testing.T) {
 			c, err := client.NewClient(server.URL, "test-token", false, 30)
 			require.NoError(t, err)
 
-			secret, err := c.GenerateClientSecret("test-client-id")
+			secret, err := c.GenerateClientSecret(context.Background(), "test-client-id")
 			assert.NoError(t, err)
 			assert.Equal(t, expectedSecret, secret)
 		})
@@ -112,7 +113,7 @@ func TestClient_GenerateClientSecret(t *testing.T) {
 		c, err := client.NewClient(server.URL, "test-token", false, 30)
 		require.NoError(t, err)
 
-		secret, err := c.GenerateClientSecret("test-client-id")
+		secret, err := c.GenerateClientSecret(context.Background(), "test-client-id")
 		assert.NoError(t, err)
 		assert.Equal(t, expectedSecret, secret)
 	})
@@ -135,7 +136,7 @@ func TestClient_GenerateClientSecret_UnmarshalError(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	_, err = c.GenerateClientSecret("test-id")
+	_, err = c.GenerateClientSecret(context.Background(), "test-id")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "error unmarshaling secret response")
 }
@@ -160,7 +161,7 @@ func TestIssue96PocketID214(t *testing.T) {
 	defer server.Close()
 	c, err := client.NewClient(server.URL, "synthetic-token", false, 2)
 	require.NoError(t, err)
-	secret, err := c.GenerateClientSecret("fixture")
+	secret, err := c.GenerateClientSecret(context.Background(), "fixture")
 	require.NoError(t, err)
 	require.True(t, secret == "synthetic-secret")
 	require.Equal(t, int32(1), posts.Load())
@@ -190,7 +191,7 @@ func TestSecretVersionFailuresDoNotPost(t *testing.T) {
 			}))
 			defer s.Close()
 			c, _ := client.NewClient(s.URL, "synthetic-token", false, 1)
-			_, err := c.GenerateClientSecret("fixture")
+			_, err := c.GenerateClientSecret(context.Background(), "fixture")
 			require.Error(t, err)
 			require.NotContains(t, err.Error(), "synthetic-token")
 			require.Zero(t, posts.Load())
@@ -227,7 +228,7 @@ func TestSecretMutationNeverRetries(t *testing.T) {
 			}))
 			defer s.Close()
 			c, _ := client.NewClient(s.URL, "synthetic-token", false, 1)
-			_, err := c.GenerateClientSecret("fixture")
+			_, err := c.GenerateClientSecret(context.Background(), "fixture")
 			require.Error(t, err)
 			require.NotContains(t, err.Error(), "synthetic-secret")
 			require.Equal(t, int32(1), posts.Load())
@@ -239,7 +240,7 @@ func TestVersionTransportFailureDoesNotPost(t *testing.T) {
 	s := httptest.NewServer(http.NotFoundHandler())
 	s.Close()
 	c, _ := client.NewClient(s.URL, "synthetic-token", false, 1)
-	_, err := c.GenerateClientSecret("fixture")
+	_, err := c.GenerateClientSecret(context.Background(), "fixture")
 	require.Error(t, err)
 }
 
@@ -270,7 +271,7 @@ func TestClient_DeleteClientSecret(t *testing.T) {
 			c, err := client.NewClient(server.URL, "test-token", false, 30)
 			require.NoError(t, err)
 
-			err = c.DeleteClientSecret("c/1", "s/1")
+			err = c.DeleteClientSecret(context.Background(), "c/1", "s/1")
 			assert.Equal(t, 1, requests, "a mutation is never retried")
 			if tc.wantCode == 0 {
 				assert.NoError(t, err)
@@ -295,7 +296,7 @@ func TestClient_ListClientSecrets(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	secrets, err := c.ListClientSecrets("c/1")
+	secrets, err := c.ListClientSecrets(context.Background(), "c/1")
 	require.NoError(t, err)
 	assert.Equal(t, []client.ClientSecretMetadata{{ID: "s1", IsActive: true}, {ID: "s2"}}, secrets)
 
@@ -306,7 +307,7 @@ func TestClient_ListClientSecrets(t *testing.T) {
 		defer bad.Close()
 		c, err := client.NewClient(bad.URL, "test-token", false, 30)
 		require.NoError(t, err)
-		_, err = c.ListClientSecrets("c1")
+		_, err = c.ListClientSecrets(context.Background(), "c1")
 		assert.Error(t, err)
 	})
 }
