@@ -88,10 +88,60 @@ which is more robust than the fork's field-by-field copy; 2.4.102 adopts that sh
 and keeps the fork's four extra attributes. #92 needs no state upgrader (a stored list decodes as a set) but
 breaks index expressions on `allowed_user_groups`.
 
+## Pocket ID 2.17.0 and upstream 2.5.0 — 2026-10-02
+
+Upstream released 2.5.0 (`main` at `6f55403`). The fork's 2.4.104 adds Pocket ID
+2.17.0 support. Every upstream commit not in `main-maintenance`
+(`git log main-maintenance..upstream/main`), newest first:
+
+| Commit | Disposition |
+|---|---|
+| `6f55403` #124 CI on release branches | Not taken: upstream workflows the fork does not run; the fork's CI covers `main-maintenance` and its PRs. |
+| `2cb6472` #121 client `logo_url`, `dark_logo_url`, `has_dark_logo` | Deferred: a new feature, not 2.17.0 support. With a logo URL, Pocket ID saves the client before downloading the logo and, if the download fails, returns an error without the client's ID; the fork's creation guarantees would have to cover that first. The fork already carries the logo fields through updates (#116). |
+| `75757e4` #122 auto-created client secret | Taken, adapted, in 2.4.104: `autoCreateOidcClientSecret` round-trips but is omitted for servers that do not report it; the server's secret is revoked before the provider's is generated, a failed revoke is verified by a read and follows the fork's rollback/retain rules instead of an unchecked delete. |
+| `0f8d371` #123 wait for health before seeding | Equivalent already: `scripts/disposable-pocketid.py` waits for `/healthz` before seeding. |
+| `292900b` #120 pre-release cleanup ordering | Not applicable: the fork removed the pre-release and cleanup workflows. |
+| `4065eb1` #119 changelog base for releases | Not applicable: fork releases are manual drafts with hand-written notes. |
+| `b9241a7` #118 wait for the SQLite lock when seeding | Equivalent already: the fixture stops the container before touching SQLite. |
+| `a5b2aee` #117 revoke the superseded secret on rotation | Not ported: the fork has no in-place rotation. `client_secret` is computed only and set once by Create; Update and Read never call the secret endpoint, so a new secret exists only after replacement, which deletes the client and every secret with it. Revisit only if rotation is added (with #90). |
+| `7ef0a33` #116 preserve unexposed client settings | Taken in 2.4.102. |
+| `8ee7139` #115 stop excluding `docs/` from the source archive | Deferred: matters only for registry ingestion, and the fork is not registry-published. Take it with registry registration. |
+| `ae85945` #100 gRPC 1.83.2 | Equivalent already (2.4.0). |
+| `ce02f39` #101 Actions updates | Equivalent already: the fork's two workflows use the same checkout, setup-go and attestation revisions; the other updated actions are in workflows the fork removed. |
+| `fb4b371` #98 Go minor updates | Taken in 2.3.2. |
+| `d36c845` #105 CI cleanup and security scans | Not applicable: workflows the fork removed. |
+| `b22c287` #87 x/net 0.57.0 | Superseded: the fork has 0.58.0. |
+| `027c807` #97 secret creation on 2.14+ | Equivalent already: incorporated in 2.3.1 with stricter checks. |
+| `5e38935` #104 409 for a duplicate group | Equivalent already: since 2.3.1 the fork's tests expect a status-only HTTP 409. |
+| `258b269` #103 application-config preservation | Taken (copy-first shape) in 2.4.102. |
+| `354560f` #102 release asset names in the CI fixture | Not applicable: the fork's fixture runs official versioned images. |
+| `6e8de90` #90 declarative IDs and secrets | Deferred, as reviewed on 2026-09-06. |
+| `db8372f` #92 allowed groups as a set | Deferred, as reviewed on 2026-09-06 and 2026-09-23 (breaks index expressions). |
+| `c3dcfcb` #85 Actions updates | Superseded by the fork's own pins (see #101). |
+| `fa85772` #84 x/net 0.55.0 | Superseded by 0.58.0. |
+
+The fork's `go.mod` is at or ahead of upstream 2.5.0 for every module; `go mod
+tidy` changes nothing. Upstream has no change for `backchannel_logout_url`
+(Pocket ID 2.17.0 OIDC Back-Channel Logout): every upstream client update still
+clears a URL set in the admin UI, which is worth offering back together with
+items 1 to 4 above.
+
+Open upstream items noted, not acted on:
+
+- [#125](https://github.com/Trozz/terraform-provider-pocketid/pull/125), user
+  profile pictures and application images (open PR): a multipart upload path
+  that resends request bodies inside upstream's retry loop. Review against the
+  fork's no-mutation-retry rule before any adoption.
+- [#111](https://github.com/Trozz/terraform-provider-pocketid/issues/111), group
+  membership and allowed clients from the group side (open issue): the fork's
+  2.4.103 `pocketid_group_membership` covers non-authoritative membership;
+  authoritative group-side membership and allowed clients remain open.
+
 ## Remaining work
 
-1. Offer the items above upstream. When they are released there, return to
-   `trozz/pocketid` rather than porting #90, #92 and #117 here.
+1. Offer the items above upstream, now including `backchannel_logout_url`. When
+   they are released there, return to `trozz/pocketid` rather than porting #90,
+   #92 and #117 here.
 2. Register/sign the fork only if independent distribution continues; until then
    the verified filesystem mirror remains the supported install path.
 

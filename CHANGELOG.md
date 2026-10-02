@@ -1,5 +1,54 @@
 # Changelog
 
+## 2.4.104 — 2026-10-02
+
+Pocket ID 2.17.0 support. On 2.17.0, 2.4.103 cannot update the application
+configuration, leaves a second valid secret on every confidential client it
+creates, and clears a client's back-channel logout URL on every client update.
+Supported servers are now Pocket ID 2.17.0 and 2.16.0. One new optional attribute;
+2.4.103 state plans empty.
+
+- **Application configuration:** 2.17.0 requires `autoCreateOidcClientSecret` in
+  every configuration update, so each `pocketid_application_config` create or
+  update failed with HTTP 400. The setting is now read with the rest of the
+  configuration and sent back unchanged. It is not an attribute. A server that
+  does not report it (before 2.17.0) is not sent it.
+- **Client creation:** with that setting on (the default), 2.17.0 generates a
+  secret for each new confidential client and returns it once. The provider
+  generated a second one and stored only that, so the server's secret stayed
+  valid without Terraform knowing it existed. The provider now revokes the
+  server's secret, by ID and before generating its own, so a new client has
+  exactly one secret: the one in state. The revoke is never retried. If it
+  fails, a read of the client's secrets decides: a secret confirmed gone counts
+  as revoked; otherwise a rejected revoke rolls the new client back, and an
+  ambiguous one keeps the client ID in state and names the secret that may still
+  be valid. The secret's value is never decoded, stored or reported.
+- **Clients created by 2.4.103 or earlier on 2.17.0 keep their extra secret.** This
+  release does not remove it. In the admin UI, revoke the secret whose prefix
+  does not match the start of the client's `client_secret`.
+- **New `backchannel_logout_url`** on `pocketid_client` (Pocket ID 2.17.0 or later),
+  also exposed by the `pocketid_client` and `pocketid_clients` data sources. Pocket
+  ID posts an OpenID Connect Back-Channel Logout token to it when a user's access
+  to the client is revoked. Like `logout_callback_urls`, the attribute is
+  authoritative: omitted means no URL, and an empty server value reads as null.
+  It must be an absolute http or https URL without a fragment, and https for a
+  public client; both are checked at plan time. A value on an older server is
+  refused before any change. Pocket ID replaces a client in full on update, so
+  2.4.103 cleared a URL set in the admin UI on every client update; now an update
+  that does not change the attribute sends back the server's current value, even
+  when planned without a refresh.
+- **Upgrading with a URL already set in the admin UI:** the first refreshed plan
+  after upgrading proposes to remove it. Add it to the configuration first.
+- **Pocket ID 2.17.0 behaviour to know about:** it sends logout tokens, to
+  clients that have a back-channel logout URL, after changes this provider can
+  make: disabling or deleting a user, removing a user from a group (including
+  through `pocketid_user.groups` and `pocketid_group_membership`), deleting a
+  group, changing a client's allowed groups, and deleting a client.
+- `make test-acc-matrix` covers Pocket ID 2.14.0, 2.15.0, 2.16.0 and 2.17.0; CI runs
+  the full suite on 2.16.0 and 2.17.0. Upstream's #122 is adapted; #117 is not
+  ported because the fork has no in-place secret rotation. See
+  [UPSTREAM.md](UPSTREAM.md).
+
 ## 2.4.103 — 2026-09-23
 
 Adds a non-authoritative group membership resource, for a group whose members

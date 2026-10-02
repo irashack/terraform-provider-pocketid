@@ -27,6 +27,20 @@ releases, scheduled sweeps, cleanup and contributor-edit jobs are not enabled in
 this maintenance fork. Do not publish a registry identity until it is actually
 registered with the required signing setup.
 
+## Release v2.4.104
+
+A same-address patch on 2.4.103 for Pocket ID 2.17.0: application-configuration
+updates, revocation of the secret 2.17.0 creates with a client, and the new optional
+`pocketid_client.backchannel_logout_url`. No schema version change; 2.4.103 state
+plans empty. `git ls-remote --tags upstream` showed no v2.4.104 on 2026-10-02 (the
+newest upstream tag was v2.5.0); check again before tagging. The release workflow's
+`make test-acc-matrix` now runs four fixture versions (2.14.0 to 2.17.0). The upgrade
+proof is `tests/native/upgrade.py` from the published 2.4.103 archive on 2.17.0 with
+both tools; TESTING.md records the local run. Publication, as for earlier releases,
+is owner-run: push the branch and tag, run the release workflow for `v2.4.104`,
+verify the draft's assets and downloaded binary, then publish. Then follow
+INSTALL.md's "Upgrade from fork 2.4.103 to 2.4.104".
+
 ## Release v2.4.103
 
 An additive same-address release on 2.4.102: the new `pocketid_group_membership`

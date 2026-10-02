@@ -26,8 +26,8 @@ outside source; never publish that file. Logs/state are not release assets.
 Native binary tests use an already populated filesystem mirror:
 
 ```sh
-python3 scripts/disposable-pocketid.py 2.15.0 -- python3 tests/native/lifecycle.py terraform /absolute/mirror 2.4.0
-python3 scripts/disposable-pocketid.py 2.15.0 -- python3 tests/native/lifecycle.py tofu /absolute/mirror 2.4.0
+python3 scripts/disposable-pocketid.py 2.17.0 -- python3 tests/native/lifecycle.py terraform /absolute/mirror 2.4.104
+python3 scripts/disposable-pocketid.py 2.17.0 -- python3 tests/native/lifecycle.py tofu /absolute/mirror 2.4.104
 ```
 
 `PROVIDER_MIGRATION_TEST=1` (address migration from upstream 2.3.0) was last run on
@@ -39,6 +39,71 @@ The migration case additionally needs the genuine upstream 2.3.0 artifact under
 renamed fork binary. The test uses supported state replacement, checks encrypted
 state/backups and saved-plan encryption, preserves the ID and secret, and requires
 an empty subsequent plan. No development overrides are used.
+
+## Release 2.4.104 evidence — 2026-10-02
+
+Pocket ID 2.17.0 support; supported servers move to 2.17.0 and 2.16.0. macOS ARM64,
+Docker via OrbStack, Go 1.27.1, golangci-lint 2.13.2, tfplugindocs 0.25.0,
+govulncheck 1.7.0, actionlint 1.7.12, OpenTofu 1.12.6, Terraform 1.16.4. The final
+results below were produced from the source of commit `d47b611`; the
+release-notes commit after it changes documentation only.
+
+The 2.16.0 to 2.17.0 server source was compared directly
+(`backend/internal/dto`, `controller`, `model`, `appconfig`, `service`). The
+management API changes are: `autoCreateOidcClientSecret` (required) in the
+application-configuration update; `createdSecret` in the client-create response;
+`backchannelLogoutURL` on clients. Users, groups, custom claims, SCIM, LDAP sync,
+one-time access tokens, API keys and the version endpoint are unchanged on the wire.
+
+Before the fixes (commit `4dd080d`: the 2.4.103 source with only the fixture
+allowlist changed), client and application-config acceptance on 2.17.0 passed 21
+of 24: `TestAccResourceApplicationConfig_basic` and `_dataSource` failed (HTTP 400)
+and `TestAccResourceClient_secretContinuity` failed (two secrets). With the
+application-config and secret-revocation commits, 25 of 25 passed. With only the
+revoke disabled in a local build, both
+`TestAccResourceClient_onlyProviderSecretAfterCreate` and
+`TestAccResourceClient_secretContinuity` fail on 2.17.0.
+
+Final results:
+
+- `make check` (format, vet, unit tests with the race detector, build, lint: 0
+  issues), `go vet -tags=acc ./...`, `make actionlint`, `go mod tidy -diff` and
+  `make docs-check` are clean. `make vuln`: no reachable vulnerabilities; two
+  advisories in required-module code that is not called, GO-2026-6179 and
+  GO-2026-6180 in `golang.org/x/mod` v0.38.0 (fixed in v0.40.0).
+- `python3 scripts/disposable-pocketid.py VERSION -- go test -v -count=1 -timeout 20m ./internal/provider -tags=acc`:
+  **68 of 68** on 2.16.0 and on 2.17.0.
+- The same for `./internal/datasources`: **41 of 41** on 2.16.0 and on 2.17.0.
+- `make test-acc-matrix` (client and application-config acceptance): **27 of 27**
+  on each of 2.14.0, 2.15.0, 2.16.0 and 2.17.0.
+- New acceptance coverage: exactly one secret after creating a confidential client,
+  matching the prefix of `client_secret`, and none on a public client, with a
+  direct API call first proving 2.17.0 does create a secret of its own;
+  `backchannel_logout_url` create, change, unrelated update, import, removal (each
+  checked against the server), a value set outside Terraform showing as a planned
+  change, plan-time rejection of http for a public client, a fragment and a
+  relative URL, and on 2.14.0 to 2.16.0 refusal before any mutation; both client
+  data sources reading the URL (on 2.16.0 and 2.17.0).
+- `tests/native/upgrade.py` from the **published 2.4.103** darwin_arm64 archive (its
+  SHA256SUMS file checked against the digest in the release notes, then the
+  archive against that file) to this build, on 2.17.0 with **OpenTofu and
+  Terraform**: empty plan after the upgrade; client ID, secret and replay protection
+  kept through updates; a back-channel logout URL set outside Terraform kept by an
+  update applied with `-refresh=false`, shown by the next refreshed plan, and an
+  empty plan once configured. The client 2.4.103 created on 2.17.0 had two
+  secrets. The same script with OpenTofu on 2.16.0 passes (one secret).
+- A binary stamped 2.4.104 in an unpacked mirror passes `tests/native/lifecycle.py`
+  (one secret, client-credentials authentication with it and failure with a wrong
+  one, import, empty plan; OpenTofu with enforced state and plan encryption) and
+  `tests/native/application_config.py` (old payload rejected, SMTP-only update
+  preserving every returned setting, data source, removal) with both tools on
+  2.17.0.
+
+Not run: Linux or any other cross-built platform; `make release-check`
+(GoReleaser is not installed here); the native lifecycle and application-config
+scripts on 2.16.0 and older; the full provider and data-source suites on 2.15.0
+and 2.14.0; 2.17.0 with `autoCreateOidcClientSecret` turned off (the server then
+returns no secret, the path 2.16.0 exercises); any live instance.
 
 ## Release 2.4.103 evidence — 2026-09-23
 

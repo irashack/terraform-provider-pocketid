@@ -3,14 +3,16 @@
 Manage [Pocket ID](https://pocket-id.org/) OIDC clients, users, groups and access
 settings as code. This is **irashack's maintenance fork** of
 [Trozz/terraform-provider-pocketid](https://github.com/Trozz/terraform-provider-pocketid),
-with compatibility fixes for Pocket ID 2.14 and 2.15 and safer failure handling.
+with compatibility fixes for Pocket ID 2.14 to 2.17 and safer failure handling.
 It is independently maintained, not an official Pocket ID or Trozz release.
 
 ## Get started
 
-Release **2.4.103** supports Pocket ID 2.15.0. It adds a non-authoritative
-`pocketid_group_membership` resource for adding a single user to a single group
-without owning the group's full member list, and an `email` lookup key on the
+Release **2.4.104** supports Pocket ID 2.17.0 and 2.16.0. On 2.17.0 it fixes
+application-configuration updates (HTTP 400 with 2.4.103), revokes the extra
+client secret 2.17.0 creates with each new confidential client, and adds
+`backchannel_logout_url` to clients. 2.4.103 added the non-authoritative
+`pocketid_group_membership` resource and an `email` lookup key on the
 `pocketid_user` data source. 2.4.102 added: client updates no longer reset a
 client's description, skip-consent setting or token lifetimes, and no longer disable
 replay protection or delete public keys on federated identities; see the
@@ -24,7 +26,7 @@ terraform {
   required_providers {
     pocketid = {
       source  = "registry.terraform.io/irashack/pocketid"
-      version = "2.4.103"
+      version = "2.4.104"
     }
   }
 }
@@ -52,7 +54,7 @@ for normal installations.
 
 | Capability | Documentation |
 |---|---|
-| OIDC clients, callbacks, PKCE and group access | [Client resource](docs/resources/client.md) |
+| OIDC clients, callbacks, back-channel logout, PKCE and group access | [Client resource](docs/resources/client.md) |
 | Users and groups | [User resource](docs/resources/user.md), [group resource](docs/resources/group.md) |
 | Adding one existing user to one group, non-authoritatively | [Group membership resource](docs/resources/group_membership.md) |
 | One-time access tokens | [Token resource](docs/resources/one_time_access_token.md) |
@@ -66,18 +68,22 @@ See [examples](examples/README.md) for complete configurations and
 ## Compatibility and current limits
 
 We support the current and previous **minor release series** (N and N−1), at
-explicitly tested patch versions: **2.15.0 and 2.14.0** for release 2.4.103
-(release 2.3.2 was validated on 2.14.0 and 2.13.0).
+explicitly tested patch versions: **2.17.0 and 2.16.0** for release 2.4.104
+(release 2.4.103 was validated on 2.15.0 and 2.14.0).
 Adding the next minor requires validation and retires the oldest series. Untested
-patches are not automatically certified. **2.13.0 and earlier are no longer supported or tested**;
+patches are not automatically certified. 2.15.0 and 2.14.0 are outside the support
+policy but stay in the test fixture, where client and application-configuration
+acceptance still passes. **2.13.0 and earlier are no longer supported or tested**;
 legacy parsing safeguards remain defensive code, not a support promise.
 
-| Pocket ID | Federated identity `public_keys` | Verification for release 2.4.103 |
-|---|---|---|
-| 2.14.0 | Refused before any mutation | Full provider acceptance |
-| 2.15.0 | Supported | Full provider acceptance; native Terraform/OpenTofu upgrade from released 2.3.2 |
+| Pocket ID | `public_keys` | `backchannel_logout_url` | Verification for release 2.4.104 |
+|---|---|---|---|
+| 2.14.0 | Refused before any mutation | Refused before any mutation | Client and application-config acceptance |
+| 2.15.0 | Supported | Refused before any mutation | Client and application-config acceptance |
+| 2.16.0 | Supported | Refused before any mutation | Full provider and data-source acceptance |
+| 2.17.0 | Supported | Supported | Full provider and data-source acceptance; native Terraform/OpenTofu upgrade from released 2.4.103 |
 
-Both use the plural `/secrets` API. The singular-endpoint and missing-version
+All four use the plural `/secrets` API. The singular-endpoint and missing-version
 fallbacks remain as defensive code only.
 
 [TESTING.md](TESTING.md) records tested tool versions and scope. The prior application-config
@@ -122,6 +128,9 @@ installation guide. See [CHANGELOG.md](CHANGELOG.md) for released changes.
 ## Secret and failure behavior
 
 Confidential-client creation generates one secret. Public clients generate none.
+When Pocket ID 2.17.0 creates a secret of its own with a new client, the provider
+revokes that one first, so the client keeps only the secret in state; a revoke that
+fails is handled like a failed secret generation, below.
 Refresh, import and metadata-only updates never call the secret endpoint. Import
 cannot recover an existing create-only secret; the value remains null. Store
 provider state securely; a sensitive attribute alone does not encrypt state.

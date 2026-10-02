@@ -10,14 +10,14 @@ terraform {
   required_providers {
     pocketid = {
       source  = "registry.terraform.io/irashack/pocketid"
-      version = "2.4.103"
+      version = "2.4.104"
     }
   }
 }
 ```
 
 Download the exact version's archive and SHA256SUMS from
-[release v2.4.103](https://github.com/irashack/terraform-provider-pocketid/releases/tag/v2.4.103).
+[release v2.4.104](https://github.com/irashack/terraform-provider-pocketid/releases/tag/v2.4.104).
 Verify the SHA256SUMS file against the immutable digest recorded in the release
 notes, then verify the selected archive against that file. Checksums detect
 content changes; they are not a registry GPG signature. This release is unsigned.
@@ -25,14 +25,14 @@ content changes; they are not a registry GPG signature. This release is unsigned
 For example, for `darwin_arm64` (use `linux_amd64` or `linux_arm64` as appropriate):
 
 ```sh
-version=2.4.103
+version=2.4.104
 platform=darwin_arm64
 archive=terraform-provider-pocketid_${version}_${platform}.zip
 sums=terraform-provider-pocketid_${version}_SHA256SUMS
 release=https://github.com/irashack/terraform-provider-pocketid/releases/download/v${version}
 curl --fail --location --output "$archive" "$release/$archive"
 curl --fail --location --output "$sums" "$release/$sums"
-# Set this to the literal SHA256SUMS digest from the v2.4.103 release notes:
+# Set this to the literal SHA256SUMS digest from the v2.4.104 release notes:
 expected_manifest_sha256=REPLACE_WITH_RELEASE_DIGEST
 printf '%s  %s\n' "$expected_manifest_sha256" "$sums" | shasum -a 256 -c -
 awk -v file="$archive" '$2 == file { print }' "$sums" | shasum -a 256 -c -
@@ -67,6 +67,25 @@ tofu providers lock -fs-mirror="$mirror" \
 ```
 
 Keep the exact version and checksum pins; do not silently select a newer tag.
+
+## Upgrade from fork 2.4.103 to 2.4.104
+
+A same-address patch that adds one optional attribute,
+`pocketid_client.backchannel_logout_url`. Verify and add the v2.4.104 archive to the
+existing native mirror, leaving earlier versions intact. Change only the exact
+version pin to `2.4.104`, run `tofu init -upgrade` through the root's normal entry
+point and commit the lockfile. **Require an empty plan**, with one expected
+exception on Pocket ID 2.17.0: a client whose back-channel logout URL was set in the
+admin UI plans to remove it, because the attribute is authoritative. Add that URL
+to the client's configuration and plan again; do not apply the removal unless you
+mean it.
+
+Upgrade the provider before, or together with, upgrading Pocket ID to 2.17.0. On
+2.17.0, 2.4.103 and earlier fail every application-configuration update with HTTP
+400, clear a client's back-channel logout URL on every client update, and leave a
+second valid secret on each confidential client they create. 2.4.104 does not remove
+secrets created that way: for such a client, revoke in the admin UI the secret
+whose prefix does not match the start of `client_secret` in state.
 
 ## Upgrade from fork 2.4.102 to 2.4.103
 
