@@ -6,11 +6,14 @@ package provider_test
 import (
 	"fmt"
 	"net/http"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+	"github.com/hashicorp/terraform-plugin-testing/tfversion"
 	"github.com/stretchr/testify/require"
 )
 
@@ -291,6 +294,145 @@ func TestAccResourceScimServiceProvider_deletedOutsideTerraform(t *testing.T) {
 					}
 					return nil
 				},
+			},
+		},
+	})
+}
+
+// testAccScimStateHoldsNo fails when any attribute of the resource in state
+// contains secret: the write-only token must never be stored.
+func testAccScimStateHoldsNo(resourceName, secret string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[resourceName]
+		if !ok {
+			return fmt.Errorf("Not found: %s", resourceName)
+		}
+		for name, value := range rs.Primary.Attributes {
+			if strings.Contains(value, secret) {
+				return fmt.Errorf("attribute %s holds the write-only token", name)
+			}
+		}
+		return nil
+	}
+}
+
+func testAccResourceScimServiceProviderConfig_writeOnly(clientName, endpoint, token, version string) string {
+	return testAccResourceScimServiceProviderConfig_tokenLine(clientName, endpoint,
+		fmt.Sprintf("token_wo = %q\n  token_wo_version = %q", token, version))
+}
+
+// The write-only token reaches the server, never the state, and survives an
+// update that does not send it again: Pocket ID's PUT clears a token it is
+// not sent, so the provider must send back the one it holds. Needs Terraform
+// or OpenTofu 1.11 or later.
+func TestAccResourceScimServiceProvider_writeOnlyToken(t *testing.T) {
+	resourceName := "pocketid_scim_service_provider.test"
+	clientName := acctest.RandomWithPrefix("tf-acc-scim-wo")
+	endpoint := "https://scim.example.com/v2"
+	var clientID string
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		TerraformVersionChecks:   []tfversion.TerraformVersionCheck{tfversion.SkipBelow(tfversion.Version1_11_0)},
+		Steps: []resource.TestStep{
+			{
+				Config: testAccResourceScimServiceProviderConfig_writeOnly(clientName, endpoint, "wo-token-1", "1"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckNoResourceAttr(resourceName, "token"),
+					resource.TestCheckNoResourceAttr(resourceName, "token_wo"),
+					resource.TestCheckResourceAttr(resourceName, "token_wo_version", "1"),
+					testAccScimCheckServerToken(resourceName, "wo-token-1"),
+					testAccScimStateHoldsNo(resourceName, "wo-token-1"),
+					func(s *terraform.State) error {
+						clientID = s.RootModule().Resources[resourceName].Primary.Attributes["client_id"]
+						return nil
+					},
+				),
+			},
+			{
+				// An unrelated update, same version: the server keeps its token.
+				Config: testAccResourceScimServiceProviderConfig_writeOnly(clientName, endpoint+"/updated", "wo-token-1", "1"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceName, "endpoint", endpoint+"/updated"),
+					testAccScimCheckServerToken(resourceName, "wo-token-1"),
+					testAccScimStateHoldsNo(resourceName, "wo-token-1"),
+				),
+			},
+			{
+				// A different value under the same version is not sent.
+				Config: testAccResourceScimServiceProviderConfig_writeOnly(clientName, endpoint+"/again", "not-sent", "1"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceName, "endpoint", endpoint+"/again"),
+					testAccScimCheckServerToken(resourceName, "wo-token-1"),
+				),
+			},
+			{
+				// A new version sends the value again.
+				Config: testAccResourceScimServiceProviderConfig_writeOnly(clientName, endpoint+"/again", "wo-token-2", "2"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceName, "token_wo_version", "2"),
+					testAccScimCheckServerToken(resourceName, "wo-token-2"),
+					testAccScimStateHoldsNo(resourceName, "wo-token-2"),
+				),
+			},
+			{
+				// The state holds no token, so a change outside Terraform is
+				// not detected; the plan stays empty (documented).
+				PreConfig:          func() { testAccScimPutOutside(t, clientID, endpoint+"/again", "changed-outside") },
+				Config:             testAccResourceScimServiceProviderConfig_writeOnly(clientName, endpoint+"/again", "wo-token-2", "2"),
+				PlanOnly:           true,
+				ExpectNonEmptyPlan: false,
+			},
+			{
+				// Bumping the version repairs it.
+				Config: testAccResourceScimServiceProviderConfig_writeOnly(clientName, endpoint+"/again", "wo-token-2", "3"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testAccScimCheckServerToken(resourceName, "wo-token-2"),
+					testAccScimStateHoldsNo(resourceName, "wo-token-2"),
+				),
+			},
+			{
+				// Moving to the plain attribute stores the token again.
+				Config: testAccResourceScimServiceProviderConfig_tokenLine(clientName, endpoint+"/again", `token = "plain-token"`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceName, "token", "plain-token"),
+					resource.TestCheckNoResourceAttr(resourceName, "token_wo_version"),
+					testAccScimCheckServerToken(resourceName, "plain-token"),
+				),
+			},
+			{
+				// And back: the plain token leaves the state, the server keeps it.
+				Config: testAccResourceScimServiceProviderConfig_writeOnly(clientName, endpoint+"/again", "plain-token", "4"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckNoResourceAttr(resourceName, "token"),
+					testAccScimCheckServerToken(resourceName, "plain-token"),
+					testAccScimStateHoldsNo(resourceName, "plain-token"),
+				),
+			},
+		},
+	})
+}
+
+func TestAccResourceScimServiceProvider_writeOnlyConfigurationRules(t *testing.T) {
+	clientName := acctest.RandomWithPrefix("tf-acc-scim-wo-rules")
+	endpoint := "https://scim.example.com/v2"
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		TerraformVersionChecks:   []tfversion.TerraformVersionCheck{tfversion.SkipBelow(tfversion.Version1_11_0)},
+		Steps: []resource.TestStep{
+			{
+				Config: testAccResourceScimServiceProviderConfig_tokenLine(clientName, endpoint,
+					"token = \"a\"\n  token_wo = \"b\"\n  token_wo_version = \"1\""),
+				PlanOnly:    true,
+				ExpectError: regexp.MustCompile(`(?s)token.*token_wo|token_wo.*token`),
+			},
+			{
+				Config:      testAccResourceScimServiceProviderConfig_tokenLine(clientName, endpoint, `token_wo = "b"`),
+				PlanOnly:    true,
+				ExpectError: regexp.MustCompile(`token_wo_version`),
 			},
 		},
 	})

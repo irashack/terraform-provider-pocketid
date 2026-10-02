@@ -228,6 +228,23 @@ func (f *scimFake) serve(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (f *scimFake) recorded() []scimRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]scimRequest(nil), f.requests...)
+}
+
+// mutations returns the requests that changed something.
+func (f *scimFake) mutations() []scimRequest {
+	var out []scimRequest
+	for _, r := range f.recorded() {
+		if r.Method != http.MethodGet {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 func scimResource(t *testing.T, c *client.Client) resource.Resource {
 	t.Helper()
 	r := resources.NewScimServiceProviderResource()
@@ -390,4 +407,212 @@ func TestScimServiceProviderResource_ReadTracksTheServersToken(t *testing.T) {
 			assert.Equal(t, tc.want, scimStateString(t, resp.State, "token"))
 		})
 	}
+}
+
+func TestScimServiceProviderResource_WriteOnlySchema(t *testing.T) {
+	r := resources.NewScimServiceProviderResource()
+	sch := scimSchema(t, r)
+
+	tokenWO, ok := sch.Attributes["token_wo"].(schema.StringAttribute)
+	require.True(t, ok)
+	assert.True(t, tokenWO.WriteOnly, "token_wo must be write-only")
+	assert.True(t, tokenWO.Sensitive)
+	assert.True(t, tokenWO.Optional)
+	assert.False(t, tokenWO.Computed)
+
+	version, ok := sch.Attributes["token_wo_version"].(schema.StringAttribute)
+	require.True(t, ok)
+	assert.True(t, version.Optional)
+	assert.False(t, version.WriteOnly, "the version must reach the plan and the state")
+
+	token, ok := sch.Attributes["token"].(schema.StringAttribute)
+	require.True(t, ok)
+	assert.False(t, token.WriteOnly)
+	assert.True(t, token.Sensitive)
+}
+
+func scimConfig(t *testing.T, sch schema.Schema, values map[string]any) tfsdk.Config {
+	t.Helper()
+	return tfsdk.Config{Schema: sch, Raw: scimObject(t, sch, values)}
+}
+
+func scimPlan(t *testing.T, sch schema.Schema, values map[string]any) tfsdk.Plan {
+	t.Helper()
+	return tfsdk.Plan{Schema: sch, Raw: scimObject(t, sch, values)}
+}
+
+// A write-only token reaches Pocket ID on create, and neither the state nor
+// the planned value keeps it, although the server returns it on every read.
+func TestScimServiceProviderResource_CreateSendsTheWriteOnlyToken(t *testing.T) {
+	fake, c := newScimFake(t)
+	fake.exists = false
+	r := scimResource(t, c)
+	sch := scimSchema(t, r)
+
+	plan := map[string]any{
+		"client_id": scimTestClientID, "endpoint": "https://scim.example.com/v2", "token_wo_version": "1",
+		"id": tftypes.UnknownValue, "last_synced_at": tftypes.UnknownValue, "created_at": tftypes.UnknownValue,
+	}
+	config := map[string]any{
+		"client_id": scimTestClientID, "endpoint": "https://scim.example.com/v2",
+		"token_wo": "secret-from-config", "token_wo_version": "1",
+	}
+	resp := &resource.CreateResponse{State: scimState(t, sch, nil)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: scimPlan(t, sch, plan), Config: scimConfig(t, sch, config)}, resp)
+	require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
+
+	mutations := fake.mutations()
+	require.Len(t, mutations, 1)
+	assert.Equal(t, "secret-from-config", mutations[0].Body["token"])
+	assert.Equal(t, types.StringNull(), scimStateString(t, resp.State, "token"), "the plain token stays null")
+	assert.Equal(t, types.StringNull(), scimStateString(t, resp.State, "token_wo"), "a write-only value is never stored")
+	assert.Equal(t, types.StringValue("1"), scimStateString(t, resp.State, "token_wo_version"))
+}
+
+func scimWriteOnlyState(version string) map[string]any {
+	return map[string]any{
+		"id": scimTestProviderID, "client_id": scimTestClientID,
+		"endpoint": "https://scim.example.com/v2", "token_wo_version": version,
+		"created_at": "2026-01-01T00:00:00Z",
+	}
+}
+
+func scimUpdate(t *testing.T, r resource.Resource, sch schema.Schema, state, plan, config map[string]any) *resource.UpdateResponse {
+	t.Helper()
+	resp := &resource.UpdateResponse{State: scimState(t, sch, state)}
+	r.Update(context.Background(), resource.UpdateRequest{
+		State:  scimState(t, sch, state),
+		Plan:   scimPlan(t, sch, plan),
+		Config: scimConfig(t, sch, config),
+	}, resp)
+	return resp
+}
+
+// The PUT replaces the token, so an update that does not send the write-only
+// value again must carry the token Pocket ID already holds.
+func TestScimServiceProviderResource_UpdateWithoutAVersionBumpKeepsTheServersToken(t *testing.T) {
+	fake, c := newScimFake(t)
+	fake.token = "token-held-by-the-server"
+	r := scimResource(t, c)
+	sch := scimSchema(t, r)
+
+	plan := scimWriteOnlyState("1")
+	plan["endpoint"] = "https://scim.example.com/v3"
+	config := map[string]any{
+		"client_id": scimTestClientID, "endpoint": "https://scim.example.com/v3",
+		"token_wo": "token-in-the-configuration", "token_wo_version": "1",
+	}
+	resp := scimUpdate(t, r, sch, scimWriteOnlyState("1"), plan, config)
+	require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
+
+	mutations := fake.mutations()
+	require.Len(t, mutations, 1)
+	assert.Equal(t, http.MethodPut, mutations[0].Method)
+	assert.Equal(t, "token-held-by-the-server", mutations[0].Body["token"], "the update must not erase or replace the token")
+	assert.Equal(t, "https://scim.example.com/v3", mutations[0].Body["endpoint"])
+	assert.Equal(t, "token-held-by-the-server", fake.token)
+	assert.Equal(t, types.StringNull(), scimStateString(t, resp.State, "token"), "the state never holds the server's token")
+	assert.Equal(t, types.StringNull(), scimStateString(t, resp.State, "token_wo"))
+}
+
+func TestScimServiceProviderResource_UpdateWithAVersionBumpSendsTheNewToken(t *testing.T) {
+	fake, c := newScimFake(t)
+	fake.token = "old-token"
+	r := scimResource(t, c)
+	sch := scimSchema(t, r)
+
+	plan := scimWriteOnlyState("2")
+	config := map[string]any{
+		"client_id": scimTestClientID, "endpoint": "https://scim.example.com/v2",
+		"token_wo": "new-token", "token_wo_version": "2",
+	}
+	resp := scimUpdate(t, r, sch, scimWriteOnlyState("1"), plan, config)
+	require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
+
+	mutations := fake.mutations()
+	require.Len(t, mutations, 1)
+	assert.Equal(t, "new-token", mutations[0].Body["token"])
+	assert.Equal(t, "new-token", fake.token)
+	assert.Equal(t, types.StringValue("2"), scimStateString(t, resp.State, "token_wo_version"))
+	assert.Equal(t, types.StringNull(), scimStateString(t, resp.State, "token"))
+}
+
+// Switching from the plain attribute to the write-only one sends the new
+// value even though the state has no earlier version to compare.
+func TestScimServiceProviderResource_UpdateFromPlainToWriteOnlySendsTheToken(t *testing.T) {
+	fake, c := newScimFake(t)
+	fake.token = "plain-token"
+	r := scimResource(t, c)
+	sch := scimSchema(t, r)
+
+	plan := scimWriteOnlyState("1")
+	config := map[string]any{
+		"client_id": scimTestClientID, "endpoint": "https://scim.example.com/v2",
+		"token_wo": "write-only-token", "token_wo_version": "1",
+	}
+	resp := scimUpdate(t, r, sch, scimStoredState("plain-token"), plan, config)
+	require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
+
+	mutations := fake.mutations()
+	require.Len(t, mutations, 1)
+	assert.Equal(t, "write-only-token", mutations[0].Body["token"])
+	assert.Equal(t, types.StringNull(), scimStateString(t, resp.State, "token"), "the plain token leaves the state")
+}
+
+// An update that cannot read the server's token must not send anything: a
+// PUT without it would clear the token.
+func TestScimServiceProviderResource_UpdateWithoutAVersionBumpFailsBeforeAnyPutWhenTheReadFails(t *testing.T) {
+	fake, c := newScimFake(t)
+	fake.token = "token-held-by-the-server"
+	fake.failWith = &scimFailure{Status: http.StatusForbidden, Body: `{"error":"nope","code":"missing_permission"}`}
+	r := scimResource(t, c)
+	sch := scimSchema(t, r)
+
+	config := map[string]any{
+		"client_id": scimTestClientID, "endpoint": "https://scim.example.com/v2",
+		"token_wo": "token-in-the-configuration", "token_wo_version": "1",
+	}
+	plan := scimWriteOnlyState("1")
+	plan["endpoint"] = "https://scim.example.com/v3"
+	resp := scimUpdate(t, r, sch, scimWriteOnlyState("1"), plan, config)
+	require.True(t, resp.Diagnostics.HasError())
+	assert.Empty(t, fake.mutations(), "nothing may be sent")
+	for _, d := range resp.Diagnostics {
+		assert.NotContains(t, d.Summary()+d.Detail(), "token-held-by-the-server")
+		assert.NotContains(t, d.Summary()+d.Detail(), "token-in-the-configuration")
+	}
+}
+
+// With the plain attribute, an omitted token still clears the server's, as
+// it always did: the plan shows that change as the removal of `token`.
+func TestScimServiceProviderResource_UpdateWithoutAnyTokenClearsIt(t *testing.T) {
+	fake, c := newScimFake(t)
+	fake.token = "plain-token"
+	r := scimResource(t, c)
+	sch := scimSchema(t, r)
+
+	plan := scimStoredState(nil)
+	resp := scimUpdate(t, r, sch, scimStoredState("plain-token"), plan, map[string]any{
+		"client_id": scimTestClientID, "endpoint": "https://scim.example.com/v2",
+	})
+	require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
+	mutations := fake.mutations()
+	require.Len(t, mutations, 1)
+	assert.NotContains(t, mutations[0].Body, "token")
+	assert.Equal(t, "", fake.token)
+	assert.Equal(t, types.StringNull(), scimStateString(t, resp.State, "token"))
+}
+
+// Read never stores the token the server returns once the write-only
+// variant is in use, so the state cannot leak it and a plan cannot churn.
+func TestScimServiceProviderResource_ReadDoesNotStoreTheTokenInWriteOnlyMode(t *testing.T) {
+	fake, c := newScimFake(t)
+	fake.token = "token-held-by-the-server"
+	r := scimResource(t, c)
+	sch := scimSchema(t, r)
+
+	resp := scimRead(t, r, scimState(t, sch, scimWriteOnlyState("1")))
+	require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
+	assert.Equal(t, types.StringNull(), scimStateString(t, resp.State, "token"))
+	assert.Equal(t, types.StringValue("1"), scimStateString(t, resp.State, "token_wo_version"))
 }

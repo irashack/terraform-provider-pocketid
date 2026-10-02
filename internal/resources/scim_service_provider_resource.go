@@ -5,12 +5,14 @@ import (
 	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
@@ -42,6 +44,8 @@ type scimServiceProviderResourceModel struct {
 	ClientID     types.String `tfsdk:"client_id"`
 	Endpoint     types.String `tfsdk:"endpoint"`
 	Token        types.String `tfsdk:"token"`
+	TokenWO      types.String `tfsdk:"token_wo"`
+	TokenWOVer   types.String `tfsdk:"token_wo_version"`
 	LastSyncedAt types.String `tfsdk:"last_synced_at"`
 	CreatedAt    types.String `tfsdk:"created_at"`
 }
@@ -89,6 +93,33 @@ func (r *scimServiceProviderResource) Schema(_ context.Context, _ resource.Schem
 					"and a token that was set or cleared outside Terraform shows as a change on the next plan.",
 				Optional:  true,
 				Sensitive: true,
+				Validators: []validator.String{
+					stringvalidator.ConflictsWith(path.MatchRoot("token_wo")),
+				},
+			},
+			"token_wo": schema.StringAttribute{
+				Description: "Write-only variant of `token`: the bearer token used to authenticate against the SCIM endpoint, " +
+					"sent to Pocket ID but never stored in the plan or the state, so it can come from an ephemeral resource. " +
+					"It is sent when the resource is created and whenever `token_wo_version` changes; any other update keeps " +
+					"the token Pocket ID already holds. Because the state holds no token, a token that is changed or cleared " +
+					"outside Terraform is not detected: change `token_wo_version` to send the token again. " +
+					"Conflicts with `token`. Requires Terraform or OpenTofu 1.11 or later.",
+				Optional:  true,
+				WriteOnly: true,
+				Sensitive: true,
+				Validators: []validator.String{
+					stringvalidator.ConflictsWith(path.MatchRoot("token")),
+					stringvalidator.AlsoRequires(path.MatchRoot("token_wo_version")),
+				},
+			},
+			"token_wo_version": schema.StringAttribute{
+				Description: "A value you change to make the provider send `token_wo` again, for example a rotation date or a " +
+					"version label. Required with `token_wo`.",
+				Optional: true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+					stringvalidator.AlsoRequires(path.MatchRoot("token_wo")),
+				},
 			},
 			"last_synced_at": schema.StringAttribute{
 				Description: "The timestamp of the last successful SCIM synchronization.",
@@ -129,9 +160,20 @@ func (r *scimServiceProviderResource) Create(ctx context.Context, req resource.C
 		return
 	}
 
+	// A write-only value exists only in the configuration, never in the plan.
+	tokenWO, diags := r.configuredTokenWO(ctx, req.Config)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	token := plan.Token.ValueString()
+	if tokenWO != nil {
+		token = *tokenWO
+	}
+
 	createReq := &client.ScimServiceProviderCreateRequest{
 		Endpoint:     plan.Endpoint.ValueString(),
-		Token:        plan.Token.ValueString(),
+		Token:        token,
 		OidcClientID: plan.ClientID.ValueString(),
 	}
 
@@ -214,9 +256,37 @@ func (r *scimServiceProviderResource) Update(ctx context.Context, req resource.U
 		return
 	}
 
+	tokenWO, diags := r.configuredTokenWO(ctx, req.Config)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// PUT replaces the token: Pocket ID stores an omitted token as "" and
+	// clears the one it held. With the write-only variant the plan carries no
+	// token, so an update that does not send the value again must send back
+	// the token the server holds, or it would erase it.
+	token := plan.Token.ValueString()
+	if tokenWO != nil {
+		if plan.TokenWOVer.Equal(state.TokenWOVer) {
+			current, err := r.client.GetClientScimServiceProvider(ctx, plan.ClientID.ValueString())
+			if err != nil {
+				resp.Diagnostics.AddError(
+					"Error reading SCIM service provider before update",
+					"The update would replace the bearer token Pocket ID holds, which Terraform does not know "+
+						"(token_wo is write-only), so it must read it first. The read failed and nothing was changed: "+err.Error(),
+				)
+				return
+			}
+			token = current.Token
+		} else {
+			token = *tokenWO
+		}
+	}
+
 	updateReq := &client.ScimServiceProviderCreateRequest{
 		Endpoint:     plan.Endpoint.ValueString(),
-		Token:        plan.Token.ValueString(),
+		Token:        token,
 		OidcClientID: plan.ClientID.ValueString(),
 	}
 
@@ -277,6 +347,19 @@ func (r *scimServiceProviderResource) ImportState(ctx context.Context, req resou
 	resource.ImportStatePassthroughID(ctx, path.Root("client_id"), req, resp)
 }
 
+// configuredTokenWO returns the write-only token from the configuration, or
+// nil when the configuration does not use it. The value is only ever passed to
+// the API request: it is never put in a model, a log field or a diagnostic.
+func (r *scimServiceProviderResource) configuredTokenWO(ctx context.Context, config tfsdk.Config) (*string, diag.Diagnostics) {
+	var value types.String
+	diags := config.GetAttribute(ctx, path.Root("token_wo"), &value)
+	if diags.HasError() || value.IsNull() || value.IsUnknown() {
+		return nil, diags
+	}
+	token := value.ValueString()
+	return &token, diags
+}
+
 // scimTokenState returns what state records for the token, given what the
 // state held before and what the server returns. Pocket ID always returns the
 // token field (decrypted), and "" means no token is configured, which it
@@ -308,7 +391,14 @@ func (r *scimServiceProviderResource) mapToState(model *scimServiceProviderResou
 		model.ClientID = types.StringValue(provider.OidcClient.ID)
 	}
 
-	model.Token = scimTokenState(model.Token, provider.Token)
+	// With the write-only variant the state never holds the token, whatever
+	// the server returns.
+	if model.TokenWOVer.IsNull() || model.TokenWOVer.IsUnknown() {
+		model.Token = scimTokenState(model.Token, provider.Token)
+	} else {
+		model.Token = types.StringNull()
+	}
+	model.TokenWO = types.StringNull()
 
 	if provider.LastSyncedAt != nil {
 		model.LastSyncedAt = types.StringValue(*provider.LastSyncedAt)
