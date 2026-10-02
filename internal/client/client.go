@@ -750,7 +750,8 @@ type OneTimeAccessTokenRequest struct {
 // appConfigVariablesToConfig converts the key/value variable slice returned by
 // the application configuration endpoints into an ApplicationConfig struct.
 // JSON tags also map WebAuthn and CIMD fields; absent older-server keys remain
-// empty instead of inventing security defaults.
+// empty instead of inventing security defaults. A *string field stays nil when
+// its key is absent, so it is omitted from an update to that server.
 func appConfigVariablesToConfig(vars []AppConfigVariable) *ApplicationConfig {
 	values := make(map[string]string, len(vars))
 	for _, v := range vars {
@@ -765,9 +766,16 @@ func appConfigVariablesToConfig(vars []AppConfigVariable) *ApplicationConfig {
 		if key == "" {
 			continue
 		}
-		if value, ok := values[key]; ok {
-			cfgValue.Field(i).SetString(value)
+		value, ok := values[key]
+		if !ok {
+			continue
 		}
+		field := cfgValue.Field(i)
+		if field.Kind() == reflect.Pointer {
+			field.Set(reflect.ValueOf(&value))
+			continue
+		}
+		field.SetString(value)
 	}
 
 	return cfg

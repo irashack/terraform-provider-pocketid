@@ -226,6 +226,15 @@ type ApplicationConfig struct {
 	LdapAttributeGroupName             string `json:"ldapAttributeGroupName"`
 	LdapAdminGroupName                 string `json:"ldapAdminGroupName"`
 	LdapSoftDeleteUsers                string `json:"ldapSoftDeleteUsers"`
+
+	// Settings below are carried through an update unchanged and are not
+	// exposed as attributes. A pointer is nil when the server did not report
+	// the key, so the update omits it instead of sending a value an older
+	// server never had.
+
+	// AutoCreateOIDCClientSecret (Pocket ID 2.17.0+) makes client creation
+	// return a server-generated secret. Required by 2.17's update validator.
+	AutoCreateOIDCClientSecret *string `json:"autoCreateOidcClientSecret,omitempty"`
 }
 
 // AppConfigVariable represents a single key/value entry as returned by the

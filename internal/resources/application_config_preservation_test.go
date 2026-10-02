@@ -23,12 +23,20 @@ func TestApplicationConfigSMTPPreservesSettings(t *testing.T) {
 			current := &client.ApplicationConfig{}
 			value := reflect.ValueOf(current).Elem()
 			for i := 0; i < value.NumField(); i++ {
-				value.Field(i).SetString("existing-" + value.Type().Field(i).Name)
+				existing := "existing-" + value.Type().Field(i).Name
+				if value.Field(i).Kind() == reflect.Pointer {
+					value.Field(i).Set(reflect.ValueOf(&existing))
+					continue
+				}
+				value.Field(i).SetString(existing)
 			}
 			current.WebauthnUserVerification = "required"
 			current.WebauthnAllowSyncedPasskeys = "false"
 			current.WebauthnAuthenticatorAttachment = "cross-platform"
 			current.CIMDURLAllowlist = `["https://trusted.example.invalid/client.json"]`
+			// Not the server default ("true"): it must round-trip, not reset.
+			autoCreate := "false"
+			current.AutoCreateOIDCClientSecret = &autoCreate
 			body, err := json.Marshal(current)
 			require.NoError(t, err)
 			var expected map[string]string
@@ -58,6 +66,11 @@ func TestApplicationConfigSMTPPreservesSettings(t *testing.T) {
 						w.WriteHeader(http.StatusBadRequest)
 						return
 					}
+				}
+				// v2.17 adds autoCreateOidcClientSecret, required and boolean.
+				if value := payload["autoCreateOidcClientSecret"]; value != "true" && value != "false" {
+					w.WriteHeader(http.StatusBadRequest)
+					return
 				}
 				puts++
 				want := make(map[string]string, len(expected))
@@ -99,4 +112,43 @@ func TestApplicationConfigExplicitValues(t *testing.T) {
 	require.Equal(t, "false", cfg.WebauthnAllowSyncedPasskeys)
 	require.Equal(t, "platform", cfg.WebauthnAuthenticatorAttachment)
 	require.Empty(t, cfg.CIMDURLAllowlist, "explicit empty must remain distinct from omitted")
+}
+
+// A server before 2.17.0 does not report autoCreateOidcClientSecret, and the
+// update must not invent it.
+func TestApplicationConfigOmitsUnreportedSettings(t *testing.T) {
+	reported := []client.AppConfigVariable{
+		{Key: "appName", Value: "Fixture"},
+		{Key: "webauthnUserVerification", Value: "preferred"},
+		{Key: "webauthnAllowSyncedPasskeys", Value: "true"},
+		{Key: "webauthnAuthenticatorAttachment", Value: "any"},
+	}
+	puts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			require.NoError(t, json.NewEncoder(w).Encode(reported))
+			return
+		}
+		puts++
+		var payload map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		require.NotContains(t, payload, "autoCreateOidcClientSecret")
+		require.Equal(t, "smtp.example.invalid", payload["smtpHost"])
+		require.NoError(t, json.NewEncoder(w).Encode(reported))
+	}))
+	defer server.Close()
+	c, err := client.NewClient(server.URL, "synthetic-token", false, 30)
+	require.NoError(t, err)
+	r := &applicationConfigResource{client: c}
+	plan := &applicationConfigModel{}
+	pv := reflect.ValueOf(plan).Elem()
+	for i := 0; i < pv.NumField(); i++ {
+		pv.Field(i).Set(reflect.ValueOf(types.StringNull()))
+	}
+	plan.SmtpHost = types.StringValue("smtp.example.invalid")
+	var diags diag.Diagnostics
+	r.applyConfig(context.Background(), plan, &diags)
+	require.False(t, diags.HasError(), "%v", diags)
+	require.Equal(t, 1, puts)
 }

@@ -87,3 +87,47 @@ func TestUpdateApplicationConfig(t *testing.T) {
 	assert.Equal(t, "Updated App", updated.AppName)
 	assert.Equal(t, "smtp.example.com", updated.SmtpHost)
 }
+
+// autoCreateOidcClientSecret (Pocket ID 2.17.0+) is read so that an update can
+// send it back unchanged. It stays nil, and so absent from the update, when the
+// server does not report it.
+func TestApplicationConfigAutoCreateOIDCClientSecret(t *testing.T) {
+	reported := func(value string) []client.AppConfigVariable {
+		return append(appConfigVariables(), client.AppConfigVariable{Key: "autoCreateOidcClientSecret", Type: "bool", Value: value})
+	}
+	falseValue, trueValue := "false", "true"
+	for name, tc := range map[string]struct {
+		reported []client.AppConfigVariable
+		want     *string
+	}{
+		"2.17 reports false": {reported("false"), &falseValue},
+		"2.17 reports true":  {reported("true"), &trueValue},
+		"older server":       {appConfigVariables(), nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var sent map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method == http.MethodPut {
+					assert.NoError(t, json.NewDecoder(r.Body).Decode(&sent))
+				}
+				_ = json.NewEncoder(w).Encode(tc.reported)
+			}))
+			defer server.Close()
+			c, err := client.NewClient(server.URL, "test-token", false, 30)
+			require.NoError(t, err)
+
+			cfg, err := c.GetApplicationConfig()
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, cfg.AutoCreateOIDCClientSecret)
+
+			_, err = c.UpdateApplicationConfig(cfg)
+			require.NoError(t, err)
+			if tc.want == nil {
+				assert.NotContains(t, sent, "autoCreateOidcClientSecret")
+			} else {
+				assert.Equal(t, *tc.want, sent["autoCreateOidcClientSecret"])
+			}
+		})
+	}
+}
