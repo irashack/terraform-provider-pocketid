@@ -89,6 +89,45 @@ func TestUpdateApplicationConfig(t *testing.T) {
 	assert.Equal(t, "smtp.example.com", updated.SmtpHost)
 }
 
+// A key the provider has no field for (a setting a newer Pocket ID adds) is
+// kept from the read and sent back unchanged by the update.
+func TestApplicationConfigUnknownKeysSurviveUpdate(t *testing.T) {
+	reported := append(appConfigVariables(),
+		client.AppConfigVariable{Key: "settingFromTheFuture", Type: "string", Value: "kept"},
+		client.AppConfigVariable{Key: "anotherNewSetting", Type: "bool", Value: "false"},
+	)
+	var sent map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPut {
+			assert.NoError(t, json.NewDecoder(r.Body).Decode(&sent))
+		}
+		_ = json.NewEncoder(w).Encode(reported)
+	}))
+	defer server.Close()
+	c, err := client.NewClient(server.URL, "test-token", false, 30)
+	require.NoError(t, err)
+
+	cfg, err := c.GetApplicationConfig(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"settingFromTheFuture": "kept", "anotherNewSetting": "false"}, cfg.Additional)
+
+	cfg.AppName = "Changed"
+	updated, err := c.UpdateApplicationConfig(context.Background(), cfg)
+	require.NoError(t, err)
+	assert.Equal(t, "kept", sent["settingFromTheFuture"])
+	assert.Equal(t, "false", sent["anotherNewSetting"])
+	assert.Equal(t, "Changed", sent["appName"])
+	assert.Equal(t, "s3cret", sent["smtpPassword"], "known keys are still sent")
+	assert.Equal(t, cfg.Additional, updated.Additional)
+
+	// A named field wins over an Additional entry of the same key.
+	cfg.Additional = map[string]string{"appName": "stale", "settingFromTheFuture": "kept"}
+	_, err = c.UpdateApplicationConfig(context.Background(), cfg)
+	require.NoError(t, err)
+	assert.Equal(t, "Changed", sent["appName"])
+}
+
 // autoCreateOidcClientSecret (Pocket ID 2.17.0+) is read so that an update can
 // send it back unchanged. It stays nil, and so absent from the update, when the
 // server does not report it.

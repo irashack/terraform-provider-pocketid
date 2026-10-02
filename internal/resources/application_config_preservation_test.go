@@ -24,11 +24,12 @@ func TestApplicationConfigSMTPPreservesSettings(t *testing.T) {
 			value := reflect.ValueOf(current).Elem()
 			for i := 0; i < value.NumField(); i++ {
 				existing := "existing-" + value.Type().Field(i).Name
-				if value.Field(i).Kind() == reflect.Pointer {
+				switch value.Field(i).Kind() {
+				case reflect.Pointer:
 					value.Field(i).Set(reflect.ValueOf(&existing))
-					continue
+				case reflect.String:
+					value.Field(i).SetString(existing)
 				}
-				value.Field(i).SetString(existing)
 			}
 			current.WebauthnUserVerification = "required"
 			current.WebauthnAllowSyncedPasskeys = "false"
@@ -112,6 +113,63 @@ func TestApplicationConfigExplicitValues(t *testing.T) {
 	require.Equal(t, "false", cfg.WebauthnAllowSyncedPasskeys)
 	require.Equal(t, "platform", cfg.WebauthnAuthenticatorAttachment)
 	require.Empty(t, cfg.CIMDURLAllowlist, "explicit empty must remain distinct from omitted")
+}
+
+// A server that reports, and requires, a setting this provider has never heard
+// of (as 2.17.0 did with autoCreateOidcClientSecret) still accepts the
+// provider's update, and the setting keeps its value. The fake server's
+// key universe is its own, not derived from the provider's model.
+func TestApplicationConfigUpdateKeepsUnknownServerKeys(t *testing.T) {
+	const unknownKey, unknownValue = "aSettingNoProviderKnows", "custom-value"
+	reported := map[string]string{
+		"appName":                         "Fixture",
+		"webauthnUserVerification":        "preferred",
+		"webauthnAllowSyncedPasskeys":     "true",
+		"webauthnAuthenticatorAttachment": "any",
+		unknownKey:                        unknownValue,
+	}
+	vars := func(config map[string]string) []client.AppConfigVariable {
+		result := make([]client.AppConfigVariable, 0, len(config))
+		for key, value := range config {
+			result = append(result, client.AppConfigVariable{Key: key, Value: value})
+		}
+		return result
+	}
+	puts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			require.NoError(t, json.NewEncoder(w).Encode(vars(reported)))
+			return
+		}
+		var payload map[string]string
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		// Like a newer Pocket ID's binding:"required": a missing or empty
+		// value is refused with HTTP 400.
+		if payload[unknownKey] == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"aSettingNoProviderKnows is required","code":"validation_error"}`))
+			return
+		}
+		puts++
+		require.Equal(t, unknownValue, payload[unknownKey], "the unknown setting must be sent back unchanged")
+		require.NoError(t, json.NewEncoder(w).Encode(vars(payload)))
+	}))
+	defer server.Close()
+	c, err := client.NewClient(server.URL, "synthetic-token", false, 30)
+	require.NoError(t, err)
+	r := &applicationConfigResource{client: c}
+	plan := &applicationConfigModel{}
+	pv := reflect.ValueOf(plan).Elem()
+	for i := 0; i < pv.NumField(); i++ {
+		pv.Field(i).Set(reflect.ValueOf(types.StringNull()))
+	}
+	plan.AppName = types.StringValue("Renamed")
+	var diags diag.Diagnostics
+	r.applyConfig(context.Background(), plan, &diags)
+	require.False(t, diags.HasError(), "%v", diags)
+	require.Equal(t, 1, puts)
+	require.Equal(t, "Renamed", plan.AppName.ValueString())
 }
 
 // A server before 2.17.0 does not report autoCreateOidcClientSecret, and the
