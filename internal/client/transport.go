@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -158,40 +160,28 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body in
 	}
 }
 
-// isRetryableError determines if an error is retryable
+// isRetryableError reports whether a failed GET may be sent again: a rate
+// limit, a 500/502/503/504, or a connection that was refused, reset, timed
+// out at the network level or could not resolve the host. A cancelled
+// request, an expired deadline (including the HTTP client's own timeout) and
+// a response that was not valid HTTP are not retried.
 func isRetryableError(err error) bool {
-	if err == nil {
+	var rateLimited *RateLimitError
+	if errors.As(err, &rateLimited) {
+		return true
+	}
+	var status *HTTPError
+	if errors.As(err, &status) {
+		switch status.StatusCode {
+		case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+			return true
+		}
 		return false
 	}
-
-	errStr := err.Error()
-
-	// Network errors are retryable
-	if strings.Contains(errStr, "connection refused") ||
-		strings.Contains(errStr, "connection reset") ||
-		strings.Contains(errStr, "no such host") ||
-		strings.Contains(errStr, "timeout") {
-		return true
+	var transport *TransportError
+	if errors.As(err, &transport) {
+		return transport.retryable
 	}
-
-	// 5xx errors are retryable
-	if strings.Contains(errStr, "HTTP 502") ||
-		strings.Contains(errStr, "HTTP 503") ||
-		strings.Contains(errStr, "HTTP 504") ||
-		strings.Contains(errStr, "HTTP 500") {
-		return true
-	}
-
-	// 429 Too Many Requests is retryable (rate limiting)
-	if strings.Contains(errStr, "HTTP 429") {
-		return true
-	}
-
-	// Check if it's a RateLimitError
-	if _, ok := err.(*RateLimitError); ok {
-		return true
-	}
-
 	return false
 }
 
@@ -230,19 +220,17 @@ func (c *Client) send(ctx context.Context, method, endpoint, contentType string,
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		// The transport's error can quote what the server sent (a malformed
+		// status line or header), so only a fixed description of it is
+		// logged or returned.
+		failure := newTransportError(method, endpoint, "no response", err)
 		tflog.Error(ctx, "HTTP Request Failed", map[string]interface{}{
-			"error": err.Error(),
+			"error": failure.Error(),
 			"url":   url,
 		})
-		return nil, fmt.Errorf("error making request: %w", err)
+		return nil, failure
 	}
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			tflog.Warn(ctx, "Failed to close response body", map[string]interface{}{
-				"error": err.Error(),
-			})
-		}
-	}()
+	defer func() { _ = resp.Body.Close() }()
 
 	ok := resp.StatusCode >= 200 && resp.StatusCode < 300
 	limit := int64(maxErrorBodyBytes)
@@ -251,10 +239,12 @@ func (c *Client) send(ctx context.Context, method, endpoint, contentType string,
 	}
 	respBody, readErr := readBounded(resp, limit)
 
-	// Log response details
+	// Log response details. resp.Status would include the server's own
+	// reason phrase, which can be anything (even the key it received), so
+	// only the code and its standard text are logged.
 	tflog.Debug(ctx, "Pocket-ID API Response", map[string]interface{}{
 		"status_code": resp.StatusCode,
-		"status":      resp.Status,
+		"status":      http.StatusText(resp.StatusCode),
 		"url":         url,
 	})
 
@@ -334,7 +324,8 @@ func readBounded(resp *http.Response, limit int64) ([]byte, error) {
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
-		return nil, fmt.Errorf("error reading response body: %w", err)
+		reason, cause, _ := classifyTransportError(err)
+		return nil, &readError{statusCode: resp.StatusCode, reason: reason, cause: cause}
 	}
 	if int64(len(body)) > limit {
 		return nil, fmt.Errorf("HTTP %d: %w (limit %d bytes); body discarded", resp.StatusCode, errResponseTooLarge, limit)
@@ -377,4 +368,81 @@ func parseRetryAfter(value string, now time.Time) time.Duration {
 		}
 	}
 	return 0
+}
+
+// TransportError is a request that got no usable HTTP response: the
+// connection failed or timed out, the request was cancelled, or what came back
+// was not valid HTTP. Its message is built from a fixed set of descriptions,
+// never from the underlying error, whose text can quote what the server sent
+// (Go's HTTP client includes a malformed status line or header in it).
+// Unwrap gives only a classification: context.Canceled,
+// context.DeadlineExceeded or a connection errno, so errors.Is keeps working.
+type TransportError struct {
+	Method   string
+	Endpoint string
+	// Reason is the fixed description of what went wrong.
+	Reason    string
+	cause     error
+	retryable bool
+}
+
+func (e *TransportError) Error() string {
+	return fmt.Sprintf("%s %s: %s", e.Method, e.Endpoint, e.Reason)
+}
+
+// Unwrap returns the classification, never the original error.
+func (e *TransportError) Unwrap() error { return e.cause }
+
+func newTransportError(method, endpoint, stage string, err error) *TransportError {
+	reason, cause, retryable := classifyTransportError(err)
+	return &TransportError{Method: method, Endpoint: endpoint, Reason: stage + ": " + reason, cause: cause, retryable: retryable}
+}
+
+// readError is a response body that could not be read in full. Like
+// TransportError it carries only a fixed description.
+type readError struct {
+	statusCode int
+	reason     string
+	cause      error
+}
+
+func (e *readError) Error() string {
+	return fmt.Sprintf("HTTP %d: reading the response body failed: %s", e.statusCode, e.reason)
+}
+
+func (e *readError) Unwrap() error { return e.cause }
+
+// classifyTransportError maps a client or connection error to a fixed
+// description, the sentinel it may wrap, and whether a GET may be retried
+// after it. Context errors come first, so cancellation and deadlines keep
+// their meaning (the HTTP client's own timeout is a deadline).
+func classifyTransportError(err error) (string, error, bool) {
+	var dnsErr *net.DNSError
+	var netErr net.Error
+	var certErr *tls.CertificateVerificationError
+	var recordErr tls.RecordHeaderError
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "request cancelled", context.Canceled, false
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timed out (context deadline exceeded)", context.DeadlineExceeded, false
+	case errors.As(err, &dnsErr) && dnsErr.IsNotFound:
+		return "no such host", nil, true
+	case errors.As(err, &netErr) && netErr.Timeout():
+		return "network timeout", nil, true
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "connection refused", syscall.ECONNREFUSED, true
+	case errors.Is(err, syscall.ECONNRESET):
+		return "connection reset by peer", syscall.ECONNRESET, true
+	case errors.As(err, &certErr):
+		return "TLS certificate verification failed", nil, false
+	case errors.As(err, &recordErr):
+		return "TLS handshake failed (the server did not answer with TLS)", nil, false
+	case errors.As(err, &dnsErr):
+		return "host name lookup failed", nil, false
+	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return "the connection closed before a complete response", io.ErrUnexpectedEOF, false
+	default:
+		return "no valid HTTP response (malformed response or protocol error)", nil, false
+	}
 }

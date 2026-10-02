@@ -29,4 +29,6 @@
   an error saying a token may have been created, instead of storing an empty
   token.
 - Responses larger than 16 MiB (64 KiB for error responses) are refused
-  without being read in full. Error messages never include response content.
+  without being read in full. Error messages and the provider's logs never
+  include response content: not the body, not the server's reason phrase, and
+  not the text of a malformed response (a fixed description is given instead).
