@@ -3,6 +3,7 @@ package client_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -83,4 +84,51 @@ func TestClient_CreateOneTimeAccessToken_Error(t *testing.T) {
 	_, err = c.CreateOneTimeAccessToken(context.Background(), "11111111-1111-4111-8111-111111111111", &client.OneTimeAccessTokenRequest{TTL: "1s"})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "HTTP 400")
+}
+
+// A success response without a token cannot be recorded as a created token,
+// and the POST is not sent again.
+func TestClient_CreateOneTimeAccessToken_NoTokenIsUncertain(t *testing.T) {
+	for name, body := range map[string]string{
+		"empty object": `{}`,
+		"null":         `null`,
+		"empty token":  `{"token":""}`,
+		"empty body":   ``,
+		"not JSON":     `<html>ok</html>`,
+		"wrong type":   `{"token":123}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			posts := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				posts++
+				w.WriteHeader(http.StatusCreated)
+				_, _ = fmt.Fprint(w, body)
+			}))
+			defer server.Close()
+			c, err := client.NewClient(server.URL, "test-token", false, 30)
+			require.NoError(t, err)
+
+			token, err := c.CreateOneTimeAccessToken(context.Background(), "11111111-1111-4111-8111-111111111111", &client.OneTimeAccessTokenRequest{TTL: "1h"})
+			require.Error(t, err)
+			assert.ErrorIs(t, err, client.ErrResultUnread)
+			assert.Contains(t, err.Error(), "may have been created")
+			assert.Nil(t, token)
+			assert.Equal(t, 1, posts, "the POST is never repeated")
+		})
+	}
+}
+
+func TestClient_CreateOneTimeAccessToken_ServerErrorNotRetried(t *testing.T) {
+	posts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		posts++
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	c, err := client.NewClient(server.URL, "test-token", false, 30)
+	require.NoError(t, err)
+
+	_, err = c.CreateOneTimeAccessToken(context.Background(), "11111111-1111-4111-8111-111111111111", &client.OneTimeAccessTokenRequest{TTL: "1h"})
+	require.Error(t, err)
+	assert.Equal(t, 1, posts)
 }

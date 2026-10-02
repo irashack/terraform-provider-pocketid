@@ -20,7 +20,9 @@ type OneTimeAccessTokenRequest struct {
 	TTL string `json:"ttl"`
 }
 
-// CreateOneTimeAccessToken creates a new one-time access token for a user
+// CreateOneTimeAccessToken creates a one-time access token for a user. The
+// POST is never retried. A success response without a token is an error
+// wrapping ErrResultUnread: the creation's outcome is uncertain.
 func (c *Client) CreateOneTimeAccessToken(ctx context.Context, userID string, req *OneTimeAccessTokenRequest) (*OneTimeAccessToken, error) {
 	tflog.Debug(ctx, "CreateOneTimeAccessToken request", map[string]interface{}{
 		"user_id": userID,
@@ -36,9 +38,11 @@ func (c *Client) CreateOneTimeAccessToken(ctx context.Context, userID string, re
 		return nil, err
 	}
 
+	// The POST succeeded, so a token may exist from here on; it is never sent
+	// again. Pocket ID answers {"token": "..."} (onetimeaccess handler).
 	var token OneTimeAccessToken
-	if err := json.Unmarshal(body, &token); err != nil {
-		return nil, fmt.Errorf("error unmarshaling response: %w", err)
+	if err := json.Unmarshal(body, &token); err != nil || token.Token == "" {
+		return nil, fmt.Errorf("one-time access token for user %s: %w: the response held no token, so a token may have been created that stays valid until it expires; no second request was sent", userID, ErrResultUnread)
 	}
 
 	return &token, nil
