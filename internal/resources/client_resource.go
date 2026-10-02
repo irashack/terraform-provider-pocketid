@@ -410,14 +410,14 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 	// Generate client secret for non-public clients
 	if !plan.IsPublic.ValueBool() {
 		tflog.Debug(ctx, "Generating client secret for non-public client")
-		secret, err := r.client.GenerateClientSecret(ctx, clientResp.ID)
+		secret, err := r.client.GenerateClientSecret(ctx, clientResp.ID, nil)
 		if err != nil {
 			plan.ClientSecret = types.StringNull()
 			r.failedCreate(ctx, &plan, err, resp)
 
 			return
 		}
-		plan.ClientSecret = types.StringValue(secret)
+		plan.ClientSecret = types.StringValue(secret.Value)
 	} else {
 		plan.ClientSecret = types.StringNull()
 	}

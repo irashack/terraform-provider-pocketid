@@ -75,7 +75,7 @@ func TestClient_RefusesUnsafeIdentifiers(t *testing.T) {
 		},
 		"DeleteClient":                  func(id string) error { return c.DeleteClient(ctx, id) },
 		"UpdateClientAllowedUserGroups": func(id string) error { _, err := c.UpdateClientAllowedUserGroups(ctx, id, nil); return err },
-		"GenerateClientSecret":          func(id string) error { _, err := c.GenerateClientSecret(ctx, id); return err },
+		"GenerateClientSecret":          func(id string) error { _, err := c.GenerateClientSecret(ctx, id, nil); return err },
 		"ListClientSecrets":             func(id string) error { _, err := c.ListClientSecrets(ctx, id); return err },
 		"DeleteClientSecret client":     func(id string) error { return c.DeleteClientSecret(ctx, id, validUUID) },
 		"DeleteClientSecret secret":     func(id string) error { return c.DeleteClientSecret(ctx, "client", id) },

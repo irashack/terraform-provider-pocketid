@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -19,6 +20,7 @@ import (
 
 func TestClient_GenerateClientSecret(t *testing.T) {
 	expectedSecret := "new-client-secret-123"
+	const expectedSecretID = "99999999-9999-4999-8999-999999999999"
 
 	tests := []struct {
 		currentVersion   string
@@ -71,7 +73,14 @@ func TestClient_GenerateClientSecret(t *testing.T) {
 				case expectedCreateUrl:
 					assert.Equal(t, "POST", r.Method)
 					w.Header().Set("Content-Type", "application/json")
-					if err := json.NewEncoder(w).Encode(map[string]string{"secret": expectedSecret}); err != nil {
+					response := map[string]string{"secret": expectedSecret}
+					if tt.expectedEndpoint == "/secrets" {
+						// OidcClientSecretCreatedDto: the metadata and the value.
+						response["id"] = expectedSecretID
+						response["prefix"] = expectedSecret[:4]
+						response["createdAt"] = "2026-08-01T00:00:00Z"
+					}
+					if err := json.NewEncoder(w).Encode(response); err != nil {
 						t.Fatalf("Failed to encode response: %v", err)
 					}
 				default:
@@ -83,9 +92,15 @@ func TestClient_GenerateClientSecret(t *testing.T) {
 			c, err := client.NewClient(server.URL, "test-token", false, 30)
 			require.NoError(t, err)
 
-			secret, err := c.GenerateClientSecret(context.Background(), "test-client-id")
-			assert.NoError(t, err)
-			assert.Equal(t, expectedSecret, secret)
+			secret, err := c.GenerateClientSecret(context.Background(), "test-client-id", nil)
+			require.NoError(t, err)
+			assert.Equal(t, expectedSecret, secret.Value)
+			if tt.expectedEndpoint == "/secrets" {
+				assert.Equal(t, expectedSecretID, secret.ID)
+				assert.Equal(t, "new-", secret.Prefix)
+			} else {
+				assert.Empty(t, secret.ID, "the singular endpoint names no secret")
+			}
 		})
 	}
 
@@ -113,9 +128,10 @@ func TestClient_GenerateClientSecret(t *testing.T) {
 		c, err := client.NewClient(server.URL, "test-token", false, 30)
 		require.NoError(t, err)
 
-		secret, err := c.GenerateClientSecret(context.Background(), "test-client-id")
-		assert.NoError(t, err)
-		assert.Equal(t, expectedSecret, secret)
+		secret, err := c.GenerateClientSecret(context.Background(), "test-client-id", nil)
+		require.NoError(t, err)
+		assert.Equal(t, expectedSecret, secret.Value)
+		assert.Empty(t, secret.ID)
 	})
 }
 
@@ -136,7 +152,7 @@ func TestClient_GenerateClientSecret_UnmarshalError(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	_, err = c.GenerateClientSecret(context.Background(), "test-id")
+	_, err = c.GenerateClientSecret(context.Background(), "test-id", nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "error unmarshaling secret response")
 }
@@ -161,9 +177,10 @@ func TestIssue96PocketID214(t *testing.T) {
 	defer server.Close()
 	c, err := client.NewClient(server.URL, "synthetic-token", false, 2)
 	require.NoError(t, err)
-	secret, err := c.GenerateClientSecret(context.Background(), "fixture")
+	secret, err := c.GenerateClientSecret(context.Background(), "fixture", nil)
 	require.NoError(t, err)
-	require.True(t, secret == "synthetic-secret")
+	require.True(t, secret.Value == "synthetic-secret")
+	require.Equal(t, "99999999-9999-4999-8999-999999999999", secret.ID)
 	require.Equal(t, int32(1), posts.Load())
 }
 
@@ -191,7 +208,7 @@ func TestSecretVersionFailuresDoNotPost(t *testing.T) {
 			}))
 			defer s.Close()
 			c, _ := client.NewClient(s.URL, "synthetic-token", false, 1)
-			_, err := c.GenerateClientSecret(context.Background(), "fixture")
+			_, err := c.GenerateClientSecret(context.Background(), "fixture", nil)
 			require.Error(t, err)
 			require.NotContains(t, err.Error(), "synthetic-token")
 			require.Zero(t, posts.Load())
@@ -228,7 +245,7 @@ func TestSecretMutationNeverRetries(t *testing.T) {
 			}))
 			defer s.Close()
 			c, _ := client.NewClient(s.URL, "synthetic-token", false, 1)
-			_, err := c.GenerateClientSecret(context.Background(), "fixture")
+			_, err := c.GenerateClientSecret(context.Background(), "fixture", nil)
 			require.Error(t, err)
 			require.NotContains(t, err.Error(), "synthetic-secret")
 			require.Equal(t, int32(1), posts.Load())
@@ -240,7 +257,7 @@ func TestVersionTransportFailureDoesNotPost(t *testing.T) {
 	s := httptest.NewServer(http.NotFoundHandler())
 	s.Close()
 	c, _ := client.NewClient(s.URL, "synthetic-token", false, 1)
-	_, err := c.GenerateClientSecret(context.Background(), "fixture")
+	_, err := c.GenerateClientSecret(context.Background(), "fixture", nil)
 	require.Error(t, err)
 }
 
@@ -289,7 +306,9 @@ func TestClient_ListClientSecrets(t *testing.T) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/api/oidc/clients/c1/secrets", r.URL.EscapedPath())
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `[{"id":"s1","prefix":"abcd","isActive":true},{"id":"s2","prefix":"efgh","isActive":false}]`)
+		// OidcClientSecretDto as v2.14.0 to v2.17.0 serialize it.
+		_, _ = fmt.Fprint(w, `[{"id":"s1","prefix":"abcd","createdAt":"2026-08-01T00:00:00Z","expiresAt":null,"isActive":true},`+
+			`{"id":"s2","prefix":"","createdAt":"2026-07-01T12:30:00.123456789+02:00","expiresAt":"2026-09-01T00:00:00Z","isActive":false}]`)
 	}))
 	defer server.Close()
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
@@ -297,7 +316,14 @@ func TestClient_ListClientSecrets(t *testing.T) {
 
 	secrets, err := c.ListClientSecrets(context.Background(), "c1")
 	require.NoError(t, err)
-	assert.Equal(t, []client.ClientSecretMetadata{{ID: "s1", IsActive: true}, {ID: "s2"}}, secrets)
+	expired := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	require.Len(t, secrets, 2)
+	assert.Equal(t, client.ClientSecretMetadata{ID: "s1", Prefix: "abcd", CreatedAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC), IsActive: true}, secrets[0])
+	assert.Equal(t, "s2", secrets[1].ID)
+	assert.Empty(t, secrets[1].Prefix, "a migrated secret has no prefix")
+	assert.True(t, secrets[1].CreatedAt.Equal(time.Date(2026, 7, 1, 10, 30, 0, 123456789, time.UTC)))
+	assert.Equal(t, &expired, secrets[1].ExpiresAt)
+	assert.False(t, secrets[1].IsActive)
 
 	t.Run("malformed", func(t *testing.T) {
 		bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -308,5 +334,93 @@ func TestClient_ListClientSecrets(t *testing.T) {
 		require.NoError(t, err)
 		_, err = c.ListClientSecrets(context.Background(), "c1")
 		assert.Error(t, err)
+	})
+}
+
+func TestClient_GenerateClientSecret_Options(t *testing.T) {
+	const secretID = "99999999-9999-4999-8999-999999999999"
+	const value = "caller-chosen-value-0123"
+	expires := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+
+	type seen struct {
+		posts int
+		gets  int
+		body  string
+	}
+	start := func(t *testing.T, version, response string) (*client.Client, *seen) {
+		got := &seen{}
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if r.Method == "GET" {
+				got.gets++
+				_, _ = fmt.Fprintf(w, `{"currentVersion":%q}`, version)
+				return
+			}
+			got.posts++
+			body, _ := io.ReadAll(r.Body)
+			got.body = string(body)
+			w.WriteHeader(http.StatusCreated)
+			_, _ = fmt.Fprint(w, response)
+		}))
+		t.Cleanup(server.Close)
+		c, err := client.NewClient(server.URL, "test-token", false, 30)
+		require.NoError(t, err)
+		return c, got
+	}
+	created := `{"id":"` + secretID + `","prefix":"call","createdAt":"2026-10-02T10:00:00Z","expiresAt":"2030-01-02T03:04:05Z","isActive":true,"secret":"` + value + `"}`
+
+	t.Run("value and expiry are sent", func(t *testing.T) {
+		c, got := start(t, "2.17.0", created)
+		secret, err := c.GenerateClientSecret(context.Background(), "c1", &client.ClientSecretOptions{Value: value, ExpiresAt: &expires})
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"secret":"`+value+`","expiresAt":"2030-01-02T03:04:05Z"}`, got.body)
+		assert.Equal(t, value, secret.Value)
+		assert.Equal(t, client.ClientSecretMetadata{
+			ID: secretID, Prefix: "call", CreatedAt: time.Date(2026, 10, 2, 10, 0, 0, 0, time.UTC), ExpiresAt: &expires, IsActive: true,
+		}, secret.ClientSecretMetadata)
+	})
+	t.Run("no options send no body", func(t *testing.T) {
+		for _, opts := range []*client.ClientSecretOptions{nil, {}} {
+			c, got := start(t, "2.17.0", created)
+			_, err := c.GenerateClientSecret(context.Background(), "c1", opts)
+			require.NoError(t, err)
+			assert.Empty(t, got.body)
+		}
+	})
+	t.Run("options refused before 2.14", func(t *testing.T) {
+		c, got := start(t, "2.13.0", `{"secret":"x"}`)
+		_, err := c.GenerateClientSecret(context.Background(), "c1", &client.ClientSecretOptions{ExpiresAt: &expires})
+		require.ErrorContains(t, err, "requires Pocket ID 2.14.0")
+		assert.Zero(t, got.posts)
+	})
+	t.Run("value checked before anything is sent", func(t *testing.T) {
+		for _, bad := range []string{"short", "sixteen-chars-é!", "sixteen\tchars-xx\n"} {
+			c, got := start(t, "2.17.0", created)
+			_, err := c.GenerateClientSecret(context.Background(), "c1", &client.ClientSecretOptions{Value: bad})
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), bad)
+			assert.Zero(t, got.posts+got.gets)
+		}
+	})
+	t.Run("unusable ID is an uncertain result", func(t *testing.T) {
+		for _, response := range []string{`{"secret":"` + value + `"}`, `{"id":"../x","secret":"` + value + `"}`} {
+			c, got := start(t, "2.17.0", response)
+			secret, err := c.GenerateClientSecret(context.Background(), "c1", nil)
+			require.ErrorContains(t, err, "result uncertain")
+			assert.NotContains(t, err.Error(), value)
+			assert.Nil(t, secret)
+			assert.Equal(t, 1, got.posts)
+		}
+	})
+	t.Run("value never printed or encoded", func(t *testing.T) {
+		c, _ := start(t, "2.17.0", created)
+		secret, err := c.GenerateClientSecret(context.Background(), "c1", nil)
+		require.NoError(t, err)
+		encoded, err := json.Marshal(secret)
+		require.NoError(t, err)
+		for _, text := range []string{fmt.Sprint(secret), fmt.Sprintf("%v %+v %#v %s", *secret, *secret, *secret, *secret), string(encoded)} {
+			assert.NotContains(t, text, value)
+		}
+		assert.Contains(t, fmt.Sprint(secret), secretID)
 	})
 }

@@ -254,7 +254,7 @@ func TestClientCreateRevokesServerCreatedSecret(t *testing.T) {
 					secretPosts++
 					order = append(order, "generate")
 					w.WriteHeader(http.StatusCreated)
-					_, _ = fmt.Fprint(w, `{"id":"managed-secret","secret":"synthetic-managed-secret"}`)
+					_, _ = fmt.Fprint(w, `{"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","secret":"synthetic-managed-secret"}`)
 				case "DELETE /api/oidc/clients/new-fixture":
 					deletes++
 					if tc.cleanupStatus != 0 {
@@ -359,7 +359,7 @@ func TestClientCreateGroupFailureCleanupUnconfirmed(t *testing.T) {
 					_, _ = fmt.Fprint(w, `{"id":"new-fixture","name":"fixture","callbackURLs":["https://example.invalid/callback"],"pkceEnabled":true}`)
 				case "POST /api/oidc/clients/new-fixture/secrets":
 					w.WriteHeader(http.StatusCreated)
-					_, _ = fmt.Fprint(w, `{"id":"managed-secret","secret":"synthetic-managed-secret"}`)
+					_, _ = fmt.Fprint(w, `{"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","secret":"synthetic-managed-secret"}`)
 				case "PUT /api/oidc/clients/new-fixture/allowed-user-groups":
 					w.WriteHeader(http.StatusBadRequest)
 				case "DELETE /api/oidc/clients/new-fixture":
