@@ -1,0 +1,32 @@
+- **Breaking (Go importers only):** the Go module is now
+  `github.com/irashack/terraform-provider-pocketid`. Terraform and OpenTofu
+  configurations are unaffected; the registry address
+  `registry.terraform.io/irashack/pocketid` is unchanged.
+- The `pocketid_clients` and `pocketid_groups` data sources, and the
+  `pocketid_group` data source's lookup, now see every client and group.
+  Before, they saw only the first 20 the server returned.
+- Removing `allowed_user_groups` from a `pocketid_client` now applies. Before,
+  the update failed with HTTP 400 after the client itself had been updated.
+- Cancelling a run (Ctrl-C, or Terraform stopping the provider) now stops the
+  provider's requests at once. If a create is interrupted after Pocket ID
+  created the object, the object's ID stays in state and nothing is cleaned up
+  automatically; inspect it before applying again.
+- Reads that fail with a rate limit or a server error are retried for at most
+  30 seconds in total, never waiting more than 10 seconds at a time. If the
+  server asks the provider to wait longer, the error is returned at once
+  instead of the provider waiting.
+- **Breaking:** IDs of users, groups, client secrets and SCIM service
+  providers must be UUIDs, and OIDC client IDs must follow Pocket ID's rule
+  (2 to 128 letters, digits, `.`, `_` or `-`). Any other value, for example a
+  mistyped import ID, is refused with an error before a request is sent.
+  Clients created from a Client ID Metadata Document (whose ID is a URL)
+  cannot be looked up by ID.
+- Lists of users, groups and clients are read in creation order. If the list
+  changes while it is being read (objects created or deleted at the same
+  time), it is read once more and then reported as an error instead of
+  returning a list with gaps.
+- A one-time access token response that contains no token is now reported as
+  an error saying a token may have been created, instead of storing an empty
+  token.
+- Responses larger than 16 MiB (64 KiB for error responses) are refused
+  without being read in full. Error messages never include response content.
