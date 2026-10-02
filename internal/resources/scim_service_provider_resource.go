@@ -84,9 +84,11 @@ func (r *scimServiceProviderResource) Schema(_ context.Context, _ resource.Schem
 				},
 			},
 			"token": schema.StringAttribute{
-				Description: "The bearer token used to authenticate against the SCIM endpoint. This value is sensitive.",
-				Optional:    true,
-				Sensitive:   true,
+				Description: "The bearer token used to authenticate against the SCIM endpoint. This value is sensitive. " +
+					"The configuration is authoritative: leaving it out (or setting it to an empty string) configures no token, " +
+					"and a token that was set or cleared outside Terraform shows as a change on the next plan.",
+				Optional:  true,
+				Sensitive: true,
 			},
 			"last_synced_at": schema.StringAttribute{
 				Description: "The timestamp of the last successful SCIM synchronization.",
@@ -169,6 +171,20 @@ func (r *scimServiceProviderResource) Read(ctx context.Context, req resource.Rea
 
 	providerResp, err := r.client.GetClientScimServiceProvider(ctx, state.ClientID.ValueString())
 	if err != nil {
+		// Only Pocket ID's own "SCIM service provider not found" removes the
+		// resource from state. It also answers for a client that no longer
+		// exists, which takes its SCIM configuration with it. Any other
+		// failure, including a 404 from a proxy or an unknown route, is an
+		// error: guessing "gone" would plan a re-creation of something that may
+		// still exist.
+		if client.IsNotFound(err, client.ResourceSCIMServiceProvider) {
+			tflog.Warn(ctx, "SCIM service provider no longer exists, removing it from state", map[string]any{
+				"id":        state.ID.ValueString(),
+				"client_id": state.ClientID.ValueString(),
+			})
+			resp.State.RemoveResource(ctx)
+			return
+		}
 		resp.Diagnostics.AddError(
 			"Error reading SCIM service provider",
 			"Could not read SCIM service provider for client ID "+state.ClientID.ValueString()+": "+err.Error(),
@@ -240,6 +256,14 @@ func (r *scimServiceProviderResource) Delete(ctx context.Context, req resource.D
 
 	err := r.client.DeleteScimServiceProvider(ctx, state.ID.ValueString())
 	if err != nil {
+		// Already gone is the state Delete is after, but only Pocket ID's own
+		// "SCIM service provider not found" proves it.
+		if client.IsNotFound(err, client.ResourceSCIMServiceProvider) {
+			tflog.Debug(ctx, "SCIM service provider was already deleted", map[string]any{
+				"id": state.ID.ValueString(),
+			})
+			return
+		}
 		resp.Diagnostics.AddError(
 			"Error deleting SCIM service provider",
 			"Could not delete SCIM service provider, unexpected error: "+err.Error(),
@@ -253,9 +277,29 @@ func (r *scimServiceProviderResource) ImportState(ctx context.Context, req resou
 	resource.ImportStatePassthroughID(ctx, path.Root("client_id"), req, resp)
 }
 
-// mapToState maps an API response onto the resource model. The token is only
-// overwritten when the API returns a non-empty value so a configured token is
-// preserved.
+// scimTokenState returns what state records for the token, given what the
+// state held before and what the server returns. Pocket ID always returns the
+// token field (decrypted), and "" means no token is configured, which it
+// stores identically for an omitted token and an explicitly empty one.
+//
+//   - A non-empty server token is recorded as is, so a token that was changed or
+//     set outside Terraform shows against the configuration.
+//   - An empty server token leaves a null or empty prior value alone, so an
+//     unconfigured token and an explicitly empty one both plan empty.
+//   - An empty server token over a non-empty prior value means the token was
+//     cleared outside Terraform: the empty value is recorded so the plan shows
+//     the change instead of keeping the obsolete credential.
+func scimTokenState(prior types.String, server string) types.String {
+	if server != "" {
+		return types.StringValue(server)
+	}
+	if prior.IsNull() || prior.IsUnknown() {
+		return types.StringNull()
+	}
+	return types.StringValue("")
+}
+
+// mapToState maps an API response onto the resource model.
 func (r *scimServiceProviderResource) mapToState(model *scimServiceProviderResourceModel, provider *client.ScimServiceProvider) {
 	model.ID = types.StringValue(provider.ID)
 	model.Endpoint = types.StringValue(provider.Endpoint)
@@ -264,9 +308,7 @@ func (r *scimServiceProviderResource) mapToState(model *scimServiceProviderResou
 		model.ClientID = types.StringValue(provider.OidcClient.ID)
 	}
 
-	if provider.Token != "" {
-		model.Token = types.StringValue(provider.Token)
-	}
+	model.Token = scimTokenState(model.Token, provider.Token)
 
 	if provider.LastSyncedAt != nil {
 		model.LastSyncedAt = types.StringValue(*provider.LastSyncedAt)

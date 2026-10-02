@@ -26,7 +26,8 @@ resource "pocketid_scim_service_provider" "example" {
   token     = var.scim_bearer_token
 }
 
-# The bearer token is sensitive and is read back from the API on refresh.
+# The bearer token is sensitive. It is read back from the API on refresh, so a
+# token that is cleared or changed outside Terraform shows as a change.
 variable "scim_bearer_token" {
   description = "Bearer token used to authenticate against the SCIM endpoint"
   type        = string
@@ -50,7 +51,7 @@ output "scim_service_provider_id" {
 
 ### Optional
 
-- `token` (String, Sensitive) The bearer token used to authenticate against the SCIM endpoint. This value is sensitive.
+- `token` (String, Sensitive) The bearer token used to authenticate against the SCIM endpoint. This value is sensitive. The configuration is authoritative: leaving it out (or setting it to an empty string) configures no token, and a token that was set or cleared outside Terraform shows as a change on the next plan.
 
 ### Read-Only
 
