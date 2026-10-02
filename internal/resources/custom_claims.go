@@ -7,7 +7,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"github.com/Trozz/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/client"
 )
 
 // customClaimsToAPI converts a Terraform map of custom claims into the API's

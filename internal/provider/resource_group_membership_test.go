@@ -13,7 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 
-	"github.com/Trozz/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/client"
 )
 
 // createTestUser creates a user directly through the API, bypassing the

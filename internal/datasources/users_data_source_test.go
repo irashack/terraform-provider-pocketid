@@ -16,8 +16,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/Trozz/terraform-provider-pocketid/internal/client"
-	"github.com/Trozz/terraform-provider-pocketid/internal/datasources"
+	"github.com/irashack/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/datasources"
 )
 
 // paginatedUsersDataSourceServer serves GET /api/users honoring

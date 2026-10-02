@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/Trozz/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/client"
 )
 
 const testPublicJWK = `{"kty":"EC","crv":"P-256","kid":"key-1","use":"sig","x":"ScFVPMb2zxk2ZDS5IJu91DBAzf4L7bKikkOXdV6I4_w","y":"yJAFYZTNNfNKrBFfEnzqepcQkSEfyWOyr0l5U3l5aTM"}`

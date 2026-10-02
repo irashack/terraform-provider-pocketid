@@ -7,7 +7,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 
-	"github.com/Trozz/terraform-provider-pocketid/internal/provider"
+	"github.com/irashack/terraform-provider-pocketid/internal/provider"
 )
 
 var (

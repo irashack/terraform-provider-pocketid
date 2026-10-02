@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	pocketidprovider "github.com/Trozz/terraform-provider-pocketid/internal/provider"
+	pocketidprovider "github.com/irashack/terraform-provider-pocketid/internal/provider"
 )
 
 func TestNew(t *testing.T) {
