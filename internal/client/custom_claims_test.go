@@ -17,7 +17,7 @@ import (
 func TestClient_UpdateUserCustomClaims(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "PUT", r.Method)
-		assert.Equal(t, "/api/custom-claims/user/test-user-id", r.URL.Path)
+		assert.Equal(t, "/api/custom-claims/user/11111111-1111-4111-8111-111111111111", r.URL.Path)
 
 		var req []client.CustomClaim
 		err := json.NewDecoder(r.Body).Decode(&req)
@@ -35,7 +35,7 @@ func TestClient_UpdateUserCustomClaims(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	claims, err := c.UpdateUserCustomClaims(context.Background(), "test-user-id", []client.CustomClaim{
+	claims, err := c.UpdateUserCustomClaims(context.Background(), "11111111-1111-4111-8111-111111111111", []client.CustomClaim{
 		{Key: "department", Value: "engineering"},
 		{Key: "level", Value: "senior"},
 	})
@@ -46,7 +46,7 @@ func TestClient_UpdateUserCustomClaims(t *testing.T) {
 func TestClient_UpdateUserCustomClaims_Clear(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "PUT", r.Method)
-		assert.Equal(t, "/api/custom-claims/user/test-user-id", r.URL.Path)
+		assert.Equal(t, "/api/custom-claims/user/11111111-1111-4111-8111-111111111111", r.URL.Path)
 
 		// A nil slice must serialize as an empty array, not null.
 		body, err := io.ReadAll(r.Body)
@@ -61,7 +61,7 @@ func TestClient_UpdateUserCustomClaims_Clear(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	claims, err := c.UpdateUserCustomClaims(context.Background(), "test-user-id", nil)
+	claims, err := c.UpdateUserCustomClaims(context.Background(), "11111111-1111-4111-8111-111111111111", nil)
 	require.NoError(t, err)
 	assert.Empty(t, claims)
 }
@@ -69,7 +69,7 @@ func TestClient_UpdateUserCustomClaims_Clear(t *testing.T) {
 func TestClient_UpdateGroupCustomClaims(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "PUT", r.Method)
-		assert.Equal(t, "/api/custom-claims/user-group/test-group-id", r.URL.Path)
+		assert.Equal(t, "/api/custom-claims/user-group/22222222-2222-4222-8222-222222222222", r.URL.Path)
 
 		var req []client.CustomClaim
 		err := json.NewDecoder(r.Body).Decode(&req)
@@ -84,7 +84,7 @@ func TestClient_UpdateGroupCustomClaims(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	claims, err := c.UpdateGroupCustomClaims(context.Background(), "test-group-id", []client.CustomClaim{
+	claims, err := c.UpdateGroupCustomClaims(context.Background(), "22222222-2222-4222-8222-222222222222", []client.CustomClaim{
 		{Key: "role", Value: "admin"},
 	})
 	require.NoError(t, err)

@@ -17,7 +17,7 @@ import (
 // Test Group-related methods
 func TestClient_CreateUserGroup(t *testing.T) {
 	expectedGroup := &client.UserGroup{
-		ID:           "test-group-id",
+		ID:           "22222222-2222-4222-8222-222222222222",
 		Name:         "test-group",
 		FriendlyName: "Test Group",
 	}
@@ -54,14 +54,14 @@ func TestClient_CreateUserGroup(t *testing.T) {
 
 func TestClient_GetUserGroup(t *testing.T) {
 	expectedGroup := &client.UserGroup{
-		ID:           "test-group-id",
+		ID:           "22222222-2222-4222-8222-222222222222",
 		Name:         "test-group",
 		FriendlyName: "Test Group",
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/api/user-groups/test-group-id", r.URL.Path)
+		assert.Equal(t, "/api/user-groups/22222222-2222-4222-8222-222222222222", r.URL.Path)
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(expectedGroup); err != nil {
@@ -73,7 +73,7 @@ func TestClient_GetUserGroup(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.GetUserGroup(context.Background(), "test-group-id")
+	result, err := c.GetUserGroup(context.Background(), "22222222-2222-4222-8222-222222222222")
 	assert.NoError(t, err)
 	assert.Equal(t, expectedGroup, result)
 }
@@ -90,7 +90,7 @@ func TestClient_GetUserGroup_NotFound(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.GetUserGroup(context.Background(), "nonexistent-id")
+	result, err := c.GetUserGroup(context.Background(), "77777777-7777-4777-8777-777777777777")
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "HTTP 404")
@@ -103,14 +103,14 @@ func TestClient_UpdateUserGroup(t *testing.T) {
 	}
 
 	expectedGroup := &client.UserGroup{
-		ID:           "test-group-id",
+		ID:           "22222222-2222-4222-8222-222222222222",
 		Name:         updateReq.Name,
 		FriendlyName: updateReq.FriendlyName,
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "PUT", r.Method)
-		assert.Equal(t, "/api/user-groups/test-group-id", r.URL.Path)
+		assert.Equal(t, "/api/user-groups/22222222-2222-4222-8222-222222222222", r.URL.Path)
 
 		var req client.UserGroupCreateRequest
 		err := json.NewDecoder(r.Body).Decode(&req)
@@ -127,7 +127,7 @@ func TestClient_UpdateUserGroup(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.UpdateUserGroup(context.Background(), "test-group-id", updateReq)
+	result, err := c.UpdateUserGroup(context.Background(), "22222222-2222-4222-8222-222222222222", updateReq)
 	assert.NoError(t, err)
 	assert.Equal(t, expectedGroup, result)
 }
@@ -135,7 +135,7 @@ func TestClient_UpdateUserGroup(t *testing.T) {
 func TestClient_DeleteUserGroup(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "DELETE", r.Method)
-		assert.Equal(t, "/api/user-groups/test-group-id", r.URL.Path)
+		assert.Equal(t, "/api/user-groups/22222222-2222-4222-8222-222222222222", r.URL.Path)
 
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -144,7 +144,7 @@ func TestClient_DeleteUserGroup(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	err = c.DeleteUserGroup(context.Background(), "test-group-id")
+	err = c.DeleteUserGroup(context.Background(), "22222222-2222-4222-8222-222222222222")
 	assert.NoError(t, err)
 }
 
@@ -160,7 +160,7 @@ func TestClient_DeleteUserGroup_InUse(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	err = c.DeleteUserGroup(context.Background(), "test-group-id")
+	err = c.DeleteUserGroup(context.Background(), "22222222-2222-4222-8222-222222222222")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "HTTP 409")
 }
@@ -274,7 +274,7 @@ func TestClient_UpdateUserGroup_UnmarshalError(t *testing.T) {
 		FriendlyName: "Test Group",
 	}
 
-	result, err := c.UpdateUserGroup(context.Background(), "test-id", updateReq)
+	result, err := c.UpdateUserGroup(context.Background(), "88888888-8888-4888-8888-888888888888", updateReq)
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "error unmarshaling response")
@@ -293,7 +293,7 @@ func TestClient_GetUserGroup_UnmarshalError(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.GetUserGroup(context.Background(), "test-id")
+	result, err := c.GetUserGroup(context.Background(), "88888888-8888-4888-8888-888888888888")
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "error unmarshaling response")

@@ -35,13 +35,20 @@ func (c *Client) CreateUserGroup(ctx context.Context, group *UserGroupCreateRequ
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("error unmarshaling response: %w", err)
 	}
+	if err := ValidateUUID("user group", result.ID); err != nil {
+		return nil, fmt.Errorf("user group creation returned no usable ID, so no follow-up request uses it; the user group may exist: inspect before recovery: %w", err)
+	}
 
 	return &result, nil
 }
 
 // GetUserGroup retrieves a user group by ID
 func (c *Client) GetUserGroup(ctx context.Context, groupID string) (*UserGroup, error) {
-	body, err := c.doRequest(ctx, "GET", fmt.Sprintf("/api/user-groups/%s", groupID), nil)
+	id, err := uuidSegment("user group", groupID)
+	if err != nil {
+		return nil, err
+	}
+	body, err := c.doRequest(ctx, "GET", "/api/user-groups/"+id, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +63,11 @@ func (c *Client) GetUserGroup(ctx context.Context, groupID string) (*UserGroup, 
 
 // UpdateUserGroup updates an existing user group
 func (c *Client) UpdateUserGroup(ctx context.Context, groupID string, group *UserGroupCreateRequest) (*UserGroup, error) {
-	body, err := c.doRequest(ctx, "PUT", fmt.Sprintf("/api/user-groups/%s", groupID), group)
+	id, err := uuidSegment("user group", groupID)
+	if err != nil {
+		return nil, err
+	}
+	body, err := c.doRequest(ctx, "PUT", "/api/user-groups/"+id, group)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +82,11 @@ func (c *Client) UpdateUserGroup(ctx context.Context, groupID string, group *Use
 
 // DeleteUserGroup deletes a user group
 func (c *Client) DeleteUserGroup(ctx context.Context, groupID string) error {
-	_, err := c.doRequest(ctx, "DELETE", fmt.Sprintf("/api/user-groups/%s", groupID), nil)
+	id, err := uuidSegment("user group", groupID)
+	if err != nil {
+		return err
+	}
+	_, err = c.doRequest(ctx, "DELETE", "/api/user-groups/"+id, nil)
 	return err
 }
 

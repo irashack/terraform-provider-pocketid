@@ -27,7 +27,11 @@ func (c *Client) CreateOneTimeAccessToken(ctx context.Context, userID string, re
 		"ttl":     req.TTL,
 	})
 
-	body, err := c.doRequest(ctx, "POST", fmt.Sprintf("/api/users/%s/one-time-access-token", userID), req)
+	id, err := uuidSegment("user", userID)
+	if err != nil {
+		return nil, err
+	}
+	body, err := c.doRequest(ctx, "POST", "/api/users/"+id+"/one-time-access-token", req)
 	if err != nil {
 		return nil, err
 	}

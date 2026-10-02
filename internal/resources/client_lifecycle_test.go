@@ -191,7 +191,7 @@ func TestClientCreateGuards(t *testing.T) {
 // provider revokes it before generating its own, so the client ends with one
 // secret, and a failed revoke is handled like a failed secret generation.
 func TestClientCreateRevokesServerCreatedSecret(t *testing.T) {
-	const created = `{"id":"new-fixture","name":"fixture","callbackURLs":["https://example.invalid/callback"],"pkceEnabled":true%s,"createdSecret":{"id":"auto-secret","prefix":"synt","secret":"synthetic-auto-secret"}}`
+	const created = `{"id":"new-fixture","name":"fixture","callbackURLs":["https://example.invalid/callback"],"pkceEnabled":true%s,"createdSecret":{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","prefix":"synt","secret":"synthetic-auto-secret"}}`
 	for _, tc := range []struct {
 		name           string
 		public         bool
@@ -211,21 +211,21 @@ func TestClientCreateRevokesServerCreatedSecret(t *testing.T) {
 		readBody      string
 		wantTitle     string
 	}{
-		{name: "revoked_then_generated", createdID: "auto-secret", revokeStatus: 204, wantRevokes: 1, wantSecretPost: 1},
-		{name: "public_client_revoked_without_generation", public: true, createdID: "auto-secret", revokeStatus: 204, wantRevokes: 1},
-		{name: "revoke_rejected_rolls_back", createdID: "auto-secret", revokeStatus: 403, listStatus: 200, listBody: `[{"id":"auto-secret"}]`, wantError: true, wantRevokes: 1, wantDeletes: 1},
-		{name: "revoke_rejected_list_failed_rolls_back", createdID: "auto-secret", revokeStatus: 404, listStatus: 403, wantError: true, wantRevokes: 1, wantDeletes: 1},
-		{name: "revoke_uncertain_retained", createdID: "auto-secret", revokeStatus: 503, listStatus: 200, listBody: `[{"id":"auto-secret"}]`, wantError: true, wantRevokes: 1, retained: true},
-		{name: "revoke_uncertain_but_confirmed_gone", createdID: "auto-secret", revokeStatus: 503, listStatus: 200, listBody: `[]`, wantRevokes: 1, wantSecretPost: 1},
-		{name: "revoke_404_confirmed_gone", createdID: "auto-secret", revokeStatus: 404, listStatus: 200, listBody: `[{"id":"other"}]`, wantRevokes: 1, wantSecretPost: 1},
+		{name: "revoked_then_generated", createdID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", revokeStatus: 204, wantRevokes: 1, wantSecretPost: 1},
+		{name: "public_client_revoked_without_generation", public: true, createdID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", revokeStatus: 204, wantRevokes: 1},
+		{name: "revoke_rejected_rolls_back", createdID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", revokeStatus: 403, listStatus: 200, listBody: `[{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}]`, wantError: true, wantRevokes: 1, wantDeletes: 1},
+		{name: "revoke_rejected_list_failed_rolls_back", createdID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", revokeStatus: 404, listStatus: 403, wantError: true, wantRevokes: 1, wantDeletes: 1},
+		{name: "revoke_uncertain_retained", createdID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", revokeStatus: 503, listStatus: 200, listBody: `[{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}]`, wantError: true, wantRevokes: 1, retained: true},
+		{name: "revoke_uncertain_but_confirmed_gone", createdID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", revokeStatus: 503, listStatus: 200, listBody: `[]`, wantRevokes: 1, wantSecretPost: 1},
+		{name: "revoke_404_confirmed_gone", createdID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", revokeStatus: 404, listStatus: 200, listBody: `[{"id":"other"}]`, wantRevokes: 1, wantSecretPost: 1},
 		{name: "unidentified_secret_rolls_back", createdID: "", wantError: true, wantDeletes: 1},
 		// Revoke rejected, then the rollback DELETE fails: only Pocket ID's own
 		// not-found error proves the client (and its secret) is gone.
-		{name: "revoke_rejected_cleanup_failed_confirmed_absent", createdID: "auto-secret", revokeStatus: 403, listStatus: 200, listBody: `[{"id":"auto-secret"}]`,
+		{name: "revoke_rejected_cleanup_failed_confirmed_absent", createdID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", revokeStatus: 403, listStatus: 200, listBody: `[{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}]`,
 			cleanupStatus: 503, readStatus: 404, readBody: clientNotFoundBody, wantError: true, wantRevokes: 1, wantDeletes: 1, wantTitle: "OIDC client rollback verified"},
-		{name: "revoke_rejected_cleanup_failed_bare_404_retained", createdID: "auto-secret", revokeStatus: 403, listStatus: 200, listBody: `[{"id":"auto-secret"}]`,
+		{name: "revoke_rejected_cleanup_failed_bare_404_retained", createdID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", revokeStatus: 403, listStatus: 200, listBody: `[{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}]`,
 			cleanupStatus: 503, readStatus: 404, readBody: ``, wantError: true, wantRevokes: 1, wantDeletes: 1, retained: true, wantTitle: "OIDC client cleanup failed"},
-		{name: "revoke_rejected_cleanup_failed_proxy_404_retained", createdID: "auto-secret", revokeStatus: 403, listStatus: 200, listBody: `[{"id":"auto-secret"}]`,
+		{name: "revoke_rejected_cleanup_failed_proxy_404_retained", createdID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", revokeStatus: 403, listStatus: 200, listBody: `[{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}]`,
 			cleanupStatus: 503, readStatus: 404, readBody: `<html>Not Found</html>`, wantError: true, wantRevokes: 1, wantDeletes: 1, retained: true, wantTitle: "OIDC client cleanup failed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -239,11 +239,11 @@ func TestClientCreateRevokesServerCreatedSecret(t *testing.T) {
 				case "POST /api/oidc/clients":
 					body := fmt.Sprintf(created, fmt.Sprintf(`,"isPublic":%t`, tc.public))
 					if tc.createdID == "" {
-						body = strings.Replace(body, `"id":"auto-secret",`, "", 1)
+						body = strings.Replace(body, `"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",`, "", 1)
 					}
 					w.WriteHeader(http.StatusCreated)
 					_, _ = fmt.Fprint(w, body)
-				case "DELETE /api/oidc/clients/new-fixture/secrets/auto-secret":
+				case "DELETE /api/oidc/clients/new-fixture/secrets/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa":
 					revokes++
 					order = append(order, "revoke")
 					w.WriteHeader(tc.revokeStatus)
@@ -307,7 +307,7 @@ func TestClientCreateRevokesServerCreatedSecret(t *testing.T) {
 				require.NotContains(t, d.Detail(), "synthetic-managed-secret")
 				require.NotContains(t, d.Detail(), "synthetic-token")
 				if tc.createdID != "" {
-					require.Contains(t, d.Detail(), "auto-secret", "the diagnostic names the secret left behind")
+					require.Contains(t, d.Detail(), "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "the diagnostic names the secret left behind")
 				}
 			}
 			switch {

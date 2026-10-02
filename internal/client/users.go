@@ -55,13 +55,20 @@ func (c *Client) CreateUser(ctx context.Context, user *UserCreateRequest) (*User
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("error unmarshaling response: %w", err)
 	}
+	if err := ValidateUUID("user", result.ID); err != nil {
+		return nil, fmt.Errorf("user creation returned no usable ID, so no follow-up request uses it; the user may exist: inspect before recovery: %w", err)
+	}
 
 	return &result, nil
 }
 
 // GetUser retrieves a user by ID
 func (c *Client) GetUser(ctx context.Context, userID string) (*User, error) {
-	body, err := c.doRequest(ctx, "GET", fmt.Sprintf("/api/users/%s", userID), nil)
+	id, err := uuidSegment("user", userID)
+	if err != nil {
+		return nil, err
+	}
+	body, err := c.doRequest(ctx, "GET", "/api/users/"+id, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +83,11 @@ func (c *Client) GetUser(ctx context.Context, userID string) (*User, error) {
 
 // UpdateUser updates an existing user
 func (c *Client) UpdateUser(ctx context.Context, userID string, user *UserCreateRequest) (*User, error) {
-	body, err := c.doRequest(ctx, "PUT", fmt.Sprintf("/api/users/%s", userID), user)
+	id, err := uuidSegment("user", userID)
+	if err != nil {
+		return nil, err
+	}
+	body, err := c.doRequest(ctx, "PUT", "/api/users/"+id, user)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +102,11 @@ func (c *Client) UpdateUser(ctx context.Context, userID string, user *UserCreate
 
 // DeleteUser deletes a user
 func (c *Client) DeleteUser(ctx context.Context, userID string) error {
-	_, err := c.doRequest(ctx, "DELETE", fmt.Sprintf("/api/users/%s", userID), nil)
+	id, err := uuidSegment("user", userID)
+	if err != nil {
+		return err
+	}
+	_, err = c.doRequest(ctx, "DELETE", "/api/users/"+id, nil)
 	return err
 }
 
@@ -186,7 +201,11 @@ func (c *Client) UpdateUserGroups(ctx context.Context, userID string, groupIDs [
 		groupIDs = []string{}
 	}
 	req := UpdateUserGroupsRequest{UserGroupIDs: groupIDs}
-	_, err := c.doRequest(ctx, "PUT", fmt.Sprintf("/api/users/%s/user-groups", userID), req)
+	id, err := uuidSegment("user", userID)
+	if err != nil {
+		return err
+	}
+	_, err = c.doRequest(ctx, "PUT", "/api/users/"+id+"/user-groups", req)
 	return err
 }
 

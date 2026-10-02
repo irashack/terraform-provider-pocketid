@@ -17,7 +17,7 @@ import (
 // Test User-related methods
 func TestClient_CreateUser(t *testing.T) {
 	expectedUser := &client.User{
-		ID:        "test-user-id",
+		ID:        "11111111-1111-4111-8111-111111111111",
 		Username:  "testuser",
 		Email:     "test@example.com",
 		FirstName: "Test",
@@ -60,7 +60,7 @@ func TestClient_CreateUser(t *testing.T) {
 
 func TestClient_GetUser(t *testing.T) {
 	expectedUser := &client.User{
-		ID:        "test-user-id",
+		ID:        "11111111-1111-4111-8111-111111111111",
 		Username:  "testuser",
 		Email:     "test@example.com",
 		FirstName: "Test",
@@ -76,7 +76,7 @@ func TestClient_GetUser(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "GET", r.Method)
-		assert.Equal(t, "/api/users/test-user-id", r.URL.Path)
+		assert.Equal(t, "/api/users/11111111-1111-4111-8111-111111111111", r.URL.Path)
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(expectedUser); err != nil {
@@ -88,7 +88,7 @@ func TestClient_GetUser(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.GetUser(context.Background(), "test-user-id")
+	result, err := c.GetUser(context.Background(), "11111111-1111-4111-8111-111111111111")
 	assert.NoError(t, err)
 	assert.Equal(t, expectedUser, result)
 }
@@ -105,7 +105,7 @@ func TestClient_GetUser_Error(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.GetUser(context.Background(), "nonexistent-id")
+	result, err := c.GetUser(context.Background(), "77777777-7777-4777-8777-777777777777")
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "HTTP 404")
@@ -123,7 +123,7 @@ func TestClient_UpdateUser(t *testing.T) {
 	}
 
 	expectedUser := &client.User{
-		ID:        "test-user-id",
+		ID:        "11111111-1111-4111-8111-111111111111",
 		Username:  updateReq.Username,
 		Email:     updateReq.Email,
 		FirstName: updateReq.FirstName,
@@ -135,7 +135,7 @@ func TestClient_UpdateUser(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "PUT", r.Method)
-		assert.Equal(t, "/api/users/test-user-id", r.URL.Path)
+		assert.Equal(t, "/api/users/11111111-1111-4111-8111-111111111111", r.URL.Path)
 
 		var req client.UserCreateRequest
 		err := json.NewDecoder(r.Body).Decode(&req)
@@ -152,7 +152,7 @@ func TestClient_UpdateUser(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.UpdateUser(context.Background(), "test-user-id", updateReq)
+	result, err := c.UpdateUser(context.Background(), "11111111-1111-4111-8111-111111111111", updateReq)
 	assert.NoError(t, err)
 	assert.Equal(t, expectedUser, result)
 }
@@ -160,7 +160,7 @@ func TestClient_UpdateUser(t *testing.T) {
 func TestClient_DeleteUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "DELETE", r.Method)
-		assert.Equal(t, "/api/users/test-user-id", r.URL.Path)
+		assert.Equal(t, "/api/users/11111111-1111-4111-8111-111111111111", r.URL.Path)
 
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -169,7 +169,7 @@ func TestClient_DeleteUser(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	err = c.DeleteUser(context.Background(), "test-user-id")
+	err = c.DeleteUser(context.Background(), "11111111-1111-4111-8111-111111111111")
 	assert.NoError(t, err)
 }
 
@@ -185,7 +185,7 @@ func TestClient_DeleteUser_Error(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	err = c.DeleteUser(context.Background(), "test-user-id")
+	err = c.DeleteUser(context.Background(), "11111111-1111-4111-8111-111111111111")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "HTTP 403")
 }
@@ -277,7 +277,7 @@ func TestClient_ListUsers_Empty(t *testing.T) {
 func TestClient_UpdateUserGroups(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "PUT", r.Method)
-		assert.Equal(t, "/api/users/test-user-id/user-groups", r.URL.Path)
+		assert.Equal(t, "/api/users/11111111-1111-4111-8111-111111111111/user-groups", r.URL.Path)
 
 		var req client.UpdateUserGroupsRequest
 		err := json.NewDecoder(r.Body).Decode(&req)
@@ -291,7 +291,7 @@ func TestClient_UpdateUserGroups(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	err = c.UpdateUserGroups(context.Background(), "test-user-id", []string{"group1", "group2"})
+	err = c.UpdateUserGroups(context.Background(), "11111111-1111-4111-8111-111111111111", []string{"group1", "group2"})
 	assert.NoError(t, err)
 }
 
@@ -337,7 +337,7 @@ func TestClient_UpdateUser_UnmarshalError(t *testing.T) {
 		Email:    "test@example.com",
 	}
 
-	result, err := c.UpdateUser(context.Background(), "test-id", updateReq)
+	result, err := c.UpdateUser(context.Background(), "88888888-8888-4888-8888-888888888888", updateReq)
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "error unmarshaling response")
@@ -375,7 +375,7 @@ func TestClient_GetUser_UnmarshalError(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	result, err := c.GetUser(context.Background(), "test-id")
+	result, err := c.GetUser(context.Background(), "88888888-8888-4888-8888-888888888888")
 	assert.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "error unmarshaling response")

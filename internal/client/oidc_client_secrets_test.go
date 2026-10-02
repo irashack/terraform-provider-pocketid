@@ -153,7 +153,7 @@ func TestIssue96PocketID214(t *testing.T) {
 		case "POST /api/oidc/clients/fixture/secrets":
 			posts.Add(1)
 			w.WriteHeader(http.StatusCreated)
-			_, _ = fmt.Fprint(w, `{"id":"secret-id","createdAt":"2026-08-01T00:00:00Z","secret":"synthetic-secret"}`)
+			_, _ = fmt.Fprint(w, `{"id":"99999999-9999-4999-8999-999999999999","createdAt":"2026-08-01T00:00:00Z","secret":"synthetic-secret"}`)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -262,8 +262,7 @@ func TestClient_DeleteClientSecret(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests++
 				assert.Equal(t, http.MethodDelete, r.Method)
-				// Path segments are escaped, never interpreted as path structure.
-				assert.Equal(t, "/api/oidc/clients/c%2F1/secrets/s%2F1", r.URL.EscapedPath())
+				assert.Equal(t, "/api/oidc/clients/c1/secrets/99999999-9999-4999-8999-999999999999", r.URL.EscapedPath())
 				w.WriteHeader(tc.status)
 				_, _ = fmt.Fprint(w, tc.body)
 			}))
@@ -271,7 +270,7 @@ func TestClient_DeleteClientSecret(t *testing.T) {
 			c, err := client.NewClient(server.URL, "test-token", false, 30)
 			require.NoError(t, err)
 
-			err = c.DeleteClientSecret(context.Background(), "c/1", "s/1")
+			err = c.DeleteClientSecret(context.Background(), "c1", "99999999-9999-4999-8999-999999999999")
 			assert.Equal(t, 1, requests, "a mutation is never retried")
 			if tc.wantCode == 0 {
 				assert.NoError(t, err)
@@ -288,7 +287,7 @@ func TestClient_DeleteClientSecret(t *testing.T) {
 func TestClient_ListClientSecrets(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
-		assert.Equal(t, "/api/oidc/clients/c%2F1/secrets", r.URL.EscapedPath())
+		assert.Equal(t, "/api/oidc/clients/c1/secrets", r.URL.EscapedPath())
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprint(w, `[{"id":"s1","prefix":"abcd","isActive":true},{"id":"s2","prefix":"efgh","isActive":false}]`)
 	}))
@@ -296,7 +295,7 @@ func TestClient_ListClientSecrets(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	secrets, err := c.ListClientSecrets(context.Background(), "c/1")
+	secrets, err := c.ListClientSecrets(context.Background(), "c1")
 	require.NoError(t, err)
 	assert.Equal(t, []client.ClientSecretMetadata{{ID: "s1", IsActive: true}, {ID: "s2"}}, secrets)
 

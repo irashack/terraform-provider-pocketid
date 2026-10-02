@@ -18,7 +18,11 @@ func (c *Client) UpdateUserCustomClaims(ctx context.Context, userID string, clai
 	if claims == nil {
 		claims = []CustomClaim{}
 	}
-	body, err := c.doRequest(ctx, "PUT", fmt.Sprintf("/api/custom-claims/user/%s", userID), claims)
+	id, err := uuidSegment("user", userID)
+	if err != nil {
+		return nil, err
+	}
+	body, err := c.doRequest(ctx, "PUT", "/api/custom-claims/user/"+id, claims)
 	if err != nil {
 		return nil, err
 	}
@@ -37,7 +41,11 @@ func (c *Client) UpdateGroupCustomClaims(ctx context.Context, groupID string, cl
 	if claims == nil {
 		claims = []CustomClaim{}
 	}
-	body, err := c.doRequest(ctx, "PUT", fmt.Sprintf("/api/custom-claims/user-group/%s", groupID), claims)
+	id, err := uuidSegment("user group", groupID)
+	if err != nil {
+		return nil, err
+	}
+	body, err := c.doRequest(ctx, "PUT", "/api/custom-claims/user-group/"+id, claims)
 	if err != nil {
 		return nil, err
 	}

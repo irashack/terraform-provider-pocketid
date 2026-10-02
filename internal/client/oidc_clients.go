@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
 )
 
 // OIDCClient represents an OIDC client in Pocket-ID
@@ -49,7 +48,8 @@ type OIDCClient struct {
 // CreatedClientSecret identifies a secret the server generated while creating
 // a client. Only the ID is decoded: the provider revokes that secret. The value
 // is still present in the raw response bytes the client reads, but it is never
-// decoded into a field, stored or logged.
+// decoded into a field, stored or logged. CreateClient empties an ID that is
+// not a UUID, so callers see an unusable ID as a missing one.
 type CreatedClientSecret struct {
 	ID string `json:"id"`
 }
@@ -123,12 +123,24 @@ func (c *Client) CreateClient(ctx context.Context, createReq *OIDCClientCreateRe
 	if result.ID == "" {
 		return nil, fmt.Errorf("client creation returned no ID; inspect clients before recovery")
 	}
+	if err := ValidateClientID(result.ID); err != nil {
+		return nil, fmt.Errorf("client creation returned an unusable client ID, so no follow-up request uses it; the client may exist: inspect clients before recovery: %w", err)
+	}
+	// A secret ID that is not a UUID cannot be addressed for revocation, so
+	// it is treated like one the response did not name.
+	if result.CreatedSecret != nil && ValidateUUID("client secret", result.CreatedSecret.ID) != nil {
+		result.CreatedSecret.ID = ""
+	}
 	return &result, nil
 }
 
 // GetClient retrieves an OIDC client by ID
 func (c *Client) GetClient(ctx context.Context, clientID string) (*OIDCClient, error) {
-	body, err := c.doRequest(ctx, "GET", fmt.Sprintf("/api/oidc/clients/%s", url.PathEscape(clientID)), nil)
+	id, err := clientIDSegment(clientID)
+	if err != nil {
+		return nil, err
+	}
+	body, err := c.doRequest(ctx, "GET", "/api/oidc/clients/"+id, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +155,11 @@ func (c *Client) GetClient(ctx context.Context, clientID string) (*OIDCClient, e
 
 // UpdateClient updates an existing OIDC client
 func (c *Client) UpdateClient(ctx context.Context, clientID string, updateReq *OIDCClientCreateRequest) (*OIDCClient, error) {
-	body, err := c.doRequest(ctx, "PUT", fmt.Sprintf("/api/oidc/clients/%s", url.PathEscape(clientID)), updateReq)
+	id, err := clientIDSegment(clientID)
+	if err != nil {
+		return nil, err
+	}
+	body, err := c.doRequest(ctx, "PUT", "/api/oidc/clients/"+id, updateReq)
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +174,11 @@ func (c *Client) UpdateClient(ctx context.Context, clientID string, updateReq *O
 
 // DeleteClient deletes an OIDC client
 func (c *Client) DeleteClient(ctx context.Context, clientID string) error {
-	_, err := c.doRequest(ctx, "DELETE", fmt.Sprintf("/api/oidc/clients/%s", url.PathEscape(clientID)), nil)
+	id, err := clientIDSegment(clientID)
+	if err != nil {
+		return err
+	}
+	_, err = c.doRequest(ctx, "DELETE", "/api/oidc/clients/"+id, nil)
 	return err
 }
 
@@ -180,6 +200,10 @@ func (c *Client) ListClients(ctx context.Context) (*PaginatedResponse[OIDCClient
 // UpdateClientAllowedUserGroups updates the allowed user groups for an OIDC client
 func (c *Client) UpdateClientAllowedUserGroups(ctx context.Context, clientID string, groupIDs []string) error {
 	req := UpdateAllowedUserGroupsRequest{UserGroupIDs: groupIDs}
-	_, err := c.doRequest(ctx, "PUT", fmt.Sprintf("/api/oidc/clients/%s/allowed-user-groups", url.PathEscape(clientID)), req)
+	id, err := clientIDSegment(clientID)
+	if err != nil {
+		return err
+	}
+	_, err = c.doRequest(ctx, "PUT", "/api/oidc/clients/"+id+"/allowed-user-groups", req)
 	return err
 }

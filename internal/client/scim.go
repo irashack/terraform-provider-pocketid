@@ -44,6 +44,9 @@ func (c *Client) CreateScimServiceProvider(ctx context.Context, req *ScimService
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("error unmarshaling response: %w", err)
 	}
+	if err := ValidateUUID("SCIM service provider", result.ID); err != nil {
+		return nil, fmt.Errorf("SCIM service provider creation returned no usable ID, so no follow-up request uses it; the SCIM service provider may exist: inspect before recovery: %w", err)
+	}
 
 	return &result, nil
 }
@@ -51,7 +54,11 @@ func (c *Client) CreateScimServiceProvider(ctx context.Context, req *ScimService
 // GetClientScimServiceProvider retrieves the SCIM service provider configuration
 // for an OIDC client. The token is returned decrypted.
 func (c *Client) GetClientScimServiceProvider(ctx context.Context, clientID string) (*ScimServiceProvider, error) {
-	body, err := c.doRequest(ctx, "GET", fmt.Sprintf("/api/oidc/clients/%s/scim-service-provider", clientID), nil)
+	client, err := clientIDSegment(clientID)
+	if err != nil {
+		return nil, err
+	}
+	body, err := c.doRequest(ctx, "GET", "/api/oidc/clients/"+client+"/scim-service-provider", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +73,11 @@ func (c *Client) GetClientScimServiceProvider(ctx context.Context, clientID stri
 
 // UpdateScimServiceProvider updates an existing SCIM service provider configuration.
 func (c *Client) UpdateScimServiceProvider(ctx context.Context, id string, req *ScimServiceProviderCreateRequest) (*ScimServiceProvider, error) {
-	body, err := c.doRequest(ctx, "PUT", fmt.Sprintf("/api/scim/service-provider/%s", id), req)
+	segment, err := uuidSegment("SCIM service provider", id)
+	if err != nil {
+		return nil, err
+	}
+	body, err := c.doRequest(ctx, "PUT", "/api/scim/service-provider/"+segment, req)
 	if err != nil {
 		return nil, err
 	}
@@ -81,6 +92,10 @@ func (c *Client) UpdateScimServiceProvider(ctx context.Context, id string, req *
 
 // DeleteScimServiceProvider deletes a SCIM service provider configuration by ID.
 func (c *Client) DeleteScimServiceProvider(ctx context.Context, id string) error {
-	_, err := c.doRequest(ctx, "DELETE", fmt.Sprintf("/api/scim/service-provider/%s", id), nil)
+	segment, err := uuidSegment("SCIM service provider", id)
+	if err != nil {
+		return err
+	}
+	_, err = c.doRequest(ctx, "DELETE", "/api/scim/service-provider/"+segment, nil)
 	return err
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
 
 	"golang.org/x/mod/semver"
 )
@@ -23,17 +22,21 @@ type ClientSecretResponse struct {
 
 // GenerateClientSecret generates a new client secret for an OIDC client
 func (c *Client) GenerateClientSecret(ctx context.Context, clientID string) (string, error) {
+	id, err := clientIDSegment(clientID)
+	if err != nil {
+		return "", err
+	}
 	version, err := c.GetCurrentVersion(ctx)
 	if err != nil {
 		return "", err
 	}
 
-	url := fmt.Sprintf("/api/oidc/clients/%s/secret", url.PathEscape(clientID))
+	endpoint := "/api/oidc/clients/" + id + "/secret"
 	if semver.Compare("v"+version, "v2.14.0") >= 0 { // the semver package requires a `v` prefix.
-		url += "s"
+		endpoint += "s"
 	}
 
-	body, err := c.doRequest(ctx, "POST", url, nil)
+	body, err := c.doRequest(ctx, "POST", endpoint, nil)
 	if err != nil {
 		return "", err
 	}
@@ -54,7 +57,11 @@ func (c *Client) GenerateClientSecret(ctx context.Context, clientID string) (str
 // ListClientSecrets lists an OIDC client's secrets without their values.
 // Pocket ID 2.14.0 and later only.
 func (c *Client) ListClientSecrets(ctx context.Context, clientID string) ([]ClientSecretMetadata, error) {
-	body, err := c.doRequest(ctx, "GET", fmt.Sprintf("/api/oidc/clients/%s/secrets", url.PathEscape(clientID)), nil)
+	id, err := clientIDSegment(clientID)
+	if err != nil {
+		return nil, err
+	}
+	body, err := c.doRequest(ctx, "GET", "/api/oidc/clients/"+id+"/secrets", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -72,6 +79,14 @@ func (c *Client) ListClientSecrets(ctx context.Context, clientID string) ([]Clie
 // a wrong base URL or a proxy's page), so a caller that needs that answer
 // confirms it with ListClientSecrets.
 func (c *Client) DeleteClientSecret(ctx context.Context, clientID, secretID string) error {
-	_, err := c.doRequest(ctx, "DELETE", fmt.Sprintf("/api/oidc/clients/%s/secrets/%s", url.PathEscape(clientID), url.PathEscape(secretID)), nil)
+	id, err := clientIDSegment(clientID)
+	if err != nil {
+		return err
+	}
+	secret, err := uuidSegment("client secret", secretID)
+	if err != nil {
+		return err
+	}
+	_, err = c.doRequest(ctx, "DELETE", "/api/oidc/clients/"+id+"/secrets/"+secret, nil)
 	return err
 }

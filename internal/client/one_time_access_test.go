@@ -16,7 +16,7 @@ import (
 func TestClient_CreateOneTimeAccessToken(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/api/users/test-user-id/one-time-access-token", r.URL.Path)
+		assert.Equal(t, "/api/users/11111111-1111-4111-8111-111111111111/one-time-access-token", r.URL.Path)
 
 		var req client.OneTimeAccessTokenRequest
 		err := json.NewDecoder(r.Body).Decode(&req)
@@ -36,7 +36,7 @@ func TestClient_CreateOneTimeAccessToken(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	token, err := c.CreateOneTimeAccessToken(context.Background(), "test-user-id", &client.OneTimeAccessTokenRequest{TTL: "15m"})
+	token, err := c.CreateOneTimeAccessToken(context.Background(), "11111111-1111-4111-8111-111111111111", &client.OneTimeAccessTokenRequest{TTL: "15m"})
 	assert.NoError(t, err)
 	assert.Equal(t, "test-token-123456", token.Token)
 }
@@ -60,7 +60,7 @@ func TestClient_CreateOneTimeAccessToken_SendsTTL(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	token, err := c.CreateOneTimeAccessToken(context.Background(), "test-user-id", &client.OneTimeAccessTokenRequest{TTL: "1h"})
+	token, err := c.CreateOneTimeAccessToken(context.Background(), "11111111-1111-4111-8111-111111111111", &client.OneTimeAccessTokenRequest{TTL: "1h"})
 	assert.NoError(t, err)
 	assert.Equal(t, "tok", token.Token)
 }
@@ -80,7 +80,7 @@ func TestClient_CreateOneTimeAccessToken_Error(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	_, err = c.CreateOneTimeAccessToken(context.Background(), "test-user-id", &client.OneTimeAccessTokenRequest{TTL: "1s"})
+	_, err = c.CreateOneTimeAccessToken(context.Background(), "11111111-1111-4111-8111-111111111111", &client.OneTimeAccessTokenRequest{TTL: "1s"})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "HTTP 400")
 }

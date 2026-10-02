@@ -70,9 +70,12 @@ func TestClient_CreateClient_CreatedSecret(t *testing.T) {
 		body string
 		want *client.CreatedClientSecret
 	}{
-		"2.17 created a secret": {`{"id":"c1","name":"n","createdSecret":{"id":"s1","prefix":"abcd","secret":"synthetic-created-secret","isActive":true}}`, &client.CreatedClientSecret{ID: "s1"}},
-		"2.17 created none":     {`{"id":"c1","name":"n"}`, nil},
-		"explicit null":         {`{"id":"c1","name":"n","createdSecret":null}`, nil},
+		"2.17 created a secret": {`{"id":"c1","name":"n","createdSecret":{"id":"99999999-9999-4999-8999-999999999999","prefix":"abcd","secret":"synthetic-created-secret","isActive":true}}`, &client.CreatedClientSecret{ID: "99999999-9999-4999-8999-999999999999"}},
+		// An ID that cannot be put into a path reads as no ID, which the
+		// client resource treats as an unidentified created secret.
+		"unusable secret ID": {`{"id":"c1","name":"n","createdSecret":{"id":"../c1","secret":"synthetic-created-secret"}}`, &client.CreatedClientSecret{}},
+		"2.17 created none":  {`{"id":"c1","name":"n"}`, nil},
+		"explicit null":      {`{"id":"c1","name":"n","createdSecret":null}`, nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
