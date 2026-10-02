@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 )
 
 // ErrorResponse represents an error response from the Pocket-ID API
@@ -31,16 +32,18 @@ func (e *HTTPError) Error() string {
 	return fmt.Sprintf("HTTP %d: %s", e.StatusCode, http.StatusText(e.StatusCode))
 }
 
-// RateLimitError represents a 429 rate limit error with optional Retry-After information
+// RateLimitError is an HTTP 429 answer. RetryAfter is the delay the server
+// asked for, parsed and bounded when the response was read (0 when it named
+// none or an unusable one); the header's raw text is never kept.
 type RateLimitError struct {
 	StatusCode int
 	Message    string
-	RetryAfter string // Can be seconds or HTTP-date
+	RetryAfter time.Duration
 }
 
 func (e *RateLimitError) Error() string {
-	if e.RetryAfter != "" {
-		return fmt.Sprintf("HTTP %d: %s (Retry-After: %s)", e.StatusCode, e.Message, e.RetryAfter)
+	if e.RetryAfter > 0 {
+		return fmt.Sprintf("HTTP %d: %s (retry after %s)", e.StatusCode, e.Message, e.RetryAfter)
 	}
 	return fmt.Sprintf("HTTP %d: %s", e.StatusCode, e.Message)
 }

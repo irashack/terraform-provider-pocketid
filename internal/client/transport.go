@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -120,10 +121,9 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body in
 		// Exponential backoff (1, 2, 4 units) unless the server asked for a
 		// specific wait.
 		wait := policy.backoffUnit * time.Duration(1<<(attempt-1))
-		if rateLimitErr, ok := lastErr.(*RateLimitError); ok && rateLimitErr.RetryAfter != "" {
-			if requested := time.Duration(parseRetryAfter(rateLimitErr.RetryAfter)) * time.Second; requested > 0 {
-				wait = requested
-			}
+		var rateLimitErr *RateLimitError
+		if errors.As(lastErr, &rateLimitErr) && rateLimitErr.RetryAfter > 0 {
+			wait = rateLimitErr.RetryAfter
 		}
 		if wait > policy.maxWait {
 			return nil, fmt.Errorf("not retrying: the server asked to wait %s, longer than the %s this provider waits: %w", wait, policy.maxWait, lastErr)
@@ -236,10 +236,12 @@ func (c *Client) doSingleRequest(ctx context.Context, method, endpoint string, b
 		}
 	}()
 
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("error reading response body: %w", err)
+	ok := resp.StatusCode >= 200 && resp.StatusCode < 300
+	limit := int64(maxErrorBodyBytes)
+	if ok {
+		limit = maxResponseBodyBytes
 	}
+	respBody, readErr := readBounded(resp, limit)
 
 	// Log response details
 	tflog.Debug(ctx, "Pocket-ID API Response", map[string]interface{}{
@@ -248,53 +250,109 @@ func (c *Client) doSingleRequest(ctx context.Context, method, endpoint string, b
 		"url":         url,
 	})
 
-	// Error bodies can echo tokens or secrets. Preserve status, never their contents.
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		var payload struct {
-			Error   string         `json:"error"`
-			Code    string         `json:"code"`
-			Details map[string]any `json:"details"`
+	if ok {
+		if readErr != nil {
+			return nil, readErr
 		}
-		parsed := json.Unmarshal(respBody, &payload) == nil
-		missing := resp.StatusCode == 404 && parsed && payload.Error == "API endpoint not found"
-		// Pocket-ID's structured errors (dto.ErrorDto) carry a stable "code"
-		// alongside the human-readable "error" message. A missing user is
-		// reported with the code below by every endpoint that looks one up
-		// (confirmed against the pinned v2.14.0/v2.15.0 source: apperror.UserNotFound(),
-		// serialized by middleware.ErrorHandlerMiddleware). The unmatched-route
-		// 404 above is a bare gin.H with no "code" field, so the two never collide.
-		userNotFound := resp.StatusCode == 404 && parsed && payload.Code == "user_not_found"
-		// A missing OIDC client is apperror.NotFound("OIDC client"): code
-		// "not_found" with details.resource "OIDC client", identical in the
-		// v2.14.0 to v2.17.0 source (getClientInternal and DeleteClient). Other
-		// resources share the "not_found" code, so the resource must match too.
-		resource, _ := payload.Details["resource"].(string)
-		clientNotFound := resp.StatusCode == 404 && parsed && payload.Code == "not_found" && resource == "OIDC client"
-		if resp.StatusCode == 429 {
-			return nil, &RateLimitError{StatusCode: http.StatusTooManyRequests, Message: http.StatusText(http.StatusTooManyRequests), RetryAfter: resp.Header.Get("Retry-After")}
-		}
-		return nil, &HTTPError{StatusCode: resp.StatusCode, MissingEndpoint: missing, UserNotFound: userNotFound, ClientNotFound: clientNotFound}
+		return respBody, nil
 	}
 
-	return respBody, nil
+	// Error bodies can echo tokens or secrets. Preserve status, never their
+	// contents. A body that could not be read in full is not parsed, so it
+	// can never be taken for one of Pocket ID's structured errors.
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, &RateLimitError{
+			StatusCode: http.StatusTooManyRequests,
+			Message:    http.StatusText(http.StatusTooManyRequests),
+			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
+		}
+	}
+	var payload struct {
+		Error   string         `json:"error"`
+		Code    string         `json:"code"`
+		Details map[string]any `json:"details"`
+	}
+	parsed := readErr == nil && json.Unmarshal(respBody, &payload) == nil
+	missing := resp.StatusCode == 404 && parsed && payload.Error == "API endpoint not found"
+	// Pocket-ID's structured errors (dto.ErrorDto) carry a stable "code"
+	// alongside the human-readable "error" message. A missing user is
+	// reported with the code below by every endpoint that looks one up
+	// (confirmed against the pinned v2.14.0/v2.15.0 source: apperror.UserNotFound(),
+	// serialized by middleware.ErrorHandlerMiddleware). The unmatched-route
+	// 404 above is a bare gin.H with no "code" field, so the two never collide.
+	userNotFound := resp.StatusCode == 404 && parsed && payload.Code == "user_not_found"
+	// A missing OIDC client is apperror.NotFound("OIDC client"): code
+	// "not_found" with details.resource "OIDC client", identical in the
+	// v2.14.0 to v2.17.0 source (getClientInternal and DeleteClient). Other
+	// resources share the "not_found" code, so the resource must match too.
+	resource, _ := payload.Details["resource"].(string)
+	clientNotFound := resp.StatusCode == 404 && parsed && payload.Code == "not_found" && resource == "OIDC client"
+	return nil, &HTTPError{StatusCode: resp.StatusCode, MissingEndpoint: missing, UserNotFound: userNotFound, ClientNotFound: clientNotFound}
 }
 
-// parseRetryAfter parses the Retry-After header value
-// It can be either a delay in seconds or an HTTP-date
-func parseRetryAfter(retryAfter string) int {
-	// First try to parse as integer seconds
-	if seconds, err := strconv.Atoi(retryAfter); err == nil && seconds > 0 {
-		return seconds
-	}
+// Response size limits. Pocket ID's largest admin responses (a 100-item
+// page of users with their groups and claims, the full application
+// configuration) are far below the first; its error bodies are a short JSON
+// object.
+const (
+	maxResponseBodyBytes = 16 << 20
+	maxErrorBodyBytes    = 64 << 10
+)
 
-	// Try to parse as HTTP-date
-	if t, err := http.ParseTime(retryAfter); err == nil {
-		delay := time.Until(t).Seconds()
-		if delay > 0 {
-			return int(delay)
+// errResponseTooLarge reports a body over its limit. It never carries any of
+// the body's content.
+var errResponseTooLarge = errors.New("response body exceeds the size limit")
+
+// readBounded reads at most limit bytes of the response body. A larger body
+// (by its Content-Length, or by what arrives) is an error that does not
+// include any of it.
+func readBounded(resp *http.Response, limit int64) ([]byte, error) {
+	if resp.ContentLength > limit {
+		return nil, fmt.Errorf("HTTP %d: %w (%d bytes declared, limit %d); body not read", resp.StatusCode, errResponseTooLarge, resp.ContentLength, limit)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return nil, fmt.Errorf("error reading response body: %w", err)
+	}
+	if int64(len(body)) > limit {
+		return nil, fmt.Errorf("HTTP %d: %w (limit %d bytes); body discarded", resp.StatusCode, errResponseTooLarge, limit)
+	}
+	return body, nil
+}
+
+// maxRetryAfter is the largest delay parseRetryAfter reports. Anything this
+// long is far beyond maxRetryWait and only needs to read as "too long".
+const maxRetryAfter = 7 * 24 * time.Hour
+
+// parseRetryAfter turns a Retry-After header (delay-seconds or an HTTP-date)
+// into a delay between 0 and maxRetryAfter. It is called where the header is
+// read, so the raw value is never stored, logged or put in an error. An
+// absent, malformed or past value is 0: the caller then uses its own backoff.
+func parseRetryAfter(value string, now time.Time) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil {
+		if seconds <= 0 {
+			return 0
+		}
+		if seconds >= int64(maxRetryAfter/time.Second) {
+			return maxRetryAfter
+		}
+		return time.Duration(seconds) * time.Second
+	}
+	if at, err := http.ParseTime(value); err == nil {
+		delay := at.Sub(now)
+		switch {
+		case delay <= 0:
+			return 0
+		case delay > maxRetryAfter:
+			return maxRetryAfter
+		default:
+			// Round up: waiting a fraction too long is harmless, too short is not.
+			return delay.Truncate(time.Second) + time.Second
 		}
 	}
-
-	// Default to 60 seconds if we can't parse
-	return 60
+	return 0
 }
