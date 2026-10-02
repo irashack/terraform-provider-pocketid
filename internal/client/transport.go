@@ -45,6 +45,12 @@ func NewClient(baseURL, apiToken string, skipTLSVerify bool, timeout int64) (*Cl
 		},
 	}
 
+	// A read, retries included, may always use one full configured timeout.
+	retry := defaultRetryPolicy
+	if configured := time.Duration(timeout) * time.Second; configured > retry.maxElapsed {
+		retry.maxElapsed = configured
+	}
+
 	return &Client{
 		baseURL:  baseURL,
 		apiToken: apiToken,
@@ -53,6 +59,7 @@ func NewClient(baseURL, apiToken string, skipTLSVerify bool, timeout int64) (*Cl
 			Transport:     transport,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse },
 		},
+		retry: retry,
 	}, nil
 }
 
@@ -63,9 +70,11 @@ const (
 	// maxRetryWait caps a single wait between attempts. A server asking for a
 	// longer wait (Retry-After) gets no retry: the error is returned at once.
 	maxRetryWait = 10 * time.Second
-	// maxRetryElapsed bounds the time a GET spends retrying: no wait starts
-	// that would end more than this long after the first attempt began, nor
-	// after the context's deadline, whichever is earlier.
+	// maxRetryElapsed bounds a whole GET, retries included: its attempts run
+	// under a deadline this long after the first one began (or the context's
+	// own deadline, if earlier), and no wait starts that would end after it.
+	// NewClient raises it to the configured HTTP timeout when that is
+	// longer, so a single attempt can always use the full timeout.
 	maxRetryElapsed = 30 * time.Second
 )
 
@@ -86,7 +95,8 @@ var defaultRetryPolicy = retryPolicy{
 
 // doRequest performs an HTTP request to the Pocket-ID API. ctx bounds the
 // whole call: cancelling it aborts an in-flight request and any wait before a
-// retry, and its deadline also bounds how long a GET keeps retrying.
+// retry. A GET, its retries included, also ends at the retry deadline (see
+// maxRetryElapsed); a mutation is sent once and bounded by the HTTP timeout.
 func (c *Client) doRequest(ctx context.Context, method, endpoint string, body interface{}) ([]byte, error) {
 	policy := c.retry
 	if policy.maxAttempts == 0 {
@@ -95,6 +105,13 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body in
 	retryDeadline := time.Now().Add(policy.maxElapsed)
 	if deadline, ok := ctx.Deadline(); ok && deadline.Before(retryDeadline) {
 		retryDeadline = deadline
+	}
+	if method == http.MethodGet {
+		// The deadline applies to the attempts themselves, not only to
+		// whether another one starts: a slow attempt is cut off too.
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, retryDeadline)
+		defer cancel()
 	}
 	var payload []byte
 	if body != nil {

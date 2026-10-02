@@ -11,10 +11,13 @@
   provider's requests at once. If a create is interrupted after Pocket ID
   created the object, the object's ID stays in state and nothing is cleaned up
   automatically; inspect it before applying again.
-- Reads that fail with a rate limit or a server error are retried for at most
-  30 seconds in total, never waiting more than 10 seconds at a time. If the
-  server asks the provider to wait longer, the error is returned at once
-  instead of the provider waiting.
+- A read, its retries included, ends after 30 seconds or the provider's
+  `timeout` setting, whichever is longer, even if an attempt is still waiting
+  for the server. Reads that fail with a rate limit or a server error are
+  retried within that time, never waiting more than 10 seconds between
+  attempts; if the server asks the provider to wait longer, the error is
+  returned at once. Changes (create, update, delete) are sent once and are
+  bounded by the `timeout` setting alone.
 - **Breaking:** IDs of users, groups, client secrets and SCIM service
   providers must be UUIDs, and OIDC client IDs must follow Pocket ID's rule
   (2 to 128 letters, digits, `.`, `_` or `-`). Any other value, for example a

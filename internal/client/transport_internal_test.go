@@ -403,3 +403,13 @@ func TestUnreadableSuccessBody(t *testing.T) {
 		assert.Equal(t, int32(2), requests.Load())
 	})
 }
+
+// A read may always use one full configured timeout: the retry deadline is
+// 30 seconds or the HTTP timeout, whichever is longer.
+func TestNewClientRetryDeadline(t *testing.T) {
+	for timeout, want := range map[int64]time.Duration{0: maxRetryElapsed, 10: maxRetryElapsed, 30: maxRetryElapsed, 120: 120 * time.Second} {
+		c, err := NewClient("http://127.0.0.1:1", "test-token", false, timeout)
+		require.NoError(t, err)
+		assert.Equal(t, want, c.retry.maxElapsed, "timeout %d", timeout)
+	}
+}

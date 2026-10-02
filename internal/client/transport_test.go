@@ -588,3 +588,56 @@ func TestClient_NonRetryableErrors(t *testing.T) {
 		})
 	}
 }
+
+// A slow GET ends when the time allowed for the whole read runs out, even in
+// the middle of an attempt, rather than when that attempt would have ended.
+func TestClient_SlowReadEndsAtTheRetryDeadline(t *testing.T) {
+	var attempts atomic.Int32
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer server.Close()
+	defer close(release)
+
+	c, err := client.NewClient(server.URL, "test-token", false, 30)
+	require.NoError(t, err)
+	client.SetRetryPolicyForTest(c, 4, 50*time.Millisecond, time.Second, 500*time.Millisecond)
+
+	start := time.Now()
+	_, err = c.GetClient(context.Background(), "test-client-id")
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Less(t, elapsed, 1500*time.Millisecond, "the attempt is cut off at the deadline, not after the 30s HTTP timeout")
+	assert.Equal(t, int32(1), attempts.Load())
+}
+
+// The deadline bounds reads only: a slow read within it succeeds, and a
+// mutation is bounded by the HTTP timeout alone.
+func TestClient_RetryDeadlineLeavesFastReadsAndMutationsAlone(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			time.Sleep(100 * time.Millisecond)
+		} else {
+			time.Sleep(700 * time.Millisecond)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"id":"test-client-id","name":"n"}`)
+	}))
+	defer server.Close()
+
+	c, err := client.NewClient(server.URL, "test-token", false, 30)
+	require.NoError(t, err)
+	client.SetRetryPolicyForTest(c, 4, 50*time.Millisecond, time.Second, 500*time.Millisecond)
+
+	_, err = c.GetClient(context.Background(), "test-client-id")
+	require.NoError(t, err)
+	_, err = c.UpdateClient(context.Background(), "test-client-id", &client.OIDCClientCreateRequest{Name: "n"})
+	require.NoError(t, err, "a mutation slower than the read deadline still completes")
+}
