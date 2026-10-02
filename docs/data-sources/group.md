@@ -2,22 +2,24 @@
 page_title: "pocketid_group Data Source - terraform-provider-pocketid"
 subcategory: ""
 description: |-
-  Retrieves information about a Pocket-ID group.
+  Retrieves information about a Pocket-ID group, by ID or by exact name.
 ---
 
 # pocketid_group (Data Source)
 
-Retrieves information about a Pocket-ID group.
+Retrieves information about a Pocket-ID group, by ID or by exact name.
 
 ## Example Usage
 
 ```terraform
-# Look up a group by ID
+# Look up a group by ID (a UUID). The group is read directly, so this works
+# however many groups exist.
 data "pocketid_group" "by_id" {
-  id = "grp_1234567890"
+  id = "3fa2c1d4-0000-4000-8000-000000000001"
 }
 
-# Look up a group by name
+# Look up a group by its exact name. Every group is considered, not just the
+# first page of them.
 data "pocketid_group" "developers" {
   name = "developers"
 }
@@ -47,8 +49,8 @@ output "developers_group_info" {
 
 ### Optional
 
-- `id` (String) The ID of the group. Either id or name must be provided.
-- `name` (String) The unique name identifier of the group. Either id or name must be provided.
+- `id` (String) The ID of the group (a UUID). Either id or name must be provided; when both are given they must name the same group.
+- `name` (String) The unique name identifier of the group, matched exactly. Either id or name must be provided; when both are given they must name the same group.
 
 ### Read-Only
 

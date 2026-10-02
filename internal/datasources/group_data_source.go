@@ -2,10 +2,12 @@ package datasources
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
@@ -47,16 +49,16 @@ func (d *groupDataSource) Metadata(_ context.Context, req datasource.MetadataReq
 // Schema defines the schema for the data source.
 func (d *groupDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Retrieves information about a Pocket-ID group.",
+		Description: "Retrieves information about a Pocket-ID group, by ID or by exact name.",
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
-				Description: "The ID of the group. Either id or name must be provided.",
+				Description: "The ID of the group (a UUID). Either id or name must be provided; when both are given they must name the same group.",
 				Optional:    true,
 				Computed:    true,
 			},
 			"name": schema.StringAttribute{
-				Description: "The unique name identifier of the group. Either id or name must be provided.",
+				Description: "The unique name identifier of the group, matched exactly. Either id or name must be provided; when both are given they must name the same group.",
 				Optional:    true,
 				Computed:    true,
 			},
@@ -115,37 +117,8 @@ func (d *groupDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 		return
 	}
 
-	// Get all groups
-	groupsResp, err := d.client.ListUserGroups(ctx)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Unable to Read Groups",
-			err.Error(),
-		)
-		return
-	}
-
-	// Find the matching group
-	var foundGroup *client.UserGroup
-	for _, group := range groupsResp {
-		if (!data.ID.IsNull() && group.ID == data.ID.ValueString()) ||
-			(!data.Name.IsNull() && group.Name == data.Name.ValueString()) {
-			foundGroup = &group
-			break
-		}
-	}
-
+	foundGroup := d.lookup(ctx, data, &resp.Diagnostics)
 	if foundGroup == nil {
-		searchField := "id"
-		searchValue := data.ID.ValueString()
-		if data.ID.IsNull() {
-			searchField = "name"
-			searchValue = data.Name.ValueString()
-		}
-		resp.Diagnostics.AddError(
-			"Group Not Found",
-			fmt.Sprintf("No group found with %s '%s'", searchField, searchValue),
-		)
 		return
 	}
 
@@ -172,4 +145,55 @@ func (d *groupDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+// lookup finds the group the configuration names, or adds an error and
+// returns nil.
+//
+// An ID is resolved with the single-object endpoint, never by scanning a list:
+// a list is paginated, and a group beyond its first page would read as "not
+// found". A name is resolved with the server's search, which can only return a
+// superset of the exact match, followed by an exact comparison over every page.
+// When both are set they must name the same group.
+func (d *groupDataSource) lookup(ctx context.Context, data groupDataSourceModel, diags *diag.Diagnostics) *client.UserGroup {
+	hasID, hasName := !data.ID.IsNull(), !data.Name.IsNull()
+
+	var found *client.UserGroup
+	if hasID {
+		group, err := d.client.GetUserGroup(ctx, data.ID.ValueString())
+		switch {
+		case err == nil:
+			found = group
+		case errors.Is(err, client.ErrInvalidIdentifier):
+			diags.AddError("Invalid group ID", err.Error())
+			return nil
+		case client.IsNotFound(err, client.ResourceUserGroup):
+			diags.AddError("Group Not Found", fmt.Sprintf("No group found with id '%s'", data.ID.ValueString()))
+			return nil
+		default:
+			diags.AddError("Unable to Read Group", err.Error())
+			return nil
+		}
+		if hasName && found.Name != data.Name.ValueString() {
+			diags.AddError(
+				"Conflicting arguments",
+				fmt.Sprintf("The group with id '%s' is not named '%s'. Give an id or a name, or make them name the same group.", data.ID.ValueString(), data.Name.ValueString()),
+			)
+			return nil
+		}
+		return found
+	}
+
+	groups, err := d.client.SearchUserGroups(ctx, data.Name.ValueString())
+	if err != nil {
+		diags.AddError("Unable to Read Groups", err.Error())
+		return nil
+	}
+	for i := range groups {
+		if groups[i].Name == data.Name.ValueString() {
+			return &groups[i]
+		}
+	}
+	diags.AddError("Group Not Found", fmt.Sprintf("No group found with name '%s'", data.Name.ValueString()))
+	return nil
 }
