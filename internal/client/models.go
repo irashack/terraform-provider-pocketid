@@ -51,6 +51,25 @@ type OIDCClient struct {
 	HasDarkLogo                 bool    `json:"hasDarkLogo,omitempty"`
 	LogoURL                     *string `json:"logoUrl,omitempty"`
 	DarkLogoURL                 *string `json:"darkLogoUrl,omitempty"`
+
+	// CreatedSecret is present only in a create response from Pocket ID
+	// 2.17.0+, when the server generated a secret for a new confidential
+	// client (autoCreateOidcClientSecret, enabled by default).
+	CreatedSecret *CreatedClientSecret `json:"createdSecret,omitempty"`
+}
+
+// CreatedClientSecret identifies a secret the server generated while creating
+// a client. Only the ID is decoded: the provider revokes that secret, and the
+// value returned beside it is never decoded, stored or logged.
+type CreatedClientSecret struct {
+	ID string `json:"id"`
+}
+
+// ClientSecretMetadata describes one secret of an OIDC client, without its
+// value, as listed by GET /api/oidc/clients/{id}/secrets (Pocket ID 2.14.0+).
+type ClientSecretMetadata struct {
+	ID       string `json:"id"`
+	IsActive bool   `json:"isActive"`
 }
 
 // OIDCClientCredentials represents federated identity credentials for an OIDC client

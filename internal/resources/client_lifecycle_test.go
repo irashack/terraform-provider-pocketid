@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -166,6 +167,120 @@ func TestClientCreateGuards(t *testing.T) {
 			default:
 				require.True(t, resp.Diagnostics.HasError())
 				require.Zero(t, posts)
+			}
+		})
+	}
+}
+
+// Pocket ID 2.17.0 can return a secret it generated for the new client. The
+// provider revokes it before generating its own, so the client ends with one
+// secret, and a failed revoke is handled like a failed secret generation.
+func TestClientCreateRevokesServerCreatedSecret(t *testing.T) {
+	const created = `{"id":"new-fixture","name":"fixture","callbackURLs":["https://example.invalid/callback"],"pkceEnabled":true%s,"createdSecret":{"id":"auto-secret","prefix":"synt","secret":"synthetic-auto-secret"}}`
+	for _, tc := range []struct {
+		name           string
+		public         bool
+		createdID      string // "" sends createdSecret without an id
+		revokeStatus   int
+		listStatus     int
+		listBody       string
+		wantError      bool
+		wantRevokes    int
+		wantSecretPost int
+		wantDeletes    int
+		retained       bool
+	}{
+		{name: "revoked_then_generated", createdID: "auto-secret", revokeStatus: 204, wantRevokes: 1, wantSecretPost: 1},
+		{name: "public_client_revoked_without_generation", public: true, createdID: "auto-secret", revokeStatus: 204, wantRevokes: 1},
+		{name: "revoke_rejected_rolls_back", createdID: "auto-secret", revokeStatus: 403, listStatus: 200, listBody: `[{"id":"auto-secret"}]`, wantError: true, wantRevokes: 1, wantDeletes: 1},
+		{name: "revoke_rejected_list_failed_rolls_back", createdID: "auto-secret", revokeStatus: 404, listStatus: 403, wantError: true, wantRevokes: 1, wantDeletes: 1},
+		{name: "revoke_uncertain_retained", createdID: "auto-secret", revokeStatus: 503, listStatus: 200, listBody: `[{"id":"auto-secret"}]`, wantError: true, wantRevokes: 1, retained: true},
+		{name: "revoke_uncertain_but_confirmed_gone", createdID: "auto-secret", revokeStatus: 503, listStatus: 200, listBody: `[]`, wantRevokes: 1, wantSecretPost: 1},
+		{name: "revoke_404_confirmed_gone", createdID: "auto-secret", revokeStatus: 404, listStatus: 200, listBody: `[{"id":"other"}]`, wantRevokes: 1, wantSecretPost: 1},
+		{name: "unidentified_secret_rolls_back", createdID: "", wantError: true, wantDeletes: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var order []string
+			revokes, secretPosts, deletes := 0, 0, 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.Method + " " + r.URL.Path {
+				case "GET /api/version/current":
+					_, _ = fmt.Fprint(w, `{"currentVersion":"2.17.0"}`)
+				case "POST /api/oidc/clients":
+					body := fmt.Sprintf(created, fmt.Sprintf(`,"isPublic":%t`, tc.public))
+					if tc.createdID == "" {
+						body = strings.Replace(body, `"id":"auto-secret",`, "", 1)
+					}
+					w.WriteHeader(http.StatusCreated)
+					_, _ = fmt.Fprint(w, body)
+				case "DELETE /api/oidc/clients/new-fixture/secrets/auto-secret":
+					revokes++
+					order = append(order, "revoke")
+					w.WriteHeader(tc.revokeStatus)
+				case "GET /api/oidc/clients/new-fixture/secrets":
+					w.WriteHeader(tc.listStatus)
+					_, _ = fmt.Fprint(w, tc.listBody)
+				case "POST /api/oidc/clients/new-fixture/secrets":
+					secretPosts++
+					order = append(order, "generate")
+					w.WriteHeader(http.StatusCreated)
+					_, _ = fmt.Fprint(w, `{"id":"managed-secret","secret":"synthetic-managed-secret"}`)
+				case "DELETE /api/oidc/clients/new-fixture":
+					deletes++
+					w.WriteHeader(http.StatusNoContent)
+				case "GET /api/oidc/clients/new-fixture":
+					_, _ = fmt.Fprint(w, `{"id":"new-fixture"}`)
+				default:
+					t.Errorf("unexpected method/path %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(400)
+				}
+			}))
+			defer server.Close()
+			c, _ := client.NewClient(server.URL, "synthetic-token", false, 1)
+			r := &clientResource{client: c}
+			ctx := context.Background()
+			schemaResp := resource.SchemaResponse{}
+			r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
+			model := lifecycleModel()
+			model.IsPublic = types.BoolValue(tc.public)
+			plan := tfsdk.Plan{Schema: schemaResp.Schema}
+			require.False(t, plan.Set(ctx, &model).HasError())
+			response := resource.CreateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+			r.Create(ctx, resource.CreateRequest{Plan: plan}, &response)
+
+			require.Equal(t, tc.wantError, response.Diagnostics.HasError(), "%v", response.Diagnostics)
+			require.Equal(t, tc.wantRevokes, revokes, "the revoke is never retried")
+			require.Equal(t, tc.wantSecretPost, secretPosts)
+			require.Equal(t, tc.wantDeletes, deletes)
+			if tc.wantRevokes > 0 && tc.wantSecretPost > 0 {
+				require.Equal(t, []string{"revoke", "generate"}, order)
+			}
+			for _, d := range response.Diagnostics {
+				require.NotContains(t, d.Detail(), "synthetic-auto-secret")
+				require.NotContains(t, d.Detail(), "synthetic-managed-secret")
+				require.NotContains(t, d.Detail(), "synthetic-token")
+				if tc.createdID != "" {
+					require.Contains(t, d.Detail(), "auto-secret", "the diagnostic names the secret left behind")
+				}
+			}
+			switch {
+			case !tc.wantError:
+				var state clientResourceModel
+				require.False(t, response.State.Get(ctx, &state).HasError())
+				require.Equal(t, "new-fixture", state.ID.ValueString())
+				if tc.public {
+					require.True(t, state.ClientSecret.IsNull())
+				} else {
+					require.Equal(t, "synthetic-managed-secret", state.ClientSecret.ValueString())
+				}
+			case tc.retained:
+				var state clientResourceModel
+				require.False(t, response.State.Get(ctx, &state).HasError())
+				require.Equal(t, "new-fixture", state.ID.ValueString())
+				require.True(t, state.ClientSecret.IsNull())
+			default:
+				require.True(t, response.State.Raw.IsNull())
 			}
 		})
 	}
