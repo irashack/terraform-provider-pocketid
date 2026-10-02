@@ -143,19 +143,40 @@ func (c *Client) ListAllUsers(ctx context.Context, search string) ([]User, error
 	return listAll(ctx, c, "users", "/api/users", query, func(user User) string { return user.ID })
 }
 
-// UpdateUserGroups updates the groups a user belongs to
-func (c *Client) UpdateUserGroups(ctx context.Context, userID string, groupIDs []string) error {
-	// Ensure groupIDs is never nil to serialize as empty array instead of null
+// UpdateUserGroups replaces the groups a user belongs to and returns the IDs
+// of the groups the user is in afterwards, as the server's response reports
+// them.
+//
+// Pocket ID keeps only the requested IDs that name an existing group and
+// drops the rest without an error (UserService.UpdateUserGroups looks the IDs
+// up with "id IN ?"), so a caller compares the result with what it asked
+// for. An empty or nil groupIDs is sent as [] (the server rejects null). A
+// response that cannot be decoded gives an error wrapping ErrResultUnread:
+// the change was made, its result is unknown. The PUT is never retried.
+func (c *Client) UpdateUserGroups(ctx context.Context, userID string, groupIDs []string) ([]string, error) {
 	if groupIDs == nil {
 		groupIDs = []string{}
 	}
 	req := UpdateUserGroupsRequest{UserGroupIDs: groupIDs}
 	id, err := uuidSegment("user", userID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	_, err = c.doRequest(ctx, "PUT", "/api/users/"+id+"/user-groups", req)
-	return err
+	body, err := c.doRequest(ctx, "PUT", "/api/users/"+id+"/user-groups", req)
+	if err != nil {
+		return nil, err
+	}
+	// UserDto.userGroups has no omitempty: a user in no group is null.
+	var fields map[string]json.RawMessage
+	var groups []UserGroup
+	raw, present := json.RawMessage(nil), false
+	if json.Unmarshal(body, &fields) == nil {
+		raw, present = fields["userGroups"]
+	}
+	if !present || json.Unmarshal(raw, &groups) != nil {
+		return nil, fmt.Errorf("groups of user %s: %w: the response did not list them", userID, ErrResultUnread)
+	}
+	return userGroupIDs(groups), nil
 }
 
 // AddUserToGroup adds a user to a group without changing the user's other
@@ -184,7 +205,15 @@ func (c *Client) AddUserToGroup(ctx context.Context, userID, groupID string) err
 	}
 	groupIDs = append(groupIDs, groupID)
 
-	return c.UpdateUserGroups(ctx, userID, groupIDs)
+	// TODO(association-check): result holds the groups the user is in now;
+	// a groupID missing from it was dropped by the server (no such group).
+	// Callers do not check it yet, and an unreadable result is not an error
+	// here, as before.
+	_, err = c.UpdateUserGroups(ctx, userID, groupIDs)
+	if errors.Is(err, ErrResultUnread) {
+		return nil
+	}
+	return err
 }
 
 // RemoveUserFromGroup removes a user from a group without changing the
@@ -218,7 +247,8 @@ func (c *Client) RemoveUserFromGroup(ctx context.Context, userID, groupID string
 		return nil
 	}
 
-	if err := c.UpdateUserGroups(ctx, userID, groupIDs); err != nil {
+	// TODO(association-check): the result could confirm groupID is gone.
+	if _, err := c.UpdateUserGroups(ctx, userID, groupIDs); err != nil && !errors.Is(err, ErrResultUnread) {
 		// A 404 from this PUT does not by itself prove the user is gone: it
 		// could be a wrong path or a proxy's generic not-found response.
 		// Re-check with a GET, which does positively identify a missing

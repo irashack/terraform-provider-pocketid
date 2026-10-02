@@ -2,6 +2,7 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 
@@ -246,8 +247,11 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 			tflog.Debug(ctx, "Updating user groups", map[string]any{
 				"groups": groupIDs,
 			})
-			err = r.client.UpdateUserGroups(ctx, userResp.ID, groupIDs)
-			if err != nil {
+			// TODO(association-check): the first result is the set of group IDs
+			// the server now holds; it drops IDs that name no group. Not
+			// compared yet, and an unreadable result is not an error here.
+			_, err = r.client.UpdateUserGroups(ctx, userResp.ID, groupIDs)
+			if err != nil && !errors.Is(err, client.ErrResultUnread) {
 				// Try to clean up the created user
 				_ = r.client.DeleteUser(ctx, userResp.ID)
 				resp.Diagnostics.AddError(
@@ -477,8 +481,11 @@ func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, r
 			tflog.Debug(ctx, "Updating user groups", map[string]any{
 				"groups": plannedGroupIDs,
 			})
-			err = r.client.UpdateUserGroups(ctx, plan.ID.ValueString(), plannedGroupIDs)
-			if err != nil {
+			// TODO(association-check): the first result is the set of group IDs
+			// the server now holds; it drops IDs that name no group. Not
+			// compared yet, and an unreadable result is not an error here.
+			_, err = r.client.UpdateUserGroups(ctx, plan.ID.ValueString(), plannedGroupIDs)
+			if err != nil && !errors.Is(err, client.ErrResultUnread) {
 				resp.Diagnostics.AddError(
 					"Error updating user groups",
 					"Could not update user groups: "+err.Error(),

@@ -43,6 +43,11 @@ func (e *HTTPError) Error() string {
 	return fmt.Sprintf("HTTP %d: %s", e.StatusCode, http.StatusText(e.StatusCode))
 }
 
+// ErrResultUnread marks an error returned after the server accepted a
+// mutation, when what it now holds could not be read back. The change was
+// made; only its result is unknown. Test with errors.Is.
+var ErrResultUnread = errors.New("the server accepted the change, but its result could not be read")
+
 // Resource identifies a kind of Pocket ID object the way its not-found error
 // names it. Most kinds share the code "not_found" and differ only in
 // details.resource (apperror.NotFound(name)); a few have a code of their own

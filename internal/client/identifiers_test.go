@@ -74,7 +74,7 @@ func TestClient_RefusesUnsafeIdentifiers(t *testing.T) {
 			return err
 		},
 		"DeleteClient":                  func(id string) error { return c.DeleteClient(ctx, id) },
-		"UpdateClientAllowedUserGroups": func(id string) error { return c.UpdateClientAllowedUserGroups(ctx, id, nil) },
+		"UpdateClientAllowedUserGroups": func(id string) error { _, err := c.UpdateClientAllowedUserGroups(ctx, id, nil); return err },
 		"GenerateClientSecret":          func(id string) error { _, err := c.GenerateClientSecret(ctx, id); return err },
 		"ListClientSecrets":             func(id string) error { _, err := c.ListClientSecrets(ctx, id); return err },
 		"DeleteClientSecret client":     func(id string) error { return c.DeleteClientSecret(ctx, id, validUUID) },
@@ -83,7 +83,7 @@ func TestClient_RefusesUnsafeIdentifiers(t *testing.T) {
 		"GetUser":                       func(id string) error { _, err := c.GetUser(ctx, id); return err },
 		"UpdateUser":                    func(id string) error { _, err := c.UpdateUser(ctx, id, &client.UserCreateRequest{}); return err },
 		"DeleteUser":                    func(id string) error { return c.DeleteUser(ctx, id) },
-		"UpdateUserGroups":              func(id string) error { return c.UpdateUserGroups(ctx, id, nil) },
+		"UpdateUserGroups":              func(id string) error { _, err := c.UpdateUserGroups(ctx, id, nil); return err },
 		"AddUserToGroup":                func(id string) error { return c.AddUserToGroup(ctx, id, validUUID) },
 		"RemoveUserFromGroup":           func(id string) error { return c.RemoveUserFromGroup(ctx, id, validUUID) },
 		"UserHasGroupMembership":        func(id string) error { _, err := c.UserHasGroupMembership(ctx, id, validUUID); return err },

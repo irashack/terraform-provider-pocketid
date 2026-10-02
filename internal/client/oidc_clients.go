@@ -188,13 +188,40 @@ func (c *Client) ListClients(ctx context.Context) ([]OIDCClient, error) {
 	return listAll(ctx, c, "OIDC clients", "/api/oidc/clients", nil, func(client OIDCClient) string { return client.ID })
 }
 
-// UpdateClientAllowedUserGroups updates the allowed user groups for an OIDC client
-func (c *Client) UpdateClientAllowedUserGroups(ctx context.Context, clientID string, groupIDs []string) error {
+// UpdateClientAllowedUserGroups replaces the user groups allowed to use an
+// OIDC client and returns the IDs of the groups the client has afterwards.
+//
+// Pocket ID keeps only the requested IDs that name an existing group and
+// drops the rest without an error (OidcService.UpdateAllowedUserGroups looks
+// the IDs up with "id IN ?"), so a caller compares the result with what it
+// asked for. An empty or nil groupIDs is sent as [] (the server rejects
+// null). The PUT's response does not include the groups, so they are read
+// back with GetClient; if that read fails the error wraps ErrResultUnread:
+// the change was made, its result is unknown. The PUT is never retried.
+func (c *Client) UpdateClientAllowedUserGroups(ctx context.Context, clientID string, groupIDs []string) ([]string, error) {
+	if groupIDs == nil {
+		groupIDs = []string{}
+	}
 	req := UpdateAllowedUserGroupsRequest{UserGroupIDs: groupIDs}
 	id, err := clientIDSegment(clientID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	_, err = c.doRequest(ctx, "PUT", "/api/oidc/clients/"+id+"/allowed-user-groups", req)
-	return err
+	if _, err := c.doRequest(ctx, "PUT", "/api/oidc/clients/"+id+"/allowed-user-groups", req); err != nil {
+		return nil, err
+	}
+	current, err := c.GetClient(ctx, clientID)
+	if err != nil {
+		return nil, fmt.Errorf("allowed user groups of client %s: %w: %w", clientID, ErrResultUnread, err)
+	}
+	return userGroupIDs(current.AllowedUserGroups), nil
+}
+
+// userGroupIDs returns the IDs of groups, never nil.
+func userGroupIDs(groups []UserGroup) []string {
+	ids := make([]string, 0, len(groups))
+	for _, group := range groups {
+		ids = append(ids, group.ID)
+	}
+	return ids
 }

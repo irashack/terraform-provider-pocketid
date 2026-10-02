@@ -3,7 +3,9 @@ package client_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -275,24 +277,62 @@ func TestClient_ListUsers_Empty(t *testing.T) {
 }
 
 func TestClient_UpdateUserGroups(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "PUT", r.Method)
-		assert.Equal(t, "/api/users/11111111-1111-4111-8111-111111111111/user-groups", r.URL.Path)
+	const user = "11111111-1111-4111-8111-111111111111"
+	const g1, unknown = "22222222-2222-4222-8222-222222222222", "33333333-3333-4333-8333-333333333333"
+	for name, tc := range map[string]struct {
+		request    []string
+		wantBody   string
+		status     int
+		response   string
+		want       []string
+		wantUnread bool
+		wantStatus int
+	}{
+		// The response (UserDto) lists the groups the user is in afterwards.
+		"unknown ID dropped": {request: []string{g1, unknown}, wantBody: `{"userGroupIds":["` + g1 + `","` + unknown + `"]}`, status: 200,
+			response: `{"id":"` + user + `","userGroups":[{"id":"` + g1 + `"}]}`, want: []string{g1}},
+		// UserDto.userGroups has no omitempty, so no groups is null.
+		"nil sends an empty list": {request: nil, wantBody: `{"userGroupIds":[]}`, status: 200, response: `{"id":"` + user + `","userGroups":null}`, want: []string{}},
+		"empty list":              {request: []string{}, wantBody: `{"userGroupIds":[]}`, status: 200, response: `{"id":"` + user + `","userGroups":[]}`, want: []string{}},
+		"result not listed":       {request: []string{g1}, status: 200, response: `{"id":"` + user + `"}`, wantUnread: true},
+		"empty body":              {request: []string{g1}, status: 200, response: ``, wantUnread: true},
+		"rejected":                {request: []string{g1}, status: 400, response: `{"error":"x"}`, wantStatus: 400},
+	} {
+		t.Run(name, func(t *testing.T) {
+			puts := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "PUT", r.Method)
+				assert.Equal(t, "/api/users/"+user+"/user-groups", r.URL.Path)
+				puts++
+				body, err := io.ReadAll(r.Body)
+				require.NoError(t, err)
+				if tc.wantBody != "" {
+					assert.JSONEq(t, tc.wantBody, string(body))
+				}
+				w.WriteHeader(tc.status)
+				_, _ = fmt.Fprint(w, tc.response)
+			}))
+			defer server.Close()
+			c, err := client.NewClient(server.URL, "test-token", false, 30)
+			require.NoError(t, err)
 
-		var req client.UpdateUserGroupsRequest
-		err := json.NewDecoder(r.Body).Decode(&req)
-		require.NoError(t, err)
-		assert.Equal(t, []string{"group1", "group2"}, req.UserGroupIDs)
-
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	c, err := client.NewClient(server.URL, "test-token", false, 30)
-	require.NoError(t, err)
-
-	err = c.UpdateUserGroups(context.Background(), "11111111-1111-4111-8111-111111111111", []string{"group1", "group2"})
-	assert.NoError(t, err)
+			got, err := c.UpdateUserGroups(context.Background(), user, tc.request)
+			assert.Equal(t, 1, puts)
+			switch {
+			case tc.wantStatus != 0:
+				var status *client.HTTPError
+				require.ErrorAs(t, err, &status)
+				assert.Equal(t, tc.wantStatus, status.StatusCode)
+				assert.False(t, errors.Is(err, client.ErrResultUnread))
+			case tc.wantUnread:
+				assert.ErrorIs(t, err, client.ErrResultUnread)
+				assert.Nil(t, got)
+			default:
+				require.NoError(t, err)
+				assert.Equal(t, tc.want, got)
+			}
+		})
+	}
 }
 
 func TestClient_CreateUser_UnmarshalError(t *testing.T) {

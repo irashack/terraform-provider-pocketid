@@ -3,7 +3,9 @@ package client_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -235,24 +237,73 @@ func TestClient_ListClients(t *testing.T) {
 }
 
 func TestClient_UpdateClientAllowedUserGroups(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "PUT", r.Method)
-		assert.Equal(t, "/api/oidc/clients/test-client-id/allowed-user-groups", r.URL.Path)
+	const g1, g2, unknown = "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222", "33333333-3333-4333-8333-333333333333"
+	for name, tc := range map[string]struct {
+		request    []string
+		wantBody   string
+		putStatus  int
+		getStatus  int
+		getGroups  string
+		want       []string
+		wantUnread bool
+		wantStatus int
+		wantGets   int
+	}{
+		// The PUT's response (OidcClientDto) carries no groups: the result
+		// comes from reading the client back, and shows what was dropped.
+		"unknown ID dropped": {request: []string{g1, unknown, g2}, wantBody: `{"userGroupIds":["` + g1 + `","` + unknown + `","` + g2 + `"]}`,
+			putStatus: 200, getStatus: 200, getGroups: `[{"id":"` + g1 + `"},{"id":"` + g2 + `"}]`, want: []string{g1, g2}, wantGets: 1},
+		"nil sends an empty list":  {request: nil, wantBody: `{"userGroupIds":[]}`, putStatus: 200, getStatus: 200, getGroups: `[]`, want: []string{}, wantGets: 1},
+		"groups omitted on read":   {request: []string{}, wantBody: `{"userGroupIds":[]}`, putStatus: 200, getStatus: 200, getGroups: ``, want: []string{}, wantGets: 1},
+		"rejected":                 {request: []string{g1}, putStatus: 400, wantStatus: 400},
+		"server error not retried": {request: []string{g1}, putStatus: 503, wantStatus: 503},
+		"read back fails":          {request: []string{g1}, putStatus: 200, getStatus: 403, wantUnread: true, wantStatus: 403, wantGets: 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			puts, gets := 0, 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.Method + " " + r.URL.Path {
+				case "PUT /api/oidc/clients/test-client-id/allowed-user-groups":
+					puts++
+					body, err := io.ReadAll(r.Body)
+					require.NoError(t, err)
+					if tc.wantBody != "" {
+						assert.JSONEq(t, tc.wantBody, string(body))
+					}
+					w.WriteHeader(tc.putStatus)
+					_, _ = fmt.Fprint(w, `{"id":"test-client-id","name":"n","isGroupRestricted":true}`)
+				case "GET /api/oidc/clients/test-client-id":
+					gets++
+					w.WriteHeader(tc.getStatus)
+					groups := ""
+					if tc.getGroups != "" {
+						groups = `,"allowedUserGroups":` + tc.getGroups
+					}
+					_, _ = fmt.Fprint(w, `{"id":"test-client-id","name":"n"`+groups+`}`)
+				default:
+					t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+				}
+			}))
+			defer server.Close()
+			c, err := client.NewClient(server.URL, "test-token", false, 30)
+			require.NoError(t, err)
 
-		var req client.UpdateAllowedUserGroupsRequest
-		err := json.NewDecoder(r.Body).Decode(&req)
-		require.NoError(t, err)
-		assert.Equal(t, []string{"group1", "group2"}, req.UserGroupIDs)
-
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	c, err := client.NewClient(server.URL, "test-token", false, 30)
-	require.NoError(t, err)
-
-	err = c.UpdateClientAllowedUserGroups(context.Background(), "test-client-id", []string{"group1", "group2"})
-	assert.NoError(t, err)
+			got, err := c.UpdateClientAllowedUserGroups(context.Background(), "test-client-id", tc.request)
+			assert.Equal(t, 1, puts, "the PUT is sent once")
+			assert.Equal(t, tc.wantGets, gets)
+			if tc.wantStatus != 0 {
+				var status *client.HTTPError
+				require.ErrorAs(t, err, &status)
+				assert.Equal(t, tc.wantStatus, status.StatusCode)
+				assert.Equal(t, tc.wantUnread, errors.Is(err, client.ErrResultUnread))
+				assert.Nil(t, got)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
 }
 
 func TestClient_CreateClient_UnmarshalError(t *testing.T) {

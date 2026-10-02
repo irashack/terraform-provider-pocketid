@@ -431,8 +431,11 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 			tflog.Debug(ctx, "Updating allowed user groups", map[string]any{
 				"groups": groupIDs,
 			})
-			err = r.client.UpdateClientAllowedUserGroups(ctx, clientResp.ID, groupIDs)
-			if err != nil {
+			// TODO(association-check): the first result is the set of group IDs
+			// the server now holds; it drops IDs that name no group. Not
+			// compared yet, and an unreadable result is not an error here.
+			_, err = r.client.UpdateClientAllowedUserGroups(ctx, clientResp.ID, groupIDs)
+			if err != nil && !errors.Is(err, client.ErrResultUnread) {
 				r.failedCreate(ctx, &plan, err, resp)
 
 				return
@@ -696,8 +699,11 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 			tflog.Debug(ctx, "Updating allowed user groups", map[string]any{
 				"groups": plannedGroupIDs,
 			})
-			err = r.client.UpdateClientAllowedUserGroups(ctx, plan.ID.ValueString(), plannedGroupIDs)
-			if err != nil {
+			// TODO(association-check): the first result is the set of group IDs
+			// the server now holds; it drops IDs that name no group. Not
+			// compared yet, and an unreadable result is not an error here.
+			_, err = r.client.UpdateClientAllowedUserGroups(ctx, plan.ID.ValueString(), plannedGroupIDs)
+			if err != nil && !errors.Is(err, client.ErrResultUnread) {
 				resp.Diagnostics.AddError(
 					"Error updating allowed user groups",
 					"Could not update allowed user groups: "+err.Error(),
