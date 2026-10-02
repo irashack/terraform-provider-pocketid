@@ -40,14 +40,18 @@ docs-check: docs ## Require generated docs to match the checkout
 	git diff --exit-code -- docs
 	@test -z "$$(git ls-files --others --exclude-standard docs)"
 
-test-acc: ## Run client and application-config acceptance on one disposable official image
-	python3 scripts/disposable-pocketid.py $(POCKETID_VERSION) -- $(GO) test -v -count=1 -timeout 15m ./internal/provider -tags=acc -run '^TestAccResource(Client|ApplicationConfig)'
+# Acceptance packages share one fixture, so they run one after another (-p 1):
+# a client created by one package could otherwise crowd another's list reads.
+ACC_PACKAGES := ./internal/provider ./internal/datasources
+
+test-acc: ## Run client (resource and data sources) and application-config acceptance on one disposable official image
+	python3 scripts/disposable-pocketid.py $(POCKETID_VERSION) -- $(GO) test -v -count=1 -p 1 -timeout 15m $(ACC_PACKAGES) -tags=acc -run '^TestAcc(Resource(Client|ApplicationConfig)|ClientDataSources)'
 
 test-acc-matrix: ## Run client and application-config acceptance on every fixture version
 	@for version in 2.14.0 2.15.0 2.16.0 2.17.0; do $(MAKE) test-acc POCKETID_VERSION=$$version || exit $$?; done
 
-test-acc-provider: ## Run the full acceptance suite on one disposable official image
-	python3 scripts/disposable-pocketid.py $(POCKETID_VERSION) -- $(GO) test -v -count=1 -timeout 20m ./internal/provider -tags=acc
+test-acc-provider: ## Run the full provider and data-source acceptance suites on one disposable official image
+	python3 scripts/disposable-pocketid.py $(POCKETID_VERSION) -- $(GO) test -v -count=1 -p 1 -timeout 20m $(ACC_PACKAGES) -tags=acc
 
 vuln: ## Check reachable Go vulnerabilities
 	$(GO) run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...

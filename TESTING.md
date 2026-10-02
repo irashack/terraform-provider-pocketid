@@ -10,7 +10,8 @@ for version in 2.16.0 2.17.0; do
   python3 scripts/disposable-pocketid.py "$version" -- go test -v -count=1 -timeout 20m ./internal/provider -tags=acc
   python3 scripts/disposable-pocketid.py "$version" -- go test -v -count=1 -timeout 20m ./internal/datasources -tags=acc
 done
-make test-acc-matrix  # client and application-config acceptance on 2.14.0, 2.15.0, 2.16.0 and 2.17.0
+make test-acc-provider POCKETID_VERSION=2.17.0  # both packages above, on one fixture
+make test-acc-matrix  # client (resource and data sources) and application-config acceptance on 2.14.0 to 2.17.0
 ```
 
 The fixture pulls official versioned Pocket ID images. It creates an isolated
