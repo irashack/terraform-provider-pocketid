@@ -50,9 +50,12 @@ func (c *Client) SetGroupMembers(ctx context.Context, groupID string, userIDs []
 		return nil, fmt.Errorf("members of group %s: %w", groupID, err)
 	}
 	raw, present := fields["users"]
-	var users []groupRelationRef
-	if !present || json.Unmarshal(raw, &users) != nil {
+	if !present {
 		return nil, fmt.Errorf("members of group %s: %w: the response did not list them", groupID, ErrResultUnread)
+	}
+	var users []groupRelationRef
+	if err := decodeResult(raw, &users); err != nil {
+		return nil, fmt.Errorf("members of group %s: %w", groupID, err)
 	}
 	// The response must describe this group, and every member it lists must
 	// pass the ID check, before the members are taken as the result.

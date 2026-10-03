@@ -296,14 +296,19 @@ func (c *Client) UpdateClientAllowedUserGroups(ctx context.Context, clientID str
 	// OidcClientWithAllowedUserGroupsDto.allowedUserGroups has no
 	// omitempty: null or [] means none. A response without the field says
 	// nothing about the groups, so it never confirms an empty set.
+	// An answer that is not the JSON expected wraps ErrUndecodableResponse
+	// as well; one that is valid but leaves the field out does not.
 	var fields map[string]json.RawMessage
-	var groups []UserGroup
-	raw, present := json.RawMessage(nil), false
-	if json.Unmarshal(body, &fields) == nil {
-		raw, present = fields["allowedUserGroups"]
+	if err := decodeResult(body, &fields); err != nil {
+		return nil, fmt.Errorf("allowed user groups of client %s: %w", clientID, err)
 	}
-	if !present || json.Unmarshal(raw, &groups) != nil {
+	raw, present := fields["allowedUserGroups"]
+	if !present {
 		return nil, fmt.Errorf("allowed user groups of client %s: %w: the response did not list them", clientID, ErrResultUnread)
+	}
+	var groups []UserGroup
+	if err := decodeResult(raw, &groups); err != nil {
+		return nil, fmt.Errorf("allowed user groups of client %s: %w", clientID, err)
 	}
 	// The read-back must describe this client, and every group it lists must
 	// pass the ID check, before its groups are taken as the result.

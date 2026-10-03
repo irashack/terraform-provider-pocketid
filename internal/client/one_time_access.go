@@ -44,7 +44,10 @@ func (c *Client) CreateOneTimeAccessToken(ctx context.Context, userID string, re
 	// The POST succeeded, so a token may exist from here on; it is never sent
 	// again. Pocket ID answers {"token": "..."} (onetimeaccess handler).
 	var token OneTimeAccessToken
-	if err := decodeResult(body, &token); err != nil || token.Token == "" {
+	if err := decodeResult(body, &token); err != nil {
+		return nil, fmt.Errorf("one-time access token for user %s: %w; a token may have been created that stays valid until it expires; no second request was sent", userID, err)
+	}
+	if token.Token == "" {
 		return nil, fmt.Errorf("one-time access token for user %s: %w: the response held no token, so a token may have been created that stays valid until it expires; no second request was sent", userID, ErrResultUnread)
 	}
 

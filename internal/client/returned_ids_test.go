@@ -317,6 +317,18 @@ func TestClient_AreaDecodeErrorsAreTheFoundationsSentinels(t *testing.T) {
 			_, err := c.CreateOneTimeAccessToken(ctx, returnedIDsUser, &client.OneTimeAccessTokenRequest{})
 			return err
 		}},
+		"UpdateClientAllowedUserGroups": {`{"id":"app","allowedUserGroups":` + literal + `}`, func(c *client.Client) error {
+			_, err := c.UpdateClientAllowedUserGroups(ctx, "app", nil)
+			return err
+		}},
+		"UpdateClientAllowedUserGroups, not an object": {literal, func(c *client.Client) error {
+			_, err := c.UpdateClientAllowedUserGroups(ctx, "app", nil)
+			return err
+		}},
+		"CreateUserGroup": {`{"id":"` + returnedIDsGroup + `","name":` + literal + `}`, func(c *client.Client) error {
+			_, err := c.CreateUserGroup(ctx, &client.UserGroupCreateRequest{Name: "g", FriendlyName: "g"})
+			return err
+		}},
 	}
 	for name, tc := range mutations {
 		t.Run("mutation "+name, func(t *testing.T) {
@@ -324,10 +336,48 @@ func TestClient_AreaDecodeErrorsAreTheFoundationsSentinels(t *testing.T) {
 			err := tc.call(c)
 			require.Error(t, err)
 			assert.ErrorIs(t, err, client.ErrResultUnread)
+			assert.ErrorIs(t, err, client.ErrUndecodableResponse, "the decoder's sentinel is kept")
 			assert.NotContains(t, err.Error(), literal[:12])
 			var syntax *json.SyntaxError
 			var typeErr *json.UnmarshalTypeError
 			assert.False(t, errors.As(err, &syntax) || errors.As(err, &typeErr), "no decoder error is kept")
+		})
+	}
+
+	// Valid JSON that leaves out what the method needs is an unread result,
+	// not an undecodable one.
+	missing := map[string]struct {
+		body string
+		call func(c *client.Client) error
+	}{
+		"SetGroupMembers": {`{"id":"` + returnedIDsGroup + `"}`, func(c *client.Client) error {
+			_, err := c.SetGroupMembers(ctx, returnedIDsGroup, nil)
+			return err
+		}},
+		"CreateOneTimeAccessToken": {`{}`, func(c *client.Client) error {
+			_, err := c.CreateOneTimeAccessToken(ctx, returnedIDsUser, &client.OneTimeAccessTokenRequest{})
+			return err
+		}},
+		"UpdateClientAllowedUserGroups": {`{"id":"app"}`, func(c *client.Client) error {
+			_, err := c.UpdateClientAllowedUserGroups(ctx, "app", nil)
+			return err
+		}},
+		"CreateSignupToken": {`{"usageLimit":1}`, func(c *client.Client) error {
+			_, err := c.CreateSignupToken(ctx, &client.SignupTokenCreateRequest{UsageLimit: 1})
+			return err
+		}},
+		"CreateUserGroup": {`{"name":"g"}`, func(c *client.Client) error {
+			_, err := c.CreateUserGroup(ctx, &client.UserGroupCreateRequest{Name: "g", FriendlyName: "g"})
+			return err
+		}},
+	}
+	for name, tc := range missing {
+		t.Run("missing field "+name, func(t *testing.T) {
+			c, _ := returnedIDsServer(t, tc.body)
+			err := tc.call(c)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, client.ErrResultUnread)
+			assert.NotErrorIs(t, err, client.ErrUndecodableResponse, "the answer was valid JSON")
 		})
 	}
 }
