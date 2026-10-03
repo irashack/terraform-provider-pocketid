@@ -135,3 +135,9 @@
   reads, not later commits: a request still pending when a refresh clears
   `unresolved_user_ids`, or when destroy finishes, can be applied afterwards and
   leave the user it adds in the group with nothing managing it.
+- `pocketid_group_members`: the promise that destroy keeps members it did not
+  add applies to members that are in neither `user_ids` nor
+  `unresolved_user_ids`. Pocket ID does not record who made a user a member, so
+  a user listed in `unresolved_user_ids` who is a member when destroy reads the
+  group is removed, including one that an administrator granted independently of
+  the request that failed.

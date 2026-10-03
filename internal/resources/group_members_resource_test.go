@@ -338,6 +338,11 @@ func TestGroupMembersResource_SchemaAndMetadata(t *testing.T) {
 	for _, claim := range []string{"unresolved_user_ids", "may yet take effect", "plans for the resource are refused", "destroy stops with an error", "terraform state rm"} {
 		assert.Contains(t, sch.MarkdownDescription, claim)
 	}
+	// Outside additions are preserved except for the candidates, which have no
+	// grant provenance.
+	for _, claim := range []string{"in neither `user_ids` nor `unresolved_user_ids`", "no grant provenance", "granted independently of the request that failed", "stay, unless they are in `unresolved_user_ids`"} {
+		assert.Contains(t, sch.MarkdownDescription, claim)
+	}
 	// Refresh and destroy observe snapshots.
 	for _, claim := range []string{"observe a snapshot", "neither proves that the earlier request has finished", "not later commits", "nothing managing it"} {
 		assert.Contains(t, sch.MarkdownDescription, claim)
@@ -685,6 +690,20 @@ func TestGroupMembersResource_Read_ResolvesCandidates(t *testing.T) {
 	r.Delete(context.Background(), resource.DeleteRequest{State: resp.State}, deleted)
 	require.False(t, deleted.Diagnostics.HasError(), "%v", deleted.Diagnostics)
 	assert.Empty(t, s.memberSet())
+}
+
+// Destroy keeps members that are in neither user_ids nor the candidates, and
+// removes a candidate who is a member however it became one: the group records
+// no provenance, so a user an administrator granted independently of the failed
+// request is removed too.
+func TestGroupMembersResource_Delete_RemovesACandidateEvenIfAnAdministratorGrantedIt(t *testing.T) {
+	candidate, outsider := gmUUID(101), gmUUID(102)
+	s, c := newGMServer(t, candidate, outsider) // the request never committed; both were granted by others
+	r, sch := gmResource(t, c)
+
+	resp := gmDeleteUnresolved(t, r, sch, s.groupID, nil, []string{candidate})
+	require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
+	assert.Equal(t, []string{outsider}, s.memberSet(), "the candidate is removed, the other outside member stays")
 }
 
 // A read that fails leaves the candidates in place; a group that no longer
