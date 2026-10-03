@@ -251,7 +251,7 @@ func TestClientSecretResource_CreateWriteOnly(t *testing.T) {
 	expires := time.Now().Add(48 * time.Hour).Truncate(time.Second)
 	configured := expires.In(time.FixedZone("", 2*3600)).Format(time.RFC3339)
 	response := func(value, expiresAt string) string {
-		return `{"id":"` + clientSecretTestID + `","prefix":"wo-v","createdAt":"2026-10-02T10:00:00Z","expiresAt":` + expiresAt + `,"isActive":true,"secret":"` + value + `"}`
+		return `{"id":"` + clientSecretTestID + `","prefix":"` + value[:4] + `","createdAt":"2026-10-02T10:00:00Z","expiresAt":` + expiresAt + `,"isActive":true,"secret":"` + value + `"}`
 	}
 	serverExpiry := `"` + expires.UTC().Format(time.RFC3339) + `"`
 	config := clientSecretPlanned()
@@ -584,4 +584,66 @@ func TestClientSecretResource_CreateNamesExistingSecret(t *testing.T) {
 			assert.NotContains(t, fake.deletedIDs, existing, "the pre-existing secret is never revoked")
 		})
 	}
+}
+
+// Secret metadata reaches state and diagnostics only once checked: a whole
+// value in the prefix field is neither stored nor printed, and a list that
+// cannot be relied on proves nothing about absence.
+func TestClientSecretResource_MetadataChecked(t *testing.T) {
+	leakedList := `{"id":"` + clientSecretTestID + `","prefix":"` + clientSecretTestGen + `","createdAt":"2026-10-02T10:00:00Z","isActive":true}`
+
+	t.Run("create response with the value as prefix", func(t *testing.T) {
+		fake := clientSecretFake{version: "2.17.0", postStatus: http.StatusCreated,
+			postBody: `{"id":"` + clientSecretTestID + `","prefix":"` + clientSecretTestGen + `","createdAt":"2026-10-02T10:00:00Z","isActive":true,"secret":"` + clientSecretTestGen + `"}`}
+		resp, state := clientSecretCreate(t, fake.serve(t), clientSecretPlanned())
+		require.True(t, resp.Diagnostics.HasError())
+		assert.Contains(t, clientSecretDiagText(resp.Diagnostics), "only its ID is kept")
+		assert.NotContains(t, clientSecretDiagText(resp.Diagnostics), clientSecretTestGen)
+		require.NotNil(t, state, "the new secret's identity is kept so the next apply revokes it")
+		assert.Equal(t, clientSecretTestID, state.ID.ValueString())
+		assert.True(t, state.Prefix.IsNull())
+		assert.True(t, state.Secret.IsNull())
+		assert.NotContains(t, resp.State.Raw.String(), clientSecretTestGen)
+	})
+	t.Run("create refuses an unusable list", func(t *testing.T) {
+		fake := clientSecretFake{version: "2.17.0", listed: []string{leakedList}}
+		resp, state := clientSecretCreate(t, fake.serve(t), clientSecretPlanned())
+		require.True(t, resp.Diagnostics.HasError())
+		assert.NotContains(t, clientSecretDiagText(resp.Diagnostics), clientSecretTestGen)
+		assert.Contains(t, clientSecretDiagText(resp.Diagnostics), "malformed")
+		assert.Nil(t, state)
+		assert.Zero(t, fake.posts)
+	})
+	t.Run("uncertain create with an unusable list afterwards", func(t *testing.T) {
+		fake := clientSecretFake{version: "2.17.0", postStatus: 503, appearOnPost: leakedList}
+		resp, _ := clientSecretCreate(t, fake.serve(t), clientSecretPlanned())
+		require.True(t, resp.Diagnostics.HasError())
+		text := clientSecretDiagText(resp.Diagnostics)
+		assert.Contains(t, text, "could not be listed afterwards")
+		assert.NotContains(t, text, clientSecretTestGen)
+	})
+	for name, list := range map[string][]string{
+		"read: empty object":    {`{}`},
+		"read: value as prefix": {leakedList},
+		"read: duplicate IDs":   {clientSecretObject(clientSecretTestOther, "othr"), clientSecretObject(clientSecretTestOther, "othr")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := clientSecretFake{listed: list}
+			resp, got := clientSecretRead(t, fake.serve(t), clientSecretStored())
+			require.True(t, resp.Diagnostics.HasError(), "an unusable list is an error, not proof the secret is gone")
+			require.NotNil(t, got, "state is kept")
+			assert.NotContains(t, clientSecretDiagText(resp.Diagnostics), clientSecretTestGen[4:])
+		})
+	}
+	t.Run("delete: an unusable list does not confirm revocation", func(t *testing.T) {
+		fake := clientSecretFake{deleteStatus: 503, listAfterDel: []string{`{}`}}
+		ctx := context.Background()
+		state := tfsdk.State{Schema: clientSecretTestSchema(t)}
+		stored := clientSecretStored()
+		require.False(t, state.Set(ctx, &stored).HasError())
+		resp := resource.DeleteResponse{State: state}
+		(&clientSecretResource{client: fake.serve(t)}).Delete(ctx, resource.DeleteRequest{State: state}, &resp)
+		require.True(t, resp.Diagnostics.HasError())
+		assert.Contains(t, clientSecretDiagText(resp.Diagnostics), "could not confirm")
+	})
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"golang.org/x/mod/semver"
@@ -30,6 +31,42 @@ const MaxClientSecrets = 20
 // secret (a usable ID) but carried no value. The secret exists and can be
 // revoked by its ID; its value is lost.
 var ErrCreatedSecretValueMissing = errors.New("the server created a client secret but did not return its value")
+
+// ErrCreatedSecretMalformed marks a create response that named the new
+// secret (a usable ID) but whose other fields could not be read or broke
+// Pocket ID's contract. Only the ID is returned with it; nothing else from
+// the response is kept or repeated.
+var ErrCreatedSecretMalformed = errors.New("the server created a client secret but the rest of its response is unusable")
+
+// ErrMalformedSecretList marks a secret list that cannot be relied on: an
+// entry without a usable ID, an ID listed twice, or a prefix outside
+// Pocket ID's contract. Such a list proves neither presence nor absence.
+// The error repeats nothing from the response.
+var ErrMalformedSecretList = errors.New("the client secret list Pocket ID returned is malformed")
+
+// clientSecretPrefixLength is how many leading characters of a secret Pocket
+// ID keeps in clear text (model.OidcClientSecretPrefixLength, 2.14.0 to
+// 2.17.0); the prefix is empty only for a secret migrated from the
+// single-secret column.
+const clientSecretPrefixLength = 4
+
+// validClientSecretPrefix applies Pocket ID's contract for a prefix: empty,
+// or exactly four printable ASCII characters (a secret's first four).
+// Anything else, such as a whole secret, is never stored or printed.
+func validClientSecretPrefix(prefix string) bool {
+	if prefix == "" {
+		return true
+	}
+	if len(prefix) != clientSecretPrefixLength {
+		return false
+	}
+	for i := 0; i < len(prefix); i++ {
+		if prefix[i] < 0x20 || prefix[i] > 0x7e {
+			return false
+		}
+	}
+	return true
+}
 
 // ClientSecretMetadata describes one secret of an OIDC client, without its
 // value, as GET /api/oidc/clients/{id}/secrets lists it (OidcClientSecretDto,
@@ -206,22 +243,37 @@ func secretCreateBody(opts *ClientSecretOptions) (any, error) {
 }
 
 // decodeCreatedSecret reads OidcClientSecretCreatedDto. A response without a
-// usable (UUID) ID returns no result; one with an ID but no value returns the
-// metadata together with ErrCreatedSecretValueMissing. Neither error carries
-// any of the response.
+// usable (UUID) ID returns no result. One with a usable ID but other fields
+// that cannot be read, or a prefix outside Pocket ID's contract (or not the
+// start of the returned value), returns only that ID, with
+// ErrCreatedSecretMalformed. One with an ID but no value returns the
+// metadata together with ErrCreatedSecretValueMissing. No error carries any
+// of the response.
 func decodeCreatedSecret(response []byte) (*ClientSecret, error) {
 	var result struct {
 		ClientSecretMetadata
 		Secret string `json:"secret"`
 	}
 	if err := json.Unmarshal(response, &result); err != nil {
-		return nil, undecodableResultError{message: "error unmarshaling secret response; result uncertain, inspect the client's secrets before recovery"}
+		// The ID alone may still be readable and is all that is kept.
+		var head struct {
+			ID string `json:"id"`
+		}
+		if json.Unmarshal(response, &head) != nil || ValidateUUID("client secret", head.ID) != nil {
+			return nil, fmt.Errorf("error unmarshaling secret response; result uncertain, inspect before recovery")
+		}
+		return &ClientSecret{ClientSecretMetadata: ClientSecretMetadata{ID: head.ID}},
+			fmt.Errorf("secret creation returned secret %s with fields that could not be read; result uncertain, inspect the client before recovery: %w", head.ID, ErrCreatedSecretMalformed)
 	}
 	if err := ValidateUUID("client secret", result.ID); err != nil {
 		if result.Secret == "" {
 			return nil, fmt.Errorf("secret creation returned no secret; result uncertain, inspect the client before recovery")
 		}
 		return nil, fmt.Errorf("secret creation returned no usable secret ID; result uncertain, inspect the client's secrets before recovery: %w", err)
+	}
+	if !validClientSecretPrefix(result.Prefix) || (result.Secret != "" && result.Prefix != "" && !strings.HasPrefix(result.Secret, result.Prefix)) {
+		return &ClientSecret{ClientSecretMetadata: ClientSecretMetadata{ID: result.ID}},
+			fmt.Errorf("secret creation returned secret %s with a prefix outside Pocket ID's contract; result uncertain, inspect the client before recovery: %w", result.ID, ErrCreatedSecretMalformed)
 	}
 	if result.Secret == "" {
 		return &ClientSecret{ClientSecretMetadata: result.ClientSecretMetadata},
@@ -231,7 +283,9 @@ func decodeCreatedSecret(response []byte) (*ClientSecret, error) {
 }
 
 // ListClientSecrets lists an OIDC client's secrets without their values.
-// Pocket ID 2.14.0 and later only.
+// Pocket ID 2.14.0 and later only. The entries are not checked: a caller that
+// stores or prints them, or takes a missing entry as proof that a secret is
+// gone, checks the list with CheckClientSecretList first.
 func (c *Client) ListClientSecrets(ctx context.Context, clientID string) ([]ClientSecretMetadata, error) {
 	id, err := clientIDSegment(clientID)
 	if err != nil {
@@ -247,6 +301,22 @@ func (c *Client) ListClientSecrets(ctx context.Context, clientID string) ([]Clie
 		return nil, fmt.Errorf("error unmarshaling client secret list")
 	}
 	return result, nil
+}
+
+// CheckClientSecretList refuses, with ErrMalformedSecretList, a secret list
+// that cannot be relied on: an entry whose ID is not a UUID (such as an
+// empty object), an ID listed twice, or a prefix outside Pocket ID's
+// contract (empty, or four printable ASCII characters). An empty list is a
+// client without secrets. Nothing from a refused list is repeated.
+func CheckClientSecretList(secrets []ClientSecretMetadata) error {
+	seen := make(map[string]bool, len(secrets))
+	for _, secret := range secrets {
+		if ValidateUUID("client secret", secret.ID) != nil || seen[secret.ID] || !validClientSecretPrefix(secret.Prefix) {
+			return ErrMalformedSecretList
+		}
+		seen[secret.ID] = true
+	}
+	return nil
 }
 
 // DeleteClientSecret revokes one secret of an OIDC client. Pocket ID 2.14.0
@@ -271,7 +341,8 @@ func (c *Client) DeleteClientSecret(ctx context.Context, clientID, secretID stri
 // only once the secret is confirmed absent: by Pocket ID's own not-found
 // error for the secret or for its client (a client's secrets live in the
 // client, so they go with it), or by a list of the client's secrets read
-// after the DELETE that no longer contains it. A successful DELETE is
+// after the DELETE that passes CheckClientSecretList and no longer
+// contains it. A successful DELETE is
 // confirmed the same way. Any other outcome is an error that names the
 // secret's ID: the secret may still be valid. The DELETE is never retried;
 // the list is a read and follows the read retry rules.
@@ -285,6 +356,9 @@ func (c *Client) RevokeClientSecret(ctx context.Context, clientID, secretID stri
 	}
 
 	remaining, listErr := c.ListClientSecrets(ctx, clientID)
+	if listErr == nil {
+		listErr = CheckClientSecretList(remaining)
+	}
 	if listErr != nil {
 		if IsNotFound(listErr, ResourceOIDCClient) {
 			return nil

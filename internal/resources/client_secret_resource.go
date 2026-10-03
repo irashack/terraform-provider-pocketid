@@ -2,6 +2,7 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -282,7 +283,7 @@ func (r *clientSecretResource) Create(ctx context.Context, req resource.CreateRe
 			"OIDC client "+clientID+" is a public client, and Pocket ID gives public clients no secrets; no secret was created.")
 		return
 	}
-	before, err := r.client.ListClientSecrets(ctx, clientID)
+	before, err := r.listClientSecrets(ctx, clientID)
 	if err != nil {
 		resp.Diagnostics.AddError("Error listing client secrets", "Could not list the secrets of OIDC client "+clientID+" before creating one; no secret was created: "+err.Error())
 		return
@@ -306,13 +307,19 @@ func (r *clientSecretResource) Create(ctx context.Context, req resource.CreateRe
 	}
 	if err != nil {
 		if created != nil {
-			// The secret exists, named by its ID, but its value was not
-			// returned. Keep its identity in state: Terraform marks the
+			// The secret exists, named by its (new) ID, but the rest of the
+			// response is missing or unusable. Keep its identity in state,
+			// and nothing the response said beyond it: Terraform marks the
 			// resource tainted, and the next apply revokes and replaces it.
-			r.keepCreated(ctx, &plan, created, "", resp)
-			resp.Diagnostics.AddError("Client secret value not returned",
-				"Pocket ID created client secret "+created.ID+" on OIDC client "+clientID+" but returned no value. The secret is kept in state "+
-					"so that the next apply revokes and replaces it; it was not retried. "+err.Error())
+			identityOnly := errors.Is(err, client.ErrCreatedSecretMalformed)
+			r.keepCreated(ctx, &plan, created, "", identityOnly, resp)
+			summary, problem := "Client secret value not returned", "returned no value"
+			if identityOnly {
+				summary, problem = "Client secret response unusable", "the rest of its response could not be used, so only its ID is kept"
+			}
+			resp.Diagnostics.AddError(summary,
+				"Pocket ID created client secret "+created.ID+" on OIDC client "+clientID+", but "+problem+". The secret is kept in state "+
+					"so that the next apply revokes and replaces it; it was not retried.")
 			return
 		}
 		r.reportFailedCreate(ctx, clientID, before, err, resp)
@@ -333,7 +340,7 @@ func (r *clientSecretResource) Create(ctx context.Context, req resource.CreateRe
 		if writeOnly {
 			value = ""
 		}
-		r.keepCreated(ctx, &plan, created, value, resp)
+		r.keepCreated(ctx, &plan, created, value, false, resp)
 		resp.Diagnostics.AddError("Client secret not created as planned",
 			"Pocket ID created client secret "+created.ID+" on OIDC client "+clientID+", but "+strings.Join(mismatch, " and ")+". "+
 				"The secret is kept in state so that the next apply revokes and replaces it.")
@@ -344,13 +351,24 @@ func (r *clientSecretResource) Create(ctx context.Context, req resource.CreateRe
 	if writeOnly {
 		value = ""
 	}
-	r.keepCreated(ctx, &plan, created, value, resp)
+	r.keepCreated(ctx, &plan, created, value, false, resp)
 }
 
 // keepCreated records a created secret in state. value is stored as `secret`
-// unless it is empty (a caller-supplied value, or none returned).
-func (r *clientSecretResource) keepCreated(ctx context.Context, plan *clientSecretResourceModel, created *client.ClientSecret, value string, resp *resource.CreateResponse) {
+// unless it is empty (a caller-supplied value, or none returned). With
+// identityOnly only the ID is recorded: the response's other fields were not
+// usable, so nothing else from it is stored.
+func (r *clientSecretResource) keepCreated(ctx context.Context, plan *clientSecretResourceModel, created *client.ClientSecret, value string, identityOnly bool, resp *resource.CreateResponse) {
 	plan.ID = types.StringValue(created.ID)
+	if identityOnly {
+		plan.Prefix = types.StringNull()
+		plan.CreatedAt = types.StringNull()
+		plan.IsActive = types.BoolNull()
+		plan.Secret = types.StringNull()
+		plan.SecretWO = types.StringNull()
+		resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
+		return
+	}
 	plan.Prefix = types.StringValue(created.Prefix)
 	plan.CreatedAt = types.StringValue(formatSecretTime(created.CreatedAt))
 	plan.IsActive = types.BoolValue(created.IsActive)
@@ -376,7 +394,7 @@ func (r *clientSecretResource) reportFailedCreate(ctx context.Context, clientID 
 		detail := "Pocket ID refused to create a secret for OIDC client " + clientID + " (" + cause.Error() + "); no secret was created."
 		if client.IsNotFound(cause, client.ResourceOIDCClient) {
 			detail = "OIDC client " + clientID + " no longer exists; no secret was created."
-		} else if after, err := r.client.ListClientSecrets(ctx, clientID); err == nil && len(after) >= client.MaxClientSecrets {
+		} else if after, err := r.listClientSecrets(ctx, clientID); err == nil && len(after) >= client.MaxClientSecrets {
 			detail = clientSecretLimitDetail(clientID, after) + " Pocket ID refused another; no secret was created."
 		}
 		resp.Diagnostics.AddError("Error creating client secret", detail)
@@ -385,7 +403,7 @@ func (r *clientSecretResource) reportFailedCreate(ctx context.Context, clientID 
 
 	detail := "The request to create a secret for OIDC client " + clientID + " failed (" + cause.Error() + ") after it was sent, " +
 		"so a secret may have been created. The request was not retried. "
-	after, err := r.client.ListClientSecrets(ctx, clientID)
+	after, err := r.listClientSecrets(ctx, clientID)
 	if err != nil {
 		detail += "The client's secrets could not be listed afterwards (" + err.Error() + "); list them in Pocket ID before applying again."
 		resp.Diagnostics.AddError("Client secret creation result uncertain", detail)
@@ -413,6 +431,20 @@ func (r *clientSecretResource) reportFailedCreate(ctx context.Context, clientID 
 	}
 	detail += "\n\nSecrets on the client now:\n" + describeClientSecrets(after, known)
 	resp.Diagnostics.AddError("Client secret creation result uncertain", detail)
+}
+
+// listClientSecrets lists a client's secrets and refuses a list that cannot
+// be relied on (client.CheckClientSecretList): every list this resource
+// stores, prints, or takes as proof of absence goes through it.
+func (r *clientSecretResource) listClientSecrets(ctx context.Context, clientID string) ([]client.ClientSecretMetadata, error) {
+	secrets, err := r.client.ListClientSecrets(ctx, clientID)
+	if err != nil {
+		return nil, err
+	}
+	if err := client.CheckClientSecretList(secrets); err != nil {
+		return nil, err
+	}
+	return secrets, nil
 }
 
 // clientSecretListed reports whether a secret with this ID is in the list.
@@ -465,7 +497,7 @@ func (r *clientSecretResource) Read(ctx context.Context, req resource.ReadReques
 	}
 	clientID, secretID := state.ClientID.ValueString(), state.ID.ValueString()
 
-	secrets, err := r.client.ListClientSecrets(ctx, clientID)
+	secrets, err := r.listClientSecrets(ctx, clientID)
 	if err != nil {
 		if client.IsNotFound(err, client.ResourceOIDCClient) {
 			tflog.Warn(ctx, "OIDC client no longer exists; removing its client secret from state", map[string]any{"client_id": clientID, "secret_id": secretID})

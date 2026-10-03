@@ -308,8 +308,8 @@ func TestClient_ListClientSecrets(t *testing.T) {
 		assert.Equal(t, "/api/oidc/clients/c1/secrets", r.URL.EscapedPath())
 		w.Header().Set("Content-Type", "application/json")
 		// OidcClientSecretDto as v2.14.0 to v2.17.0 serialize it.
-		_, _ = fmt.Fprint(w, `[{"id":"s1","prefix":"abcd","createdAt":"2026-08-01T00:00:00Z","expiresAt":null,"isActive":true},`+
-			`{"id":"s2","prefix":"","createdAt":"2026-07-01T12:30:00.123456789+02:00","expiresAt":"2026-09-01T00:00:00Z","isActive":false}]`)
+		_, _ = fmt.Fprint(w, `[{"id":"11111111-1111-4111-8111-111111111111","prefix":"abcd","createdAt":"2026-08-01T00:00:00Z","expiresAt":null,"isActive":true},`+
+			`{"id":"22222222-2222-4222-8222-222222222222","prefix":"","createdAt":"2026-07-01T12:30:00.123456789+02:00","expiresAt":"2026-09-01T00:00:00Z","isActive":false}]`)
 	}))
 	defer server.Close()
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
@@ -319,8 +319,8 @@ func TestClient_ListClientSecrets(t *testing.T) {
 	require.NoError(t, err)
 	expired := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	require.Len(t, secrets, 2)
-	assert.Equal(t, client.ClientSecretMetadata{ID: "s1", Prefix: "abcd", CreatedAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC), IsActive: true}, secrets[0])
-	assert.Equal(t, "s2", secrets[1].ID)
+	assert.Equal(t, client.ClientSecretMetadata{ID: "11111111-1111-4111-8111-111111111111", Prefix: "abcd", CreatedAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC), IsActive: true}, secrets[0])
+	assert.Equal(t, "22222222-2222-4222-8222-222222222222", secrets[1].ID)
 	assert.Empty(t, secrets[1].Prefix, "a migrated secret has no prefix")
 	assert.True(t, secrets[1].CreatedAt.Equal(time.Date(2026, 7, 1, 10, 30, 0, 123456789, time.UTC)))
 	assert.Equal(t, &expired, secrets[1].ExpiresAt)
@@ -547,6 +547,9 @@ func TestClient_RevokeClientSecret(t *testing.T) {
 		"server failure, still listed":    {503, "", 200, listed(secretID), 1, "was not revoked"},
 		"server failure, client gone":     {503, "", 404, `{"error":"OIDC client not found","code":"not_found","details":{"resource":"OIDC client"}}`, 1, ""},
 		"server failure, list unreadable": {503, "", 403, `{"error":"x"}`, 1, "could not confirm"},
+		"revoked, list malformed":         {204, "", 200, `[{}]`, 1, "could not be listed afterwards"},
+		"server failure, list malformed":  {503, "", 200, `[{}]`, 1, "could not confirm"},
+		"server failure, duplicate IDs":   {503, "", 200, listed(other, other), 1, "could not confirm"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			deletes, lists := 0, 0
@@ -576,6 +579,98 @@ func TestClient_RevokeClientSecret(t *testing.T) {
 			}
 			require.ErrorContains(t, err, tc.wantErr)
 			assert.Contains(t, err.Error(), secretID)
+		})
+	}
+}
+
+// A list that cannot be relied on is refused without repeating any of it;
+// an empty or null list is a client without secrets.
+func TestClient_CheckClientSecretList(t *testing.T) {
+	const leaked = "WHOLEsecretVALUEinTheWrongField"
+	const id1, id2 = "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"
+	entry := func(id, prefix string) string {
+		return `{"id":"` + id + `","prefix":"` + prefix + `","createdAt":"2026-10-02T10:00:00Z","isActive":true}`
+	}
+	for name, tc := range map[string]struct {
+		body string
+		ok   bool
+	}{
+		"empty":             {`[]`, true},
+		"null":              {`null`, true},
+		"valid":             {"[" + entry(id1, "abcd") + "," + entry(id2, "") + "]", true},
+		"printable prefix":  {"[" + entry(id1, " ~!:") + "]", true},
+		"empty object":      {`[{}]`, false},
+		"ID not a UUID":     {"[" + entry("not-a-uuid", "abcd") + "]", false},
+		"duplicate IDs":     {"[" + entry(id1, "abcd") + "," + entry(id1, "abcd") + "]", false},
+		"value as prefix":   {"[" + entry(id1, leaked) + "]", false},
+		"short prefix":      {"[" + entry(id1, "ab") + "]", false},
+		"control in prefix": {"[" + entry(id1, `a\tbc`) + "]", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = fmt.Fprint(w, tc.body)
+			}))
+			defer server.Close()
+			c, err := client.NewClient(server.URL, "synthetic-token", false, 2)
+			require.NoError(t, err)
+			secrets, err := c.ListClientSecrets(context.Background(), "c1")
+			require.NoError(t, err, "decoding alone accepts it")
+			err = client.CheckClientSecretList(secrets)
+			if tc.ok {
+				assert.NoError(t, err)
+				return
+			}
+			require.ErrorIs(t, err, client.ErrMalformedSecretList)
+			assert.NotContains(t, err.Error(), leaked)
+			assert.NotContains(t, err.Error(), "not-a-uuid")
+		})
+	}
+}
+
+// A create response is kept only as far as it can be checked: a usable new
+// ID with unusable other fields returns the ID alone, and nothing from the
+// response is repeated.
+func TestClient_CreateClientSecret_MalformedResponse(t *testing.T) {
+	const secretID = "99999999-9999-4999-8999-999999999999"
+	const value = "GENERATEDgenerated0123456789abcd"
+	for name, tc := range map[string]struct {
+		body     string
+		identity bool
+	}{
+		"value as prefix":           {`{"id":"` + secretID + `","prefix":"` + value + `","createdAt":"2026-10-02T10:00:00Z","isActive":true,"secret":"` + value + `"}`, true},
+		"value as prefix, no value": {`{"id":"` + secretID + `","prefix":"` + value + `","createdAt":"2026-10-02T10:00:00Z","isActive":true}`, true},
+		"prefix of another value":   {`{"id":"` + secretID + `","prefix":"abcd","createdAt":"2026-10-02T10:00:00Z","isActive":true,"secret":"` + value + `"}`, true},
+		"unreadable field":          {`{"id":"` + secretID + `","prefix":"GENE","createdAt":"` + value + `","isActive":true,"secret":"` + value + `"}`, true},
+		"ID not a string":           {`{"id":7,"prefix":"GENE","secret":"` + value + `"}`, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == "GET" {
+					_, _ = fmt.Fprint(w, `{"currentVersion":"2.17.0"}`)
+					return
+				}
+				w.WriteHeader(http.StatusCreated)
+				_, _ = fmt.Fprint(w, tc.body)
+			}))
+			defer server.Close()
+			c, err := client.NewClient(server.URL, "synthetic-token", false, 2)
+			require.NoError(t, err)
+
+			secret, err := c.CreateClientSecret(context.Background(), "c1", nil)
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), value)
+			if tc.identity {
+				require.ErrorIs(t, err, client.ErrCreatedSecretMalformed)
+				require.NotNil(t, secret)
+				assert.Equal(t, client.ClientSecret{ClientSecretMetadata: client.ClientSecretMetadata{ID: secretID}}, *secret, "the ID and nothing else")
+			} else {
+				assert.Nil(t, secret)
+			}
+
+			generated, err := c.GenerateClientSecret(context.Background(), "c1", nil)
+			require.Error(t, err, "the client resource's path refuses it too")
+			assert.Nil(t, generated)
+			assert.NotContains(t, err.Error(), value)
 		})
 	}
 }
