@@ -41,3 +41,9 @@
   next apply replaces it. The data source lists the valid tokens; because
   Pocket ID's list includes each token's value, every `token` it returns is a
   live secret that is stored in the state (marked sensitive).
+- New data source `pocketid_api_keys`: lists the API keys of the Pocket ID user
+  who owns the key the provider uses (name, description, and creation, expiry
+  and last-used times; never a key value). Its purpose is a `check` block that
+  warns before the provider's own key expires (see the example). Creating,
+  renewing and revoking keys is deliberately not offered. If the provider uses
+  Pocket ID's static API key (`STATIC_API_KEY`), the list is empty.
