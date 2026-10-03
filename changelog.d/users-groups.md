@@ -91,3 +91,8 @@
   malformed answer is an error instead of "no groups", which could have made a
   removal look done, dropped a membership from state, or rebuilt the user's
   group list without the groups it had.
+- For a user synchronized from LDAP, only attributes the configuration
+  actually changes are refused. A change to `locale`, `groups` or
+  `custom_claims` is applied, and a `display_name` that is not configured
+  keeps the directory's value instead of being replaced by first and last
+  name.

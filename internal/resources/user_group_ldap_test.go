@@ -31,8 +31,9 @@ func usersGroupsLDAPServer(t *testing.T, ldapEnabled bool) (*client.Client, map[
 	var mu sync.Mutex
 	calls := map[string]int{}
 	user := map[string]any{
+		// The directory's display name is not first and last name joined.
 		"id": ldapFixtureUserID, "username": "ldap.user", "email": "ldap@example.invalid", "firstName": "L",
-		"lastName": "User", "displayName": "L User", "ldapId": "uid=ldap", "userGroups": []any{}, "customClaims": []any{},
+		"lastName": "User", "displayName": "Directory Name", "ldapId": "uid=ldap", "userGroups": []any{}, "customClaims": []any{},
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
@@ -48,6 +49,7 @@ func usersGroupsLDAPServer(t *testing.T, ldapEnabled bool) (*client.Client, map[
 		case "PUT /api/users/" + ldapFixtureUserID:
 			var req map[string]any
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+			lastLDAPUserPut = req
 			if !ldapEnabled {
 				for k, v := range req {
 					user[k] = v
@@ -55,6 +57,20 @@ func usersGroupsLDAPServer(t *testing.T, ldapEnabled bool) (*client.Client, map[
 			} else {
 				user["locale"] = req["locale"]
 			}
+			_ = json.NewEncoder(w).Encode(user)
+		case "PUT /api/custom-claims/user/" + ldapFixtureUserID:
+			var claims []client.CustomClaim
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&claims))
+			user["customClaims"] = claims
+			_ = json.NewEncoder(w).Encode(claims)
+		case "PUT /api/users/" + ldapFixtureUserID + "/user-groups":
+			var req client.UpdateUserGroupsRequest
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+			groups := []map[string]string{}
+			for _, id := range req.UserGroupIDs {
+				groups = append(groups, map[string]string{"id": id})
+			}
+			user["userGroups"] = groups
 			_ = json.NewEncoder(w).Encode(user)
 		case "PUT /api/custom-claims/user-group/" + ldapFixtureGroupID:
 			_, _ = fmt.Fprint(w, `[{"key":"team","value":"a"}]`)
@@ -75,11 +91,15 @@ func usersGroupsLDAPServer(t *testing.T, ldapEnabled bool) (*client.Client, map[
 	return c, calls
 }
 
+// lastLDAPUserPut is the body of the last user PUT usersGroupsLDAPServer
+// received.
+var lastLDAPUserPut map[string]any
+
 func ldapUserModel() userResourceModel {
 	return userResourceModel{
 		ID: types.StringValue(ldapFixtureUserID), Username: types.StringValue("ldap.user"),
 		Email: types.StringValue("ldap@example.invalid"), FirstName: types.StringValue("L"), LastName: types.StringValue("User"),
-		DisplayName: types.StringValue("L User"), EmailVerified: types.BoolValue(false), IsAdmin: types.BoolValue(false),
+		DisplayName: types.StringValue("Directory Name"), EmailVerified: types.BoolValue(false), IsAdmin: types.BoolValue(false),
 		Locale: types.StringNull(), Disabled: types.BoolValue(false),
 		Groups: types.SetNull(types.StringType), CustomClaims: types.MapNull(types.StringType),
 	}
@@ -117,11 +137,39 @@ func TestUserUpdateLDAPManaged(t *testing.T) {
 		require.Contains(t, resp.Diagnostics.Errors()[0].Detail(), "username, is_admin")
 		require.Zero(t, calls["PUT /api/users/"+ldapFixtureUserID], "nothing is written")
 	})
-	t.Run("locale_allowed", func(t *testing.T) {
+	// On any update Terraform plans the unconfigured, Computed display_name
+	// as unknown. That is no requested change: the directory's display name
+	// is kept, not replaced by first and last name.
+	for name, change := range map[string]func(*userResourceModel){
+		"locale": func(m *userResourceModel) { m.Locale = types.StringValue("fr") },
+		"claims": func(m *userResourceModel) {
+			m.CustomClaims = types.MapValueMust(types.StringType, map[string]attr.Value{"team": types.StringValue("a")})
+		},
+		"groups": func(m *userResourceModel) {
+			m.Groups = types.SetValueMust(types.StringType, []attr.Value{})
+		},
+	} {
+		t.Run(name+"_allowed_with_unknown_display_name", func(t *testing.T) {
+			c, calls := usersGroupsLDAPServer(t, true)
+			lastLDAPUserPut = nil
+			resp := runLDAPUserUpdate(t, c, func(m *userResourceModel) {
+				change(m)
+				m.DisplayName = types.StringUnknown()
+			})
+			require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
+			require.Equal(t, 1, calls["PUT /api/users/"+ldapFixtureUserID])
+			require.Equal(t, "Directory Name", lastLDAPUserPut["displayName"], "the directory's display name is sent back unchanged")
+			var state userResourceModel
+			require.False(t, resp.State.Get(context.Background(), &state).HasError())
+			require.Equal(t, "Directory Name", state.DisplayName.ValueString())
+		})
+	}
+	t.Run("explicit_display_name_refused", func(t *testing.T) {
 		c, calls := usersGroupsLDAPServer(t, true)
-		resp := runLDAPUserUpdate(t, c, func(m *userResourceModel) { m.Locale = types.StringValue("fr") })
-		require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
-		require.Equal(t, 1, calls["PUT /api/users/"+ldapFixtureUserID])
+		resp := runLDAPUserUpdate(t, c, func(m *userResourceModel) { m.DisplayName = types.StringValue("Renamed") })
+		require.True(t, resp.Diagnostics.HasError())
+		require.Contains(t, resp.Diagnostics.Errors()[0].Detail(), "display_name")
+		require.Zero(t, calls["PUT /api/users/"+ldapFixtureUserID])
 	})
 	t.Run("ldap_disabled", func(t *testing.T) {
 		c, calls := usersGroupsLDAPServer(t, false)

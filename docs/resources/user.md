@@ -5,7 +5,7 @@ subcategory: ""
 description: |-
   Manages a user in Pocket-ID.
   ~> Important Users must complete passkey registration through the Pocket-ID web interface. This resource only creates the user account; authentication setup must be done separately.
-  ~> LDAP While LDAP is enabled, Pocket ID lets the API change only the locale of a user synchronized from LDAP (one with an LDAP ID); it silently keeps every other field. The provider checks this before an update and fails, naming the fields, instead of applying a change that would not take effect. Pocket ID also refuses to delete such a user unless it is disabled.
+  ~> LDAP While LDAP is enabled, Pocket ID lets the API change only the locale of a user synchronized from LDAP (one with an LDAP ID), besides its groups and custom claims; it silently keeps every other field. The provider checks this before an update and fails, naming the attributes the configuration changes, instead of applying a change that would not take effect; the user's other fields, including a display name that is not configured, are sent back as the directory has them. Pocket ID also refuses to delete such a user unless it is disabled, which for such a user happens in the directory.
 ---
 
 # pocketid_user (Resource)
@@ -14,7 +14,7 @@ Manages a user in Pocket-ID.
 
 ~> **Important** Users must complete passkey registration through the Pocket-ID web interface. This resource only creates the user account; authentication setup must be done separately.
 
-~> **LDAP** While LDAP is enabled, Pocket ID lets the API change only the locale of a user synchronized from LDAP (one with an LDAP ID); it silently keeps every other field. The provider checks this before an update and fails, naming the fields, instead of applying a change that would not take effect. Pocket ID also refuses to delete such a user unless it is disabled.
+~> **LDAP** While LDAP is enabled, Pocket ID lets the API change only the locale of a user synchronized from LDAP (one with an LDAP ID), besides its groups and custom claims; it silently keeps every other field. The provider checks this before an update and fails, naming the attributes the configuration changes, instead of applying a change that would not take effect; the user's other fields, including a display name that is not configured, are sent back as the directory has them. Pocket ID also refuses to delete such a user unless it is disabled, which for such a user happens in the directory.
 
 ## Example Usage
 

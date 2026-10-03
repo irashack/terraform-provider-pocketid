@@ -72,7 +72,7 @@ func (r *userResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 
 ~> **Important** Users must complete passkey registration through the Pocket-ID web interface. This resource only creates the user account; authentication setup must be done separately.
 
-~> **LDAP** While LDAP is enabled, Pocket ID lets the API change only the locale of a user synchronized from LDAP (one with an LDAP ID); it silently keeps every other field. The provider checks this before an update and fails, naming the fields, instead of applying a change that would not take effect. Pocket ID also refuses to delete such a user unless it is disabled.`,
+~> **LDAP** While LDAP is enabled, Pocket ID lets the API change only the locale of a user synchronized from LDAP (one with an LDAP ID), besides its groups and custom claims; it silently keeps every other field. The provider checks this before an update and fails, naming the attributes the configuration changes, instead of applying a change that would not take effect; the user's other fields, including a display name that is not configured, are sent back as the directory has them. Pocket ID also refuses to delete such a user unless it is disabled, which for such a user happens in the directory.`,
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The ID of the user, a lowercase UUID. Pocket ID generates it unless it is set here, which needs Pocket ID 2.12.0 or later. " +
@@ -498,13 +498,13 @@ func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	// While LDAP is enabled Pocket ID changes only the locale of a user
 	// synchronized from LDAP and silently keeps the other fields; refuse
 	// such a change before anything is written.
-	if fields, err := r.ldapRestrictedChanges(ctx, plan.ID.ValueString(), updateReq); err != nil {
+	if fields, err := r.ldapRestrictedChanges(ctx, &plan, &state, updateReq); err != nil {
 		resp.Diagnostics.AddError("Error updating user", "Could not check whether the user is managed by LDAP: "+err.Error())
 		return
 	} else if len(fields) > 0 {
 		resp.Diagnostics.AddError("User is managed by LDAP",
 			"User "+plan.ID.ValueString()+" is synchronized from LDAP and LDAP is enabled, so Pocket ID would keep its "+
-				strings.Join(fields, ", ")+" unchanged (it lets the API change only the locale of such a user). "+
+				strings.Join(fields, ", ")+" unchanged (it lets the API change only the locale of such a user, besides its groups and custom claims). "+
 				"Change these in the directory, or make the configuration match the user; nothing was changed.")
 		return
 	}
@@ -730,12 +730,17 @@ func (r *userResource) uncertainFixedIDCreate(ctx context.Context, plan *userRes
 			"The create was not repeated.")
 }
 
-// ldapRestrictedChanges returns the attributes the update would change that
-// Pocket ID keeps unchanged for a user synchronized from LDAP while LDAP is
-// enabled (UserService.UpdateUserInternal applies only the locale then). It
-// returns none for any other user.
-func (r *userResource) ldapRestrictedChanges(ctx context.Context, userID string, update *client.UserCreateRequest) ([]string, error) {
-	current, err := r.client.GetUser(ctx, userID)
+// ldapRestrictedChanges returns the attributes the plan explicitly changes
+// that Pocket ID keeps unchanged for a user synchronized from LDAP while LDAP
+// is enabled (UserService.UpdateUserInternal applies only the locale then).
+// A change is explicit when the planned value is known and differs from the
+// prior state; a display_name the plan leaves unknown (it is Computed and
+// not configured) is not one. When there is none, the update is rewritten to
+// send the user's current values for those fields, so nothing is invented
+// (such as a display name derived from first and last name). It returns
+// none, and leaves the update alone, for any other user.
+func (r *userResource) ldapRestrictedChanges(ctx context.Context, plan, state *userResourceModel, update *client.UserCreateRequest) ([]string, error) {
+	current, err := r.client.GetUser(ctx, plan.ID.ValueString())
 	if err != nil {
 		return nil, err
 	}
@@ -751,18 +756,23 @@ func (r *userResource) ldapRestrictedChanges(ctx context.Context, userID string,
 		name    string
 		changed bool
 	}{
-		{"username", update.Username != current.Username},
-		{"email", update.Email != current.Email},
-		{"first_name", update.FirstName != current.FirstName},
-		{"last_name", update.LastName != current.LastName},
-		{"display_name", update.DisplayName != current.DisplayName},
-		{"email_verified", update.EmailVerified != current.EmailVerified},
-		{"is_admin", update.IsAdmin != current.IsAdmin},
-		{"disabled", update.Disabled != current.Disabled},
+		{"username", !plan.Username.Equal(state.Username)},
+		{"email", !plan.Email.Equal(state.Email)},
+		{"first_name", !plan.FirstName.Equal(state.FirstName)},
+		{"last_name", !plan.LastName.Equal(state.LastName)},
+		{"display_name", !plan.DisplayName.IsUnknown() && !plan.DisplayName.Equal(state.DisplayName)},
+		{"email_verified", !plan.EmailVerified.Equal(state.EmailVerified)},
+		{"is_admin", !plan.IsAdmin.Equal(state.IsAdmin)},
+		{"disabled", !plan.Disabled.Equal(state.Disabled)},
 	} {
 		if f.changed {
 			fields = append(fields, f.name)
 		}
+	}
+	if len(fields) == 0 {
+		update.Username, update.Email = current.Username, current.Email
+		update.FirstName, update.LastName, update.DisplayName = current.FirstName, current.LastName, current.DisplayName
+		update.EmailVerified, update.IsAdmin, update.Disabled = current.EmailVerified, current.IsAdmin, current.Disabled
 	}
 	return fields, nil
 }
