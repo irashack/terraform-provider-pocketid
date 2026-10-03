@@ -3,7 +3,10 @@ package datasources_test
 import (
 	"fmt"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -108,15 +111,49 @@ func b2GroupDetailHandler(groups []map[string]any) http.HandlerFunc {
 	}
 }
 
+// b2SQLLike reports whether name matches the SQL pattern "%term%" the way
+// Pocket ID's search does (name LIKE ?): "%" in term matches any run of
+// characters, "_" any one character, and ASCII letters match in either case (a
+// SQLite default). There is no escape character, which is why a backslash in a
+// name is not searched for. Everything else matches itself.
+func b2SQLLike(term, name string) bool {
+	var pattern strings.Builder
+	pattern.WriteString("(?is)^.*")
+	for _, r := range term {
+		switch r {
+		case '%':
+			pattern.WriteString(".*")
+		case '_':
+			pattern.WriteString(".")
+		default:
+			pattern.WriteString(regexp.QuoteMeta(string(r)))
+		}
+	}
+	pattern.WriteString(".*$")
+	return regexp.MustCompile(pattern.String()).MatchString(name)
+}
+
 // b2GroupSearchHandler serves GET /api/user-groups for a fixed set of groups
-// the way Pocket ID does: the search term selects groups whose name contains
-// it (case-insensitive), and the result is paginated.
+// the way Pocket ID does: the search term selects groups whose name matches
+// "%term%" as a SQL LIKE pattern (so "%" and "_" in the term are wildcards, and
+// ASCII case is ignored), in creation order, and the result is paginated. The
+// request's query strings are recorded in queries when it is not nil.
 func b2GroupSearchHandler(groups []map[string]any) http.HandlerFunc {
+	return b2RecordingGroupSearchHandler(groups, nil)
+}
+
+func b2RecordingGroupSearchHandler(groups []map[string]any, queries *[]url.Values) http.HandlerFunc {
+	var mu sync.Mutex
 	return func(w http.ResponseWriter, r *http.Request) {
-		term := strings.ToLower(r.URL.Query().Get("search"))
+		if queries != nil {
+			mu.Lock()
+			*queries = append(*queries, r.URL.Query())
+			mu.Unlock()
+		}
+		term := r.URL.Query().Get("search")
 		var matched []any
 		for _, g := range groups {
-			if strings.Contains(strings.ToLower(g["name"].(string)), term) {
+			if b2SQLLike(term, g["name"].(string)) {
 				matched = append(matched, g)
 			}
 		}
@@ -152,6 +189,112 @@ func TestGroupDataSource_Read_ByNameFindsExactMatchAmongSimilarOnes(t *testing.T
 	require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
 	b2Attr(t, resp, "id", &id)
 	assert.Equal(t, b2UUID(230), id)
+}
+
+// The search has more than one page of candidates and the exact match is on the
+// second, because the groups are served in creation order and the exact name
+// was created last. A lookup that read only the first page would report the
+// group missing. Every request after the first must carry the same search term,
+// or the later pages would list unrelated groups.
+func TestGroupDataSource_Read_ByNameFindsAnExactMatchBeyondTheFirstSearchPage(t *testing.T) {
+	var groups []map[string]any
+	for i := 1; i <= 130; i++ {
+		groups = append(groups, b2GroupJSON(i, fmt.Sprintf("admins-%03d", i)))
+	}
+	groups = append(groups, b2GroupJSON(131, "admins"), b2GroupJSON(132, "admins-after"))
+	var queries []url.Values
+	fake := newB2Fake(t)
+	fake.handle("GET /api/user-groups", b2RecordingGroupSearchHandler(groups, &queries))
+	fake.handlePrefix("GET /api/user-groups/", b2GroupDetailHandler(groups))
+	ds := b2Configure(t, datasources.NewGroupDataSource(), fake.client())
+
+	resp := b2Read(t, ds, map[string]tftypes.Value{"name": b2Str("admins")})
+	require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
+	var id string
+	b2Attr(t, resp, "id", &id)
+	assert.Equal(t, b2UUID(131), id, "the exact match is the 131st candidate, on the second page")
+
+	require.GreaterOrEqual(t, len(queries), 2, "the second page was requested")
+	pages := map[string]bool{}
+	for _, query := range queries {
+		assert.Equal(t, "admins", query.Get("search"), "every page of the search carries the search term")
+		pages[query.Get("pagination[page]")] = true
+	}
+	assert.True(t, pages["1"] && pages["2"], "pages seen: %v", pages)
+}
+
+// The search is a SQL LIKE: "_" and "%" in a name are wildcards, so the server
+// returns look-alikes, and ASCII case is ignored. The lookup must still return
+// only the group whose name is exactly the configured one, wherever it is among
+// the candidates, and must not return a look-alike when there is no such group.
+func TestGroupDataSource_Read_ByNameWithWildcardCharacters(t *testing.T) {
+	var groups []map[string]any
+	// 105 look-alike candidates for "team_1" (the "_" matches any character).
+	for i := 1; i <= 105; i++ {
+		groups = append(groups, b2GroupJSON(i, fmt.Sprintf("team-1-%03d", i)))
+	}
+	groups = append(groups,
+		b2GroupJSON(200, "teamX1"),
+		b2GroupJSON(201, "TEAM_1"),
+		b2GroupJSON(202, "team_1"), // the group looked up: on the second page
+		b2GroupJSON(203, "team 1"),
+		b2GroupJSON(210, "50 percent off"),
+		b2GroupJSON(211, "50%off"),
+		b2GroupJSON(212, "50xoff"),
+		b2GroupJSON(220, "a_b"),
+		b2GroupJSON(221, "axb"),
+		b2GroupJSON(230, "teamY2"),
+		b2GroupJSON(231, "abc"),
+	)
+
+	cases := []struct {
+		name       string
+		look       string
+		wantID     int // 0: not found
+		candidates int // how many groups the server's LIKE matches
+	}{
+		{"underscore is a wildcard, exact match beyond page one", "team_1", 202, 109},
+		{"upper-case look-alike is not the group", "TEAM_1", 201, 109},
+		{"percent is a wildcard", "50%off", 211, 3},
+		{"underscore among a few candidates", "a_b", 220, 2},
+		{"a look-alike without the named group", "team_2", 0, 1},
+		{"wildcard look-alikes without the named group", "a%b%c", 0, 1},
+		{"underscore look-alikes without the named group", "50_off", 0, 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			candidates := 0
+			for _, g := range groups {
+				if b2SQLLike(tc.look, g["name"].(string)) {
+					candidates++
+				}
+			}
+			require.Equal(t, tc.candidates, candidates, "the fake's LIKE returns the look-alikes this case is about")
+
+			var queries []url.Values
+			fake := newB2Fake(t)
+			fake.handle("GET /api/user-groups", b2RecordingGroupSearchHandler(groups, &queries))
+			fake.handlePrefix("GET /api/user-groups/", b2GroupDetailHandler(groups))
+			ds := b2Configure(t, datasources.NewGroupDataSource(), fake.client())
+
+			resp := b2Read(t, ds, map[string]tftypes.Value{"name": b2Str(tc.look)})
+			require.NotEmpty(t, queries)
+			for _, query := range queries {
+				assert.Equal(t, tc.look, query.Get("search"), "the term is sent as typed, for the server's LIKE to apply")
+			}
+			if tc.wantID == 0 {
+				require.True(t, resp.Diagnostics.HasError())
+				assert.Equal(t, []string{"Group Not Found"}, b2Summaries(resp))
+				return
+			}
+			require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
+			var id, name string
+			b2Attr(t, resp, "id", &id)
+			b2Attr(t, resp, "name", &name)
+			assert.Equal(t, b2UUID(tc.wantID), id)
+			assert.Equal(t, tc.look, name)
+		})
+	}
 }
 
 func TestGroupDataSource_Read_ByNameWithNoExactMatch(t *testing.T) {
