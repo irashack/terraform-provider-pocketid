@@ -50,6 +50,10 @@ type signupFake struct {
 	failDelete   *scimFailure
 	keepOnDelete bool
 	failList     *scimFailure
+	// attachExtra lists groups the fake attaches although they were not
+	// requested; usageLimitOverride makes it set a different usage limit.
+	attachExtra        []string
+	usageLimitOverride *int
 }
 
 func newSignupFake(t *testing.T) (*signupFake, *client.Client) {
@@ -121,9 +125,13 @@ func (f *signupFake) serve(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		kept = append(kept, f.attachExtra...)
 		f.nextID++
 		id := fmt.Sprintf("55555555-5555-4555-8555-%012d", f.nextID)
 		limit, _ := record.Body["usageLimit"].(float64)
+		if f.usageLimitOverride != nil {
+			limit = float64(*f.usageLimitOverride)
+		}
 		tok := f.tokenJSON(id, signupTestSecret, int(limit), 0, kept)
 		f.tokens = append(f.tokens, tok)
 		w.WriteHeader(http.StatusCreated)
@@ -373,6 +381,93 @@ func TestSignupTokenResource_CreateKeepsATokenWhoseCleanupCannotBeConfirmed(t *t
 			assert.Contains(t, detail, "tainted")
 			assert.Contains(t, detail, tc.want)
 			assert.Contains(t, detail, unknown)
+			assert.NotContains(t, detail, signupTestSecret)
+		})
+	}
+}
+
+// The other two ways a created token can differ from the request are cleaned
+// up the same way as an ignored group: groups nobody asked for would widen
+// who a registration joins, and a different usage limit would let more
+// people register than was asked for.
+func TestSignupTokenResource_CreateDeletesATokenWithGroupsOrALimitNobodyAskedFor(t *testing.T) {
+	override := 5
+	cases := []struct {
+		name          string
+		setup         func(*signupFake)
+		groups        []tftypes.Value
+		wantInMessage string
+		wantStateSets []string // the groups the recorded state shows when cleanup fails
+		wantLimit     int64
+	}{
+		{
+			"an extra group",
+			func(f *signupFake) { f.attachExtra = []string{signupTestGroupB} },
+			signupSet(signupTestGroupA),
+			"attached groups that were not requested: " + signupTestGroupB,
+			[]string{signupTestGroupA, signupTestGroupB}, 3,
+		},
+		{
+			"an extra group when none was requested",
+			func(f *signupFake) { f.attachExtra = []string{signupTestGroupB} },
+			nil,
+			"attached groups that were not requested: " + signupTestGroupB,
+			[]string{signupTestGroupB}, 3,
+		},
+		{
+			"a different usage limit",
+			func(f *signupFake) { f.usageLimitOverride = &override },
+			signupSet(signupTestGroupA),
+			"set a usage limit of 5, not the requested value",
+			[]string{signupTestGroupA}, 5,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name+", cleanup confirmed", func(t *testing.T) {
+			fake, c := newSignupFake(t)
+			tc.setup(fake)
+			r, sch := signupResource(t, c)
+
+			resp := signupCreate(t, r, sch, signupPlan(tc.groups, 3))
+			require.True(t, resp.Diagnostics.HasError())
+
+			mutations := fake.mutations()
+			require.Len(t, mutations, 2, "one creation and one deletion")
+			assert.Equal(t, http.MethodDelete, mutations[1].Method)
+			assert.Empty(t, fake.tokens, "the token must be gone from Pocket ID")
+			assert.True(t, resp.State.Raw.IsNull())
+			detail := signupDiagnosticText(resp)
+			assert.Contains(t, detail, tc.wantInMessage)
+			assert.Contains(t, detail, "deleted again")
+			assert.NotContains(t, detail, signupTestSecret)
+		})
+		t.Run(tc.name+", cleanup not confirmed", func(t *testing.T) {
+			fake, c := newSignupFake(t)
+			tc.setup(fake)
+			fake.failDelete = &scimFailure{500, `{"error":"boom"}`}
+			r, sch := signupResource(t, c)
+
+			resp := signupCreate(t, r, sch, signupPlan(tc.groups, 3))
+			require.True(t, resp.Diagnostics.HasError())
+
+			var deletes int
+			for _, m := range fake.mutations() {
+				if m.Method == http.MethodDelete {
+					deletes++
+				}
+			}
+			assert.Equal(t, 1, deletes, "exactly one attempt to delete")
+			require.False(t, resp.State.Raw.IsNull(), "an unconfirmed cleanup keeps the token in state")
+			var groups types.Set
+			var limit types.Int64
+			signupAttr(t, resp.State, "user_group_ids", &groups)
+			signupAttr(t, resp.State, "usage_limit", &limit)
+			assert.Equal(t, tc.wantStateSets, signupSetStrings(t, groups), "the state shows what the token really has")
+			assert.Equal(t, tc.wantLimit, limit.ValueInt64())
+			detail := signupDiagnosticText(resp)
+			assert.Contains(t, detail, tc.wantInMessage)
+			assert.Contains(t, detail, "could not be confirmed")
+			assert.Contains(t, detail, "tainted")
 			assert.NotContains(t, detail, signupTestSecret)
 		})
 	}
