@@ -86,6 +86,7 @@ func (r *groupMembersResource) Schema(_ context.Context, _ resource.SchemaReques
 			"**Requests whose outcome is unknown.** When a request fails in a way that does not show whether it was applied (the answer was lost or could not be read, or a server or proxy error), the provider reads the group once. If the group then holds what was asked for, that is recorded. " +
 			"Otherwise, whether the group still shows its old members or the read fails too, the request may yet take effect (a proxy can give up on a request the server goes on to commit), so the resource keeps its identity, records the members it read, and lists the users that were requested in `unresolved_user_ids`. " +
 			"While that is set, plans for the resource are refused, naming the recovery. A refresh reads the group again and clears it, recording the members then held. Destroying the resource first reads the group and removes the requested users that are members, together with the members it had recorded, so a request that committed late is cleaned up too; if the group cannot be read, destroy stops with an error and keeps the resource in state. " +
+			"A refresh and a destroy each read the group once: they observe a snapshot, and neither proves that the earlier request has finished. Cleanup covers the grants visible at those observations, not later commits. A request that is still pending when a refresh clears `unresolved_user_ids`, or when destroy finishes, can still be applied afterwards, and the user it adds is then in the group with nothing managing it. " +
 			"To stop managing the group without changing it, run `terraform state rm` for the resource.\n\n" +
 			"**Destroying** the resource removes the users in `user_ids` from the group. Members added outside Terraform since the last refresh stay. The group itself is not deleted.",
 		Attributes: map[string]schema.Attribute{
@@ -107,7 +108,7 @@ func (r *groupMembersResource) Schema(_ context.Context, _ resource.SchemaReques
 				},
 			},
 			"unresolved_user_ids": schema.SetAttribute{
-				Description: "The users this resource asked Pocket ID to make members when the outcome of that request is unknown (the answer was lost or unreadable, and the group then still showed its old members or could not be read), so they may become members later. Null for every other resource. While it is set, plans for the resource are refused; a refresh reads the group and clears it, and destroy removes the users listed here that are members, or stops with an error if the group cannot be read. `terraform state rm` gives up management without changing the group.",
+				Description: "The users this resource asked Pocket ID to make members when the outcome of that request is unknown (the answer was lost or unreadable, and the group then still showed its old members or could not be read), so they may become members later. Null for every other resource. While it is set, plans for the resource are refused; a refresh reads the group once and clears it, and destroy removes the users listed here that are members, or stops with an error if the group cannot be read. Neither proves the earlier request has finished: they cover the grants visible when they read, not later commits. `terraform state rm` gives up management without changing the group.",
 				Computed:    true,
 				ElementType: types.StringType,
 			},

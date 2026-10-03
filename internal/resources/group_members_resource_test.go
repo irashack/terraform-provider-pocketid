@@ -338,6 +338,10 @@ func TestGroupMembersResource_SchemaAndMetadata(t *testing.T) {
 	for _, claim := range []string{"unresolved_user_ids", "may yet take effect", "plans for the resource are refused", "destroy stops with an error", "terraform state rm"} {
 		assert.Contains(t, sch.MarkdownDescription, claim)
 	}
+	// Refresh and destroy observe snapshots.
+	for _, claim := range []string{"observe a snapshot", "neither proves that the earlier request has finished", "not later commits", "nothing managing it"} {
+		assert.Contains(t, sch.MarkdownDescription, claim)
+	}
 	// Replacement order is part of the contract.
 	for _, claim := range []string{"Replace this resource only by destroying the old one first", "create_before_destroy = true", "inherited from a resource that depends on it"} {
 		assert.Contains(t, sch.MarkdownDescription, claim)

@@ -129,3 +129,9 @@
   just recorded, so in the other order the old resource's destroy removes users
   the new resource's state still lists. The description and the errors that
   leave a tainted resource behind say so.
+- `pocketid_group_members`: a refresh and a destroy each read the group once,
+  so they observe a snapshot and neither proves that an earlier request with an
+  unknown outcome has finished. The cleanup covers the grants visible at those
+  reads, not later commits: a request still pending when a refresh clears
+  `unresolved_user_ids`, or when destroy finishes, can be applied afterwards and
+  leave the user it adds in the group with nothing managing it.
