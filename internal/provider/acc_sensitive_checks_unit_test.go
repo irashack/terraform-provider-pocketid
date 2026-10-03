@@ -56,6 +56,7 @@ func TestSensitiveChecksNeverPrintValues(t *testing.T) {
 // it says so without the value.
 func TestExpectUnknownSensitiveNeverPrintsValues(t *testing.T) {
 	const secret = "SYNTHETICsecretVALUE0123456789ab"
+	const shortValue = "Zq7K" // four characters, as a value or a prefix might be
 	// A plan as `terraform show -json` renders it; the request is decoded
 	// from that text so the test needs no direct dependency on terraform-json.
 	plan := func(after, afterUnknown string) plancheck.CheckPlanRequest {
@@ -65,18 +66,21 @@ func TestExpectUnknownSensitiveNeverPrintsValues(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(text), &req))
 		return req
 	}
+	// Each case names the values its plan carries (forbidden): none of them,
+	// the short one included, may appear in what the check reports.
 	for name, tc := range map[string]struct {
-		req     plancheck.CheckPlanRequest
-		address string
-		want    string // empty: accepted
+		req       plancheck.CheckPlanRequest
+		address   string
+		want      string // empty: accepted
+		forbidden []string
 	}{
-		"unknown":               {plan(`{"id":"1"}`, `{"secret":true}`), "r.x", ""},
-		"known value":           {plan(`{"secret":"`+secret+`"}`, `{}`), "r.x", `expected "secret" to be unknown`},
-		"known short value":     {plan(`{"secret":"`+secret[:4]+`"}`, `{}`), "r.x", `expected "secret" to be unknown`},
-		"null":                  {plan(`{"secret":null}`, `{}`), "r.x", `expected "secret" to be unknown`},
-		"missing":               {plan(`{"id":"1"}`, `{}`), "r.x", `expected "secret" to be unknown`},
-		"marked known by false": {plan(`{"secret":"`+secret+`"}`, `{"secret":false}`), "r.x", `expected "secret" to be unknown`},
-		"another resource":      {plan(`{"secret":"`+secret+`"}`, `{}`), "r.y", "r.y: the resource is not in the plan"},
+		"unknown":               {plan(`{"id":"1"}`, `{"secret":true}`), "r.x", "", nil},
+		"known value":           {plan(`{"secret":"`+secret+`"}`, `{}`), "r.x", `expected "secret" to be unknown`, []string{secret, secret[:8]}},
+		"known short value":     {plan(`{"secret":"`+shortValue+`"}`, `{}`), "r.x", `expected "secret" to be unknown`, []string{shortValue}},
+		"null":                  {plan(`{"secret":null}`, `{}`), "r.x", `expected "secret" to be unknown`, nil},
+		"missing":               {plan(`{"id":"1"}`, `{}`), "r.x", `expected "secret" to be unknown`, nil},
+		"marked known by false": {plan(`{"secret":"`+secret+`"}`, `{"secret":false}`), "r.x", `expected "secret" to be unknown`, []string{secret, secret[:8]}},
+		"another resource":      {plan(`{"secret":"`+secret+`"}`, `{}`), "r.y", "r.y: the resource is not in the plan", []string{secret, secret[:8]}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var resp plancheck.CheckPlanResponse
@@ -88,8 +92,9 @@ func TestExpectUnknownSensitiveNeverPrintsValues(t *testing.T) {
 			require.Error(t, resp.Error)
 			assert.Contains(t, resp.Error.Error(), tc.want)
 			assert.Contains(t, resp.Error.Error(), tc.address)
-			assert.NotContains(t, resp.Error.Error(), secret)
-			assert.NotContains(t, resp.Error.Error(), secret[:8])
+			for _, value := range tc.forbidden {
+				assert.NotContains(t, resp.Error.Error(), value, "the error repeats a value of the plan")
+			}
 		})
 	}
 }
