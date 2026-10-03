@@ -21,3 +21,8 @@
   a user in no group.
 - The `email` of the user data sources is null, not an empty string, for a user
   without an email address.
+- New data source `pocketid_version`: the version of the Pocket ID server the
+  provider talks to, for preconditions and checks.
+- New data source `pocketid_current_user`: the user the provider's API key
+  belongs to, with the same attributes as `pocketid_user`. Pocket ID 2.14
+  through 2.17 accept an API key on this route.
