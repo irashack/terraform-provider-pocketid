@@ -327,6 +327,20 @@ func (p *Passkey) shownTexts() []string {
 // values.
 var appConfigSecretKeys = map[string]bool{"smtpPassword": true, "ldapBindPassword": true}
 
+// settingTexts returns a setting's value and, for one that holds a JSON
+// document (the signup default groups and claims, the CIMD allowlist), the
+// document's decoded strings, so a key written with JSON escapes inside the
+// value is found too.
+func settingTexts(value string) []string {
+	texts := []string{value}
+	if trimmed := strings.TrimSpace(value); strings.HasPrefix(trimmed, "[") || strings.HasPrefix(trimmed, "{") {
+		if inner, _, ok := walkJSON([]byte(trimmed)); ok {
+			texts = append(texts, inner...)
+		}
+	}
+	return texts
+}
+
 // shownTexts of the application configuration: the value of every setting
 // the provider maps to a field, except its two passwords. Settings it does
 // not know (Additional) are only sent back unchanged, never stored or shown.
@@ -343,10 +357,10 @@ func (cfg *ApplicationConfig) shownTexts() []string {
 		switch field.Kind() {
 		case reflect.Pointer:
 			if !field.IsNil() {
-				texts = append(texts, field.Elem().String())
+				texts = append(texts, settingTexts(field.Elem().String())...)
 			}
 		case reflect.String:
-			texts = append(texts, field.String())
+			texts = append(texts, settingTexts(field.String())...)
 		}
 	}
 	return texts

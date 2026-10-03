@@ -529,3 +529,27 @@ func TestClient_JWKsRepeatingAMemberAreRefused(t *testing.T) {
 		})
 	}
 }
+
+// A setting that holds a JSON document (the signup default claims, the CIMD
+// allowlist) is checked inside too: a key written with JSON escapes in the
+// document is refused in an answer and in a request.
+func TestClient_JSONSettingsAreCheckedInside(t *testing.T) {
+	ctx := context.Background()
+	// The escapes of the key, escaped once more for the wire.
+	inner := strings.ReplaceAll(textKeyEscaped(), `\`, `\\`)
+	c, _ := textServer(t, `[{"key":"signupDefaultCustomClaims","value":"[{\"key\":\"team\",\"value\":\"`+inner+`\"}]"}]`)
+	_, err := c.GetApplicationConfig(ctx)
+	require.ErrorIs(t, err, client.ErrKeyInResponse)
+	assert.NotContains(t, err.Error(), textKey)
+
+	c, requests := textServer(t, `[]`)
+	_, err = c.UpdateApplicationConfig(ctx, &client.ApplicationConfig{SignupDefaultCustomClaims: `[{"key":"team","value":"` + textKeyEscaped() + `"}]`})
+	require.ErrorIs(t, err, client.ErrInvalidIdentifier)
+	assert.Zero(t, requests.Load(), "nothing is sent")
+
+	// An ordinary JSON setting passes.
+	c, _ = textServer(t, `[{"key":"signupDefaultCustomClaims","value":"[{\"key\":\"team\",\"value\":\"it\"}]"}]`)
+	cfg, err := c.GetApplicationConfig(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, `[{"key":"team","value":"it"}]`, cfg.SignupDefaultCustomClaims)
+}
