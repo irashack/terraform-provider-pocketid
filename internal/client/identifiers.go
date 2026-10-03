@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strings"
 )
 
 // ErrInvalidIdentifier marks an identifier the client refused to put into a
@@ -70,11 +71,16 @@ func clientIDSegment(id string) (string, error) {
 // used. requested is the ID the request supplied, empty when the server
 // chooses it. An ID the server chose must be a UUID: Pocket ID generates one
 // for every object it creates (model.Base.BeforeCreate), OIDC clients
-// included. An ID the caller supplied must come back exactly. Anything else
-// is refused, with an error that never includes the returned value: a server
-// could put text it received (the API key) there, and an accepted ID is
-// logged and put into URLs.
-func checkCreatedID(kind, requested, returned string) error {
+// included. An ID the caller supplied must come back exactly. And no ID may
+// contain the API key this client sends: Pocket ID accepts any static API
+// key of 16 or more characters, so a key can itself look like a UUID, and a
+// server that returned it as an ID would get it logged and into URLs.
+// Anything else is refused, with an error that never includes the returned
+// value.
+func (c *Client) checkCreatedID(kind, requested, returned string) error {
+	if c.reflectsKey(returned) {
+		return fmt.Errorf("%w: the %s ID in the create response contains the API key this provider sent", ErrInvalidIdentifier, kind)
+	}
 	if requested != "" {
 		if returned != requested {
 			return fmt.Errorf("%w: the %s ID in the create response is not the one requested", ErrInvalidIdentifier, kind)
@@ -85,4 +91,9 @@ func checkCreatedID(kind, requested, returned string) error {
 		return fmt.Errorf("%w: the %s ID in the create response is not a UUID", ErrInvalidIdentifier, kind)
 	}
 	return nil
+}
+
+// reflectsKey reports whether value contains the API key this client sends.
+func (c *Client) reflectsKey(value string) bool {
+	return c.apiToken != "" && strings.Contains(value, c.apiToken)
 }

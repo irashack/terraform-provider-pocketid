@@ -208,3 +208,56 @@ func TestClient_CreateChecksReturnedID(t *testing.T) {
 		}
 	})
 }
+
+// Pocket ID accepts any static API key of 16 or more characters, so a key
+// can be shaped like a UUID and pass every format check. A server that
+// returns the key it received as a created object's ID (client, user,
+// group, SCIM provider, generated secret, or the secret 2.17 creates with a
+// client) gets nothing: the ID is refused or dropped, never echoed.
+func TestClient_CreateRefusesTheReflectedKey(t *testing.T) {
+	const key = "7d3f9a12-4c8e-4b6a-9f21-0e5d8c7b6a43" // a UUID-shaped static key
+	require.NoError(t, client.ValidateUUID("synthetic key", key), "the key passes the UUID check on its own")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received := r.Header.Get("X-API-KEY")
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet { // the version check before a secret
+			_, _ = w.Write([]byte(`{"currentVersion":"2.17.0"}`))
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"` + received + `","name":"n","secret":"generated-secret-value-0123456789",` +
+			`"createdSecret":{"id":"` + received + `"}}`))
+	}))
+	defer server.Close()
+	c, err := client.NewClient(server.URL, key, false, 30)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	refused := map[string]error{}
+	_, refused["client"] = c.CreateClient(ctx, &client.OIDCClientCreateRequest{Name: "n"})
+	_, refused["user"] = c.CreateUser(ctx, &client.UserCreateRequest{Username: "u"})
+	_, refused["group"] = c.CreateUserGroup(ctx, &client.UserGroupCreateRequest{Name: "g"})
+	_, refused["SCIM"] = c.CreateScimServiceProvider(ctx, &client.ScimServiceProviderCreateRequest{})
+	_, refused["secret"] = c.GenerateClientSecret(ctx, "c1", nil)
+	for name, err := range refused {
+		require.ErrorIs(t, err, client.ErrInvalidIdentifier, name)
+		assert.NotContains(t, err.Error(), key, name)
+		assert.Contains(t, err.Error(), "contains the API key", name)
+	}
+
+	// The secret Pocket ID creates with a client is dropped, not refused: the
+	// client resource then rolls the new client back as having an
+	// unidentified secret.
+	requested := "my-app"
+	keyed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"my-app","name":"n","createdSecret":{"id":"` + r.Header.Get("X-API-KEY") + `"}}`))
+	}))
+	defer keyed.Close()
+	c, err = client.NewClient(keyed.URL, key, false, 30)
+	require.NoError(t, err)
+	created, err := c.CreateClient(ctx, &client.OIDCClientCreateRequest{Name: "n", ClientID: &requested})
+	require.NoError(t, err)
+	require.NotNil(t, created.CreatedSecret)
+	assert.Empty(t, created.CreatedSecret.ID)
+}

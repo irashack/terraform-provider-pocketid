@@ -49,7 +49,8 @@ type OIDCClient struct {
 // a client. Only the ID is decoded: the provider revokes that secret. The value
 // is still present in the raw response bytes the client reads, but it is never
 // decoded into a field, stored or logged. CreateClient empties an ID that is
-// not a UUID, so callers see an unusable ID as a missing one.
+// not a UUID or that contains the API key, so callers see an unusable ID as a
+// missing one.
 type CreatedClientSecret struct {
 	ID string `json:"id"`
 }
@@ -127,12 +128,13 @@ func (c *Client) CreateClient(ctx context.Context, createReq *OIDCClientCreateRe
 	if createReq.ClientID != nil {
 		requested = *createReq.ClientID
 	}
-	if err := checkCreatedID("OIDC client", requested, result.ID); err != nil {
+	if err := c.checkCreatedID("OIDC client", requested, result.ID); err != nil {
 		return nil, fmt.Errorf("client creation returned an unusable client ID, so no follow-up request uses it; the client may exist: inspect clients before recovery: %w", err)
 	}
-	// A secret ID that is not a UUID cannot be addressed for revocation, so
-	// it is treated like one the response did not name.
-	if result.CreatedSecret != nil && ValidateUUID("client secret", result.CreatedSecret.ID) != nil {
+	// A secret ID that is not a UUID cannot be addressed for revocation, and
+	// one that carries the API key must not be logged or put in a URL, so
+	// either is treated like one the response did not name.
+	if result.CreatedSecret != nil && c.checkCreatedID("client secret", "", result.CreatedSecret.ID) != nil {
 		result.CreatedSecret.ID = ""
 	}
 	return &result, nil

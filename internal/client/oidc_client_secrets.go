@@ -137,7 +137,7 @@ func (c *Client) GenerateClientSecret(ctx context.Context, clientID string, opts
 		return nil, fmt.Errorf("secret creation returned no secret; result uncertain, inspect the client before recovery")
 	}
 	if multiple {
-		if err := ValidateUUID("client secret", result.ID); err != nil {
+		if err := c.checkCreatedID("client secret", "", result.ID); err != nil {
 			return nil, fmt.Errorf("secret creation returned no usable secret ID; result uncertain, inspect the client's secrets before recovery: %w", err)
 		}
 	} else {
