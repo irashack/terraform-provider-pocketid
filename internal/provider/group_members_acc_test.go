@@ -140,7 +140,9 @@ func TestAccResourceGroupMembers_Lifecycle(t *testing.T) {
 // Pocket ID drops an ID that names no user and still answers 200. The resource
 // turns that into an error naming the ID, but the valid user of the same request
 // was added, so the resource is kept (tainted) with the members the group
-// holds: the next apply replaces it, and destroying it removes them.
+// holds. Destroying it straight away, before any apply has adopted the member,
+// must remove the member: a failed create that kept no state would leave it in
+// the group with nothing managing it.
 func TestAccResourceGroupMembers_UnknownUserIsAnErrorAndTheAddedMemberStaysManaged(t *testing.T) {
 	testAccPreCheck(t)
 	name := acctest.RandomWithPrefix("tf-acc-gm")
@@ -150,7 +152,7 @@ func TestAccResourceGroupMembers_UnknownUserIsAnErrorAndTheAddedMemberStaysManag
 
 	resource.Test(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		// The final destroy removes the member the failed create added.
+		// The final destroy removes the member the corrected configuration added.
 		CheckDestroy: func(*terraform.State) error { return gmAccCheckMembers(groupID)(nil) },
 		Steps: []resource.TestStep{
 			{
@@ -158,13 +160,24 @@ func TestAccResourceGroupMembers_UnknownUserIsAnErrorAndTheAddedMemberStaysManag
 				ExpectError: regexp.MustCompile(`(?s)Group members differ from the request.*` + missing),
 			},
 			{
-				// The server did add the valid user, and the failed resource is
-				// still in state: the corrected configuration replaces it.
+				// The server did add the valid user; the failed resource is in
+				// state and nothing has adopted the member since. Destroying it
+				// removes the member.
 				PreConfig: func() {
 					if err := gmAccCheckMembers(groupID, u1)(nil); err != nil {
 						t.Fatalf("after the failed create: %v", err)
 					}
 				},
+				Config:  gmAccConfig(groupID, u1, missing),
+				Destroy: true,
+			},
+			{
+				PreConfig: func() {
+					if err := gmAccCheckMembers(groupID)(nil); err != nil {
+						t.Fatalf("after destroying the failed resource: %v", err)
+					}
+				},
+				// The corrected configuration then creates the resource anew.
 				Config: gmAccConfig(groupID, u1),
 				Check:  gmAccCheckMembers(groupID, u1),
 			},
