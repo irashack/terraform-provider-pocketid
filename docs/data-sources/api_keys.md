@@ -4,7 +4,7 @@ page_title: "pocketid_api_keys Data Source - terraform-provider-pocketid"
 subcategory: ""
 description: |-
   Lists the API keys of the Pocket-ID user who owns the API key this provider authenticates with (Pocket-ID's list shows only the caller's own keys), with their name, description and creation, expiry and last-used times. A key's value is never returned: Pocket-ID shows it once, when it is created.
-  Its purpose is to warn before the provider's own key expires, with a check block (see the example). A key that has expired can no longer authenticate, so the provider could not read this list afterwards: the warning has to come earlier. The provider cannot tell which listed key it is using, so match the key by its name. If the provider uses Pocket-ID's static API key (STATIC_API_KEY), that is not a stored key and the list is empty.
+  Its purpose is to warn before the provider's own key expires, with a check block (see the example). A key that has expired can no longer authenticate, so the provider could not read this list afterwards: the warning has to come earlier. The provider cannot tell which listed key it is using, so match the key by its name. Compare expires_at with plantimestamp(), which is known while planning, so that the warning also appears on a plan that is never applied; timestamp() is only known at apply time. If the provider uses Pocket-ID's static API key (STATIC_API_KEY), that is not a stored key and the list is empty.
   This data source only reads. Creating and renewing a key needs a signed-in session and cannot be done with an API key, and revoking one could delete the key the provider is running on, so neither is offered.
 ---
 
@@ -12,7 +12,7 @@ description: |-
 
 Lists the API keys of the Pocket-ID user who owns the API key this provider authenticates with (Pocket-ID's list shows only the caller's own keys), with their name, description and creation, expiry and last-used times. A key's value is never returned: Pocket-ID shows it once, when it is created.
 
-Its purpose is to warn before the provider's own key expires, with a `check` block (see the example). A key that has expired can no longer authenticate, so the provider could not read this list afterwards: the warning has to come earlier. The provider cannot tell which listed key it is using, so match the key by its name. If the provider uses Pocket-ID's static API key (`STATIC_API_KEY`), that is not a stored key and the list is empty.
+Its purpose is to warn before the provider's own key expires, with a `check` block (see the example). A key that has expired can no longer authenticate, so the provider could not read this list afterwards: the warning has to come earlier. The provider cannot tell which listed key it is using, so match the key by its name. Compare `expires_at` with `plantimestamp()`, which is known while planning, so that the warning also appears on a plan that is never applied; `timestamp()` is only known at apply time. If the provider uses Pocket-ID's static API key (`STATIC_API_KEY`), that is not a stored key and the list is empty.
 
 This data source only reads. Creating and renewing a key needs a signed-in session and cannot be done with an API key, and revoking one could delete the key the provider is running on, so neither is offered.
 
@@ -26,6 +26,9 @@ This data source only reads. Creating and renewing a key needs a signed-in sessi
 # key was created in the Pocket-ID interface under the name "terraform". The
 # check passes only if such a key exists and stays valid for at least two more
 # weeks. A failing check is a warning on every plan and apply, never an error.
+# It uses plantimestamp(), which is known while planning, so the warning also
+# appears on a plan that is never applied; timestamp() would only be known at
+# apply time and the check would then say nothing on a plain `plan`.
 #
 # A key that has expired can no longer authenticate, so there is no list to read
 # then: the warning has to come before that. Renew the key in Pocket-ID (it
@@ -37,7 +40,7 @@ check "pocketid_management_key_expiry" {
   assert {
     condition = length([
       for key in data.pocketid_api_keys.mine.keys : key
-      if key.name == "terraform" && timecmp(key.expires_at, timeadd(timestamp(), "336h")) > 0
+      if key.name == "terraform" && timecmp(key.expires_at, timeadd(plantimestamp(), "336h")) > 0
     ]) > 0
     error_message = "The Pocket-ID API key named \"terraform\" is missing or expires within two weeks. Renew it before it stops working."
   }

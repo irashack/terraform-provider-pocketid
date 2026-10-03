@@ -57,6 +57,8 @@
 - New data source `pocketid_api_keys`: lists the API keys of the Pocket ID user
   who owns the key the provider uses (name, description, and creation, expiry
   and last-used times; never a key value). Its purpose is a `check` block that
-  warns before the provider's own key expires (see the example). Creating,
+  warns before the provider's own key expires (see the example, which compares
+  with `plantimestamp()` so that the warning also shows on a plan that is not
+  applied). Creating,
   renewing and revoking keys is deliberately not offered. If the provider uses
   Pocket ID's static API key (`STATIC_API_KEY`), the list is empty.

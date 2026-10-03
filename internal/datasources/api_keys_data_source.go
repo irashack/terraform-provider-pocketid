@@ -58,8 +58,9 @@ func (d *apiKeysDataSource) Schema(_ context.Context, _ datasource.SchemaRequest
 			"Its purpose is to warn before the provider's own key expires, with a `check` block (see the example). A key " +
 			"that has expired can no longer authenticate, so the provider could not read this list afterwards: the " +
 			"warning has to come earlier. The provider cannot tell which listed key it is using, so match the key by its " +
-			"name. If the provider uses Pocket-ID's static API key (`STATIC_API_KEY`), that is not a stored key and the " +
-			"list is empty.\n\n" +
+			"name. Compare `expires_at` with `plantimestamp()`, which is known while planning, so that the warning also " +
+			"appears on a plan that is never applied; `timestamp()` is only known at apply time. If the provider uses " +
+			"Pocket-ID's static API key (`STATIC_API_KEY`), that is not a stored key and the list is empty.\n\n" +
 			"This data source only reads. Creating and renewing a key needs a signed-in session and cannot be done with an API " +
 			"key, and revoking one could delete the key the provider is running on, so neither is offered.",
 		Attributes: map[string]schema.Attribute{
