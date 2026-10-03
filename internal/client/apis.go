@@ -109,6 +109,9 @@ const apiKind = "API"
 // accepted here; permissions and CIMD access are separate requests.
 func (c *Client) CreateAPI(ctx context.Context, req *APICreateRequest) (*API, error) {
 	body, err := c.doRequest(ctx, "POST", "/api/apis", req)
+	if errors.Is(err, ErrResultUnread) {
+		return nil, fmt.Errorf("API creation returned an unusable response; the API may exist: inspect before recovery: %w", err)
+	}
 	if err != nil {
 		return nil, err
 	}

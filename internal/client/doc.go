@@ -44,4 +44,14 @@
 // provider's oidcClient.id is checked only when present, because Pocket ID
 // 2.14.0 to 2.17.0 fill that object only where they load the client with
 // the provider, which none of the endpoints this client calls does.
+//
+// Text going out and coming back. Beyond identifiers, doRequest refuses a
+// JSON request body that carries the API key in any string, number or object
+// key, and a successful JSON answer that does (text_checks.go), so no name,
+// e-mail address, claim, setting, URL or other text can carry the key into
+// state, a log line or a diagnostic. Values are checked once decoded, so an
+// escaped key is found. Secret values (a client secret, a SCIM, signup or
+// one-time token, the SMTP and LDAP passwords) are exempt: they go only to
+// sensitive state and are never shown. A refused answer to a mutation wraps
+// ErrResultUnread.
 package client

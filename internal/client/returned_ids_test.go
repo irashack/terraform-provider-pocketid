@@ -90,7 +90,7 @@ func TestClient_ReturnedIDsAreChecked(t *testing.T) {
 		}, true, nil},
 		{"ListClients: reflected group ID", pageJSON(`{"id":"app","allowedUserGroups":[{"id":"` + returnedIDsKey + `"}]}`), func(c *client.Client) error { _, err := c.ListClients(ctx); return err }, false, nil},
 		// oidc_client_secrets.go
-		{"ListClientSecrets: reflected secret ID", `[{"id":"` + returnedIDsKey + `","prefix":""}]`, func(c *client.Client) error { _, err := c.ListClientSecrets(ctx, "app"); return err }, false, client.ErrMalformedSecretList},
+		{"ListClientSecrets: reflected secret ID", `[{"id":"` + returnedIDsKey + `","prefix":""}]`, func(c *client.Client) error { _, err := c.ListClientSecrets(ctx, "app"); return err }, false, nil},
 		{"CreateClientSecret: reflected secret ID", `{"id":"` + returnedIDsKey + `","prefix":"abcd","secret":"abcdefghijklmnopqrstuvwx"}`, func(c *client.Client) error { _, err := c.CreateClientSecret(ctx, "app", nil); return err }, false, nil},
 		// users.go
 		{"GetUser: another user", userJSON(returnedIDsOther), func(c *client.Client) error { _, err := c.GetUser(ctx, returnedIDsUser); return err }, false, nil},

@@ -226,13 +226,16 @@ func TestClient_APIWrites_UndecodableAnswerIsUnread(t *testing.T) {
 func TestClient_APIDecodeErrorsCarryNoValue(t *testing.T) {
 	const numericKey = "1234567890123456"
 	overflow := "99" + numericKey + "999999" // 24 digits: overflows int64
-	server := func(body string) *client.Client {
+	// The decoder's path is checked with a key the bodies do not carry; an
+	// answer that carries the key is refused before decoding (see below).
+	serverWith := func(body, key string) *client.Client {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = fmt.Fprint(w, body) }))
 		t.Cleanup(server.Close)
-		c, err := client.NewClient(server.URL, numericKey, false, 5)
+		c, err := client.NewClient(server.URL, key, false, 5)
 		require.NoError(t, err)
 		return c
 	}
+	server := func(body string) *client.Client { return serverWith(body, "an-unrelated-static-key") }
 	ctx := context.Background()
 	check := func(label string, err error) {
 		t.Helper()
@@ -257,6 +260,22 @@ func TestClient_APIDecodeErrorsCarryNoValue(t *testing.T) {
 		_, err = c.UpdateAPI(ctx, apiTestAPIID, &client.APIUpdateRequest{Name: "x"})
 		check("update "+label, err)
 		assert.ErrorIs(t, err, client.ErrResultUnread, label)
+
+		if !strings.Contains(body, numericKey) {
+			continue
+		}
+		// With the key configured, a decodable answer is refused for
+		// carrying it, and one that does not decode by the decoder; either
+		// way nothing of it is quoted.
+		keyed := serverWith(body, numericKey)
+		_, err = keyed.GetAPI(ctx, apiTestAPIID)
+		require.Error(t, err, "keyed read "+label)
+		assert.True(t, errors.Is(err, client.ErrInvalidIdentifier) || errors.Is(err, client.ErrUndecodableResponse), label)
+		assert.NotContains(t, err.Error(), numericKey, label)
+		_, err = keyed.UpdateAPI(ctx, apiTestAPIID, &client.APIUpdateRequest{Name: "x"})
+		require.Error(t, err, "keyed update "+label)
+		assert.ErrorIs(t, err, client.ErrResultUnread, label)
+		assert.NotContains(t, err.Error(), numericKey, label)
 	}
 
 	// The list: an overflowing pagination count, and a mistyped entry. The
@@ -300,17 +319,26 @@ func TestClient_IsOIDCClientPublic(t *testing.T) {
 				_, _ = fmt.Fprint(w, tc.body)
 			}))
 			t.Cleanup(server.Close)
-			c, err := client.NewClient(server.URL, numericKey, false, 5)
+			// The decoder's path, with a key the bodies do not carry.
+			c, err := client.NewClient(server.URL, "an-unrelated-static-key", false, 5)
 			require.NoError(t, err)
 			public, err := c.IsOIDCClientPublic(ctx, "app")
 			if tc.fails {
 				require.Error(t, err)
 				assert.ErrorIs(t, err, client.ErrUndecodableResponse)
 				assert.NotContains(t, err.Error(), numericKey)
-				return
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tc.public, public)
 			}
-			require.NoError(t, err)
-			assert.Equal(t, tc.public, public)
+			// An answer that carries the key is refused, whichever field.
+			if strings.Contains(tc.body, numericKey) {
+				keyed, err := client.NewClient(server.URL, numericKey, false, 5)
+				require.NoError(t, err)
+				_, err = keyed.IsOIDCClientPublic(ctx, "app")
+				require.ErrorIs(t, err, client.ErrInvalidIdentifier)
+				assert.NotContains(t, err.Error(), numericKey)
+			}
 		})
 	}
 

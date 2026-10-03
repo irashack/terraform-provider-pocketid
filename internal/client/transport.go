@@ -132,7 +132,41 @@ var defaultRetryPolicy = retryPolicy{
 // whole call: cancelling it aborts an in-flight request and any wait before a
 // retry. A GET, its retries included, also ends at the retry deadline (see
 // maxRetryElapsed); a mutation is sent once and bounded by the HTTP timeout.
+//
+// A request body that contains the API key outside a secret value is never
+// sent, and a successful JSON answer that contains it outside a secret value
+// is never returned (checkRequestText, checkResponseText).
 func (c *Client) doRequest(ctx context.Context, method, endpoint string, body interface{}) ([]byte, error) {
+	var payload []byte
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling request body: %w", err)
+		}
+		payload = encoded
+		if err := c.checkRequestText(payload); err != nil {
+			return nil, err
+		}
+	}
+	respBody, err := c.withRetries(ctx, method, func(ctx context.Context) ([]byte, error) {
+		return c.send(ctx, method, endpoint, "application/json", payload)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := c.checkResponseText(method, respBody); err != nil {
+		return nil, err
+	}
+	return respBody, nil
+}
+
+// withRetries runs attempt once, or for a GET under the retry policy: a GET,
+// its retries included, ends at the retry deadline (maxRetryElapsed or the
+// context's own deadline, if earlier), and is sent again only after an error
+// isRetryableError accepts, waiting between attempts. A mutation is sent once.
+// Each call of attempt is one request; a caller that needs a fresh request
+// per attempt (a new cache-busting value) builds it inside attempt.
+func (c *Client) withRetries(ctx context.Context, method string, attempt func(context.Context) ([]byte, error)) ([]byte, error) {
 	policy := c.retry
 	if policy.maxAttempts == 0 {
 		policy = defaultRetryPolicy
@@ -149,25 +183,17 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body in
 		ctx, cancel = context.WithTimeout(ctx, retryDeadline.Sub(start))
 		defer cancel()
 	}
-	var payload []byte
-	if body != nil {
-		encoded, err := json.Marshal(body)
-		if err != nil {
-			return nil, fmt.Errorf("error marshaling request body: %w", err)
-		}
-		payload = encoded
-	}
 
 	var lastErr error
-	for attempt := 1; ; attempt++ {
+	for n := 1; ; n++ {
 		if err := ctx.Err(); err != nil {
 			if lastErr != nil {
-				return nil, fmt.Errorf("request abandoned before attempt %d: %w (previous attempt: %w)", attempt, err, lastErr)
+				return nil, fmt.Errorf("request abandoned before attempt %d: %w (previous attempt: %w)", n, err, lastErr)
 			}
 			return nil, fmt.Errorf("request not sent: %w", err)
 		}
 
-		respBody, err := c.send(ctx, method, endpoint, "application/json", payload)
+		respBody, err := attempt(ctx)
 		if err == nil {
 			return respBody, nil
 		}
@@ -178,13 +204,13 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body in
 		if method != http.MethodGet || ctx.Err() != nil || !isRetryableError(err) {
 			return nil, err
 		}
-		if attempt >= policy.maxAttempts {
-			return nil, fmt.Errorf("request failed after %d attempts: %w", attempt, lastErr)
+		if n >= policy.maxAttempts {
+			return nil, fmt.Errorf("request failed after %d attempts: %w", n, lastErr)
 		}
 
 		// Exponential backoff (1, 2, 4 units) unless the server asked for a
 		// specific wait.
-		wait := policy.backoffUnit * time.Duration(1<<(attempt-1))
+		wait := policy.backoffUnit * time.Duration(1<<(n-1))
 		var rateLimitErr *RateLimitError
 		if errors.As(lastErr, &rateLimitErr) && rateLimitErr.RetryAfter > 0 {
 			wait = rateLimitErr.RetryAfter
@@ -193,12 +219,12 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body in
 			return nil, fmt.Errorf("not retrying: the server asked to wait %s, longer than the %s this provider waits: %w", wait, policy.maxWait, lastErr)
 		}
 		if !time.Now().Add(wait).Before(retryDeadline) {
-			return nil, fmt.Errorf("not retrying: waiting %s would use up the time allowed for this request after %d attempt(s): %w", wait, attempt, lastErr)
+			return nil, fmt.Errorf("not retrying: waiting %s would use up the time allowed for this request after %d attempt(s): %w", wait, n, lastErr)
 		}
 
 		tflog.Warn(ctx, "Request failed with retryable error", map[string]interface{}{
 			"error":        err.Error(),
-			"attempt":      attempt,
+			"attempt":      n,
 			"max_attempts": policy.maxAttempts,
 			"backoff":      wait.String(),
 		})

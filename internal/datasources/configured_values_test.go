@@ -1,6 +1,7 @@
 package datasources_test
 
 import (
+	"net/http"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -33,5 +34,23 @@ func TestLookupValuesCarryingTheKeyAreRefused(t *testing.T) {
 			}
 			assert.Empty(t, fake.log(), "nothing is sent")
 		})
+	}
+}
+
+// An answer that carries the API key ("test-token" for this fake) in a text
+// field never reaches the data source's state or a diagnostic.
+func TestAnswersCarryingTheKeyNeverReachState(t *testing.T) {
+	fake := newB2Fake(t)
+	fake.handle("GET /api/users/"+b2UUID(1), func(w http.ResponseWriter, _ *http.Request) {
+		b2JSON(w, http.StatusOK, map[string]any{
+			"id": b2UUID(1), "username": "someone", "email": "a@example.com",
+			"displayName": "Shown test-token here", "userGroups": []any{}, "customClaims": []any{},
+		})
+	})
+	resp := b2Read(t, b2Configure(t, datasources.NewUserDataSource(), fake.client()), map[string]tftypes.Value{"id": b2Str(b2UUID(1))})
+	require.True(t, resp.Diagnostics.HasError())
+	assert.True(t, resp.State.Raw.IsNull(), "nothing is recorded")
+	for _, d := range resp.Diagnostics {
+		assert.NotContains(t, d.Summary()+d.Detail(), "test-token")
 	}
 }

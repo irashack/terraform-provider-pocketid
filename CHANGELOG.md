@@ -902,6 +902,16 @@ go-playground/validator and the URL-pattern libraries.
 - The server's version (from `/api/version/current`) is refused if it contains
   the provider's API key, so it never reaches `pocketid_version` or a
   diagnostic.
+- The same rule now covers all text, not only IDs: an answer from Pocket ID
+  that contains the provider's API key anywhere (a username, a name or e-mail
+  address, a custom claim's key or value, a group or API-key name, a URL, a
+  setting, a number), in plain or escaped JSON, is not used at all; the error
+  is fixed text, and after a change Pocket ID accepted it says the result
+  could not be read. A request whose body would carry the key (in a name, a
+  claim, a URL, a setting, ...) is not sent. Secret values are the exception
+  both ways: a client secret, a SCIM, signup or one-time token and the SMTP
+  and LDAP passwords go only to sensitive state and are never shown, so the
+  provider sends and accepts them as they are.
 - An identifier a request carries in its body (the groups of a user or a
   client, a group's members, a signup token's groups, a chosen user or client
   ID, a SCIM provider's client) is refused before anything is sent if it
