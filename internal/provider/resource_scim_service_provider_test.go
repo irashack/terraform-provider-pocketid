@@ -35,7 +35,7 @@ func TestAccResourceScimServiceProvider_basic(t *testing.T) {
 				Config: testAccResourceScimServiceProviderConfig_basic(clientName, endpoint, token),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr(resourceName, "endpoint", endpoint),
-					resource.TestCheckResourceAttr(resourceName, "token", token),
+					testAccCheckSensitiveEquals(resourceName, "token", token),
 					resource.TestCheckResourceAttrSet(resourceName, "id"),
 					resource.TestCheckResourceAttrSet(resourceName, "client_id"),
 					resource.TestCheckResourceAttrSet(resourceName, "created_at"),
@@ -57,18 +57,26 @@ func TestAccResourceScimServiceProvider_basic(t *testing.T) {
 					return rs.Primary.Attributes["client_id"], nil
 				},
 				// The token is returned by the API on read, so it round-trips
-				// and is verified against the imported state.
+				// and is verified against the imported state. It is compared
+				// in ImportStateCheck, not by ImportStateVerify, whose
+				// difference output would print it.
 				// pocket-id returns created_at with nanosecond precision on
 				// create but truncated to seconds on GET, so it cannot be
 				// verified byte-for-byte after import.
-				ImportStateVerifyIgnore: []string{"created_at"},
+				ImportStateVerifyIgnore: []string{"created_at", "token"},
+				ImportStateCheck: func(states []*terraform.InstanceState) error {
+					if len(states) != 1 {
+						return fmt.Errorf("expected one imported state, got %d", len(states))
+					}
+					return testAccSameError("the imported token", token, states[0].Attributes["token"])
+				},
 			},
 			// Update and Read testing.
 			{
 				Config: testAccResourceScimServiceProviderConfig_basic(clientName, endpoint+"/updated", token),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr(resourceName, "endpoint", endpoint+"/updated"),
-					resource.TestCheckResourceAttr(resourceName, "token", token),
+					testAccCheckSensitiveEquals(resourceName, "token", token),
 				),
 			},
 		},
