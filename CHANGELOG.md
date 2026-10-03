@@ -100,7 +100,11 @@ resource keeps depends on what the provider could confirm:
   access could not be set, and a user or client whose groups, claims or
   secret could not be set and that was not confirmed removed afterwards.
   When Pocket ID refused such a step outright and the new user or client is
-  then confirmed removed, nothing is recorded.
+  then confirmed removed, nothing is recorded. An answer that names the new
+  object but carries the provider's API key in another value is such an
+  unusable answer: a new user's groups are still written and verified (so
+  no signup default group stays) before the user is removed, a new group
+  is removed, a signup token is deleted, and a client is kept by its ID.
 - `pocketid_user` created with a chosen `id`: computed `unresolved_creation`
   is true, and changing, deleting or replacing the user is refused, because a
   user found under that ID may be someone else's. Check the user, then
@@ -141,26 +145,43 @@ The provider now refuses an answer it cannot rely on instead of reading it as
 empty or partial: a body that is not the JSON expected, a list or object
 without the fields that say what the server holds (a client's or a user's
 groups, a group's members, a grant's access), an ID that is not the object
-asked for, or any text that contains the API key, in plain or escaped JSON
-(a name, a claim's key or value, a URL, a setting, a number). You see a fixed
-message that quotes nothing from the response, such as "error unmarshaling
-response: the response is not the JSON this provider expects", or, after a
-change Pocket ID accepted, "the server accepted the change, but its result
-could not be read", with a note to inspect the object before trying again.
-Nothing from such an answer reaches state, a log line or a diagnostic. The
-one exception is the validated ID of an object the answer shows was created,
-kept so that the next apply can replace it ("When a result is uncertain").
-Secret values (client secrets, SCIM, signup and one-time tokens, the SMTP and
-LDAP passwords) are not checked for the key: they go only to sensitive state
-and are never shown. A server or proxy that rewrites Pocket ID's answers can
-therefore make applies fail that used to pass; that is deliberate.
+asked for, or a value the provider takes from the answer that contains the
+API key, in plain or escaped JSON (a name, an e-mail address, a claim's key
+or value, a URL, a setting, a time, a count). The check applies to the
+decoded values the provider stores, logs or shows, never to JSON field names
+or to fields it does not read, so an answer is not refused because a field
+name happens to contain the key. You see a fixed message that quotes nothing
+from the response, such as "error unmarshaling response: the response is not
+the JSON this provider expects", or, after a change Pocket ID accepted, "the
+server accepted the change, but its result could not be read", with a note
+to inspect the object before trying again. Nothing from such an answer
+reaches state, a log line or a diagnostic. The one exception is the
+validated ID of an object the answer shows was created (with a signup
+token's secret value, which may be valid), kept so that the object can be
+recovered ("When a result is uncertain"). Only secret values,
+in their own fields, are not checked for the key: a client secret, a SCIM,
+signup or one-time token, and the SMTP and LDAP passwords of the application
+configuration go only to sensitive state and are never shown. A custom claim
+named like one of them is ordinary text and is checked. A server or proxy
+that rewrites Pocket ID's answers can therefore make applies fail that used
+to pass; that is deliberate.
 
-Your configuration is held to the same rule where the provider handles it: an
-identifier (from configuration, state or an import ID) that contains the key
-is refused before any request, log line or diagnostic uses it, a request
-whose body would carry the key outside a secret value is not sent, and
-plan-time validation messages name the attribute and its rule, never the
-configured value. Terraform itself still shows configured values in plans.
+Your configuration is held to the same rule where the provider handles it:
+
+- an identifier (from configuration, state or an import ID) that contains the
+  key is refused before any request, log line or diagnostic uses it;
+- a request whose configured text would carry the key outside a secret
+  value is not sent;
+- no configured text is written to the provider's log, which records only
+  IDs that passed their check, kinds and counts;
+- plan-time validation messages name the attribute and its rule (and, inside
+  a map or set, the nested attribute), never the configured value or a map
+  key. The rules of `pocketid_api`'s permissions that the framework would
+  check per entry (a name is required, the ID cannot be set) are checked on
+  `permissions` as a whole for that reason.
+
+Terraform and OpenTofu themselves still show configured values in plans and
+in their own messages; that is outside the provider.
 
 ### New resources and data sources
 
@@ -985,11 +1006,14 @@ go-playground/validator and the URL-pattern libraries.
 - Every plan-time validation message names the attribute and its rule and
   never the configured value: Terraform's and this provider's validators
   alike, for strings, numbers, lists, sets and maps, nested attributes
-  included. A map key or set element is never named. Some messages read
-  differently as a result (for example a JWK, a URL or a setting now names
-  the rule it breaks rather than quoting the value). An identifier from state
-  (a user, group, client, secret, SCIM provider or signup token ID, a user's
-  groups) is checked before any log line, diagnostic or request uses it.
+  included. A map key or set element is never named; a message about an
+  attribute inside one names that attribute and the collection ("name in
+  permissions"). Some messages read differently as a result (for example a
+  JWK, a URL or a setting now names the rule it breaks rather than quoting
+  the value). An identifier from state (a user, group, client, secret, SCIM
+  provider or signup token ID, a user's groups) is checked before any log
+  line, diagnostic or request uses it, and the provider's log records no
+  configured text, only checked IDs, kinds and counts.
 
 ## 2.4.104 — 2026-10-02
 

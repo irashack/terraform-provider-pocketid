@@ -255,12 +255,49 @@ func TestClientChosenIDDefiniteFailuresRecordNothing(t *testing.T) {
 	assert.NotContains(t, string(private), clientUnresolvedCreationKey)
 }
 
-// State written before the attribute existed decodes with it null, and an
-// unchanged configuration plans no change.
+// clientState2_4_104 is a pocketid_client as provider 2.4.104 wrote it to
+// state (schema version 0): the attributes of that release only, with
+// allowed_user_groups as a list and no client_secret_id, generate_secret,
+// computed client settings or unresolved_creation.
+const clientState2_4_104 = `{
+  "id": "c1",
+  "name": "fixture",
+  "client_id": null,
+  "callback_urls": ["https://example.invalid/callback"],
+  "logout_callback_urls": null,
+  "backchannel_logout_url": null,
+  "is_public": false,
+  "pkce_enabled": true,
+  "allowed_user_groups": [],
+  "has_logo": false,
+  "requires_reauthentication": false,
+  "requires_pushed_authorization_requests": false,
+  "launch_url": null,
+  "federated_identities": null,
+  "client_secret": "gen0synthetic-held-secret"
+}`
+
+// State written by 2.4.104 has no unresolved_creation: it decodes as null,
+// stays null through a refresh, and a plan keeps it null.
 func TestClientUnresolvedCreationNullForEarlierState(t *testing.T) {
 	h := newClientProtocolHarness(t, managedFake(t, "2.17.0").start())
-	prior := managedModel()
-	planned, _, errs := h.plan(&prior, &prior, &prior, nil)
+	upgraded, err := h.server.UpgradeResourceState(context.Background(), &tfprotov6.UpgradeResourceStateRequest{
+		TypeName: "pocketid_client", Version: 0, RawState: &tfprotov6.RawState{JSON: []byte(clientState2_4_104)},
+	})
+	require.NoError(t, err)
+	require.Empty(t, usersGroupsErrors(upgraded.Diagnostics))
+	prior := h.decode(upgraded.UpgradedState)
+	require.NotNil(t, prior)
+	assert.Equal(t, "c1", prior.ID.ValueString())
+	assert.True(t, prior.UnresolvedCreation.IsNull(), "the attribute 2.4.104 did not have is null")
+
+	refreshed, private, errs, warnings := h.read(prior, nil)
+	require.Empty(t, errs)
+	assert.Empty(t, warnings)
+	require.NotNil(t, refreshed)
+	assert.True(t, refreshed.UnresolvedCreation.IsNull(), "a refresh keeps it null")
+
+	planned, _, errs := h.plan(refreshed, refreshed, refreshed, private)
 	require.Empty(t, errs)
 	require.NotNil(t, planned)
 	assert.True(t, planned.UnresolvedCreation.IsNull(), "null stays null in the plan")
