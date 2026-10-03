@@ -18,3 +18,11 @@
   gone succeeds. Before, every plan failed. Only Pocket ID's own "OIDC client
   not found" answer counts: any other 404 (a wrong base URL, a proxy page)
   remains an error.
+- `pocketid_client.client_id` is now always the client's actual ID: it is
+  filled in when omitted, on import, and on refresh. **Breaking:** configuring
+  a `client_id` different from the existing client's ID now replaces the
+  client (Pocket ID cannot change an ID; before, the new value was recorded in
+  state while the server kept the old one). With `prevent_destroy` the plan
+  fails instead. `client_id` is validated as Pocket ID does: 2 to 128 letters,
+  digits, `.`, `_` or `-`. Existing state plans empty whether or not
+  `client_id` was configured.

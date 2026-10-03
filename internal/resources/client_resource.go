@@ -114,10 +114,16 @@ func (r *clientResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				},
 			},
 			"client_id": schema.StringAttribute{
-				Description: "The client ID to use for the OIDC client. If not set, one will be generated. Must be between 2 and 128 characters.",
-				Optional:    true,
+				Description: "The client ID: 2 to 128 letters, digits, `.`, `_` or `-`. When omitted, Pocket ID generates one. " +
+					"Always equal to `id` once the client exists, including after import. Pocket ID cannot change a client's ID, so configuring a different value replaces the client.",
+				Optional: true,
+				Computed: true,
 				Validators: []validator.String{
-					stringvalidator.LengthBetween(2, 128), // Matches the API binding (min=2, max=128)
+					clientIDValidator{},
+				},
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+					clientIDReplace{},
 				},
 			},
 			"callback_urls": schema.ListAttribute{
@@ -370,6 +376,7 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 			detail += ". The POST result is uncertain; inspect read-only before retrying. No cleanup was attempted."
 			if createReq.ClientID != nil {
 				plan.ID = types.StringValue(*createReq.ClientID)
+				plan.ClientID = plan.ID
 				plan.ClientSecret = types.StringNull()
 				plan.ClientSecretID = types.StringNull()
 				plan.HasLogo = types.BoolValue(false)
@@ -399,6 +406,7 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 	// Map API response to Terraform model and preserve fields
 	apiModel := mapAPIClientToModel(ctx, clientResp)
 	plan.ID = apiModel.ID
+	plan.ClientID = apiModel.ID
 	plan.HasLogo = apiModel.HasLogo
 	plan.RequiresReauthentication = apiModel.RequiresReauthentication
 	plan.FederatedIdentities = apiModel.FederatedIdentities
@@ -497,6 +505,7 @@ func (r *clientResource) Read(ctx context.Context, req resource.ReadRequest, res
 	}
 
 	// Update state from API response
+	state.ClientID = types.StringValue(clientResp.ID)
 	state.Name = types.StringValue(clientResp.Name)
 	state.IsPublic = types.BoolValue(clientResp.IsPublic)
 	state.PkceEnabled = types.BoolValue(clientResp.PkceEnabled)
@@ -659,11 +668,6 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 		resp.Diagnostics.AddAttributeError(path.Root("backchannel_logout_url"), "Unsupported back-channel logout configuration", err.Error())
 		return
 	}
-	if !plan.ClientID.IsNull() && !plan.ClientID.IsUnknown() && plan.ClientID.ValueString() != "" {
-		cid := plan.ClientID.ValueString()
-		updateReq.ClientID = &cid
-	}
-
 	// A secret to revoke is identified before anything changes: if it cannot
 	// be told apart from the client's other secrets, nothing is changed.
 	secretAction, _ := planSecretAction(state, plan)
