@@ -43,6 +43,29 @@ func TestVersionDataSource_Read_Failures(t *testing.T) {
 	}
 }
 
+// A version whose pre-release or build part carries the API key the client
+// sends ("test-token" for this fake) is refused: it never reaches the
+// non-sensitive version attribute, and the diagnostic does not repeat it.
+func TestVersionDataSource_Read_VersionCarryingTheKeyNeverReachesState(t *testing.T) {
+	for name, reported := range map[string]string{
+		"build metadata": "2.17.0+test-token",
+		"pre-release":    "2.17.0-test-token.1",
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := newB2Fake(t)
+			fake.handle("GET /api/version/current", func(w http.ResponseWriter, _ *http.Request) {
+				b2JSON(w, http.StatusOK, map[string]any{"currentVersion": reported})
+			})
+			resp := b2Read(t, b2Configure(t, datasources.NewVersionDataSource(), fake.client()), nil)
+			require.True(t, resp.Diagnostics.HasError())
+			assert.True(t, resp.State.Raw.IsNull(), "no version is recorded")
+			for _, d := range resp.Diagnostics {
+				assert.NotContains(t, d.Summary()+d.Detail(), "test-token")
+			}
+		})
+	}
+}
+
 func TestCurrentUserDataSource_Read(t *testing.T) {
 	fake := newB2Fake(t)
 	fake.handle("GET /api/users/me", func(w http.ResponseWriter, _ *http.Request) {
