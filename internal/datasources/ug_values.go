@@ -2,7 +2,6 @@ package datasources
 
 import (
 	"context"
-	"sort"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -28,12 +27,4 @@ func ugIDSetValue(ctx context.Context, ids []string) (types.Set, diag.Diagnostic
 		ids = []string{}
 	}
 	return types.SetValueFrom(ctx, types.StringType, ids)
-}
-
-// ugSortedIDs returns ids in order, so the same data reads the same way each
-// time whatever order the server answered in.
-func ugSortedIDs(ids []string) []string {
-	out := append([]string(nil), ids...)
-	sort.Strings(out)
-	return out
 }
