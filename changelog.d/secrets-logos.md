@@ -13,7 +13,9 @@
 - New resource `pocketid_client_logo`: the light or dark logo of an OIDC
   client (`variant = "light"` or `"dark"`), uploaded from a local file
   (`source`, with a computed `sha256`). A changed file is uploaded again, and
-  so is a logo that was removed or replaced outside Terraform. Files Pocket
+  so is a logo that was removed or replaced outside Terraform (logo reads
+  bypass any cache in front of Pocket ID, so a cached copy neither hides a
+  change nor reports a false one). Files Pocket
   ID would refuse (an unsupported extension, more than 2 MiB, a JPEG or PNG
   with more than 16 million pixels) are refused at plan. Destroying the
   resource removes that logo. Import with `<client_id>/light` or

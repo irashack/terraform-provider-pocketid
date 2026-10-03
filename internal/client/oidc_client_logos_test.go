@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sort"
 	"testing"
 
@@ -98,12 +99,39 @@ func TestClient_UploadClientLogo(t *testing.T) {
 }
 
 func TestClient_GetAndDeleteClientLogo(t *testing.T) {
-	t.Run("get", func(t *testing.T) {
-		c, seen := clientLogoServer(t, http.StatusOK, "image-bytes")
-		served, err := c.GetClientLogo(context.Background(), "c1", false)
+	t.Run("get bypasses caches", func(t *testing.T) {
+		var headers []http.Header
+		var queries []url.Values
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal(t, "/api/oidc/clients/c1/logo", r.URL.Path)
+			headers = append(headers, r.Header.Clone())
+			queries = append(queries, r.URL.Query())
+			_, _ = fmt.Fprint(w, "image-bytes")
+		}))
+		defer server.Close()
+		c, err := client.NewClient(server.URL, "synthetic-token", false, 2)
 		require.NoError(t, err)
-		assert.Equal(t, []byte("image-bytes"), served)
-		assert.Equal(t, clientLogoRequest{method: "GET", path: "/api/oidc/clients/c1/logo", query: "light=false"}, (*seen)[0])
+		for i := 0; i < 2; i++ {
+			served, err := c.GetClientLogo(context.Background(), "c1", false)
+			require.NoError(t, err)
+			assert.Equal(t, []byte("image-bytes"), served)
+		}
+		require.Len(t, queries, 2)
+		for i := 0; i < 2; i++ {
+			assert.Equal(t, "false", queries[i].Get("light"))
+			assert.NotEmpty(t, queries[i].Get("nocache"))
+			assert.Equal(t, "no-cache", headers[i].Get("Cache-Control"))
+			assert.Equal(t, "no-cache", headers[i].Get("Pragma"))
+			assert.Equal(t, "synthetic-token", headers[i].Get("X-API-KEY"), "the request is otherwise the usual one")
+		}
+		assert.NotEqual(t, queries[0].Get("nocache"), queries[1].Get("nocache"), "every read has a URL of its own")
+
+		// The client itself is not changed: its other requests carry no
+		// cache headers and no extra parameter.
+		require.NoError(t, c.DeleteClientLogo(context.Background(), "c1", true))
+		require.Len(t, queries, 3)
+		assert.Empty(t, headers[2].Get("Cache-Control"))
+		assert.Empty(t, queries[2].Get("nocache"))
 	})
 	t.Run("delete", func(t *testing.T) {
 		c, seen := clientLogoServer(t, http.StatusNoContent, "")

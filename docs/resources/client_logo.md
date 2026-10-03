@@ -51,6 +51,10 @@ resource "pocketid_client_logo" "app_dark" {
   `sha256` to the served image's hash, so the next apply uploads the file
   again.
 
+Pocket ID allows caches to keep a logo for 15 minutes, so every read of a
+logo uses a URL of its own and asks caches to revalidate: a cache between the
+provider and Pocket ID never answers with an earlier logo.
+
 The logo is uploaded from the file, never from a URL: Pocket ID's own URL
 download refuses private addresses, and when it fails while a client is being
 created the client exists without its logo.

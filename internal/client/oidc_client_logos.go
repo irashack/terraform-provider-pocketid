@@ -2,9 +2,14 @@ package client
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
+	"net/http"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // clientLogoRequestLimit is the size limit Pocket ID puts on a logo upload
@@ -89,18 +94,65 @@ func (c *Client) UploadClientLogo(ctx context.Context, clientID string, light bo
 	return err
 }
 
-// GetClientLogo returns the image Pocket ID serves as the light
+// GetClientLogo returns the image Pocket ID serves now as the light
 // (light = true) or dark logo of an OIDC client, from
 // GET /api/oidc/clients/{id}/logo?light=... . Without a light logo it answers
 // ResourceImage's not-found error. Asked for the dark logo of a client that
 // has none, it serves the light logo instead, so check
 // OIDCClient.HasDarkLogo before relying on what it returns.
+//
+// Pocket ID lets any cache keep a logo for 15 minutes and serve it stale for
+// 12 hours more (utils.SetCacheControlHeader), so a cache between the
+// provider and the server could answer with an earlier logo. Each call
+// therefore uses a URL no cache has seen (a random nocache parameter, which
+// Pocket ID ignores) and asks caches to revalidate (Cache-Control: no-cache,
+// Pragma: no-cache).
 func (c *Client) GetClientLogo(ctx context.Context, clientID string, light bool) ([]byte, error) {
 	endpoint, err := clientLogoEndpoint(clientID, light)
 	if err != nil {
 		return nil, err
 	}
-	return c.doRequest(ctx, "GET", endpoint, nil)
+	return c.clientLogoUncached().doRequest(ctx, "GET", endpoint+"&nocache="+clientLogoNonce(), nil)
+}
+
+// clientLogoNonce returns a value no earlier request used.
+func clientLogoNonce() string {
+	var nonce [12]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		// crypto/rand does not fail on supported platforms; a time-based
+		// value still differs between requests.
+		return strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
+	return hex.EncodeToString(nonce[:])
+}
+
+// clientLogoUncached returns a copy of c whose requests carry the headers
+// that make caches revalidate. Requests are built in transport.go, so the
+// headers are added on the way out instead.
+func (c *Client) clientLogoUncached() *Client {
+	httpClient := *c.httpClient
+	base := httpClient.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	httpClient.Transport = clientLogoNoCacheTransport{base: base}
+	uncached := *c
+	uncached.httpClient = &httpClient
+	return &uncached
+}
+
+// clientLogoNoCacheTransport adds Cache-Control: no-cache and
+// Pragma: no-cache to every request it sends.
+type clientLogoNoCacheTransport struct {
+	base http.RoundTripper
+}
+
+func (t clientLogoNoCacheTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// A RoundTripper must not change the caller's request.
+	req = req.Clone(req.Context())
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Pragma", "no-cache")
+	return t.base.RoundTrip(req)
 }
 
 // DeleteClientLogo removes the light (light = true) or dark logo of an OIDC

@@ -15,6 +15,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -330,4 +331,91 @@ func TestClientLogoResource_ImportAndValidators(t *testing.T) {
 	var meta resource.MetadataResponse
 	(&clientLogoResource{}).Metadata(ctx, resource.MetadataRequest{ProviderTypeName: "pocketid"}, &meta)
 	assert.Equal(t, "pocketid_client_logo", meta.TypeName)
+}
+
+// clientLogoCachingServer is Pocket ID behind a shared cache that holds the
+// logo it last fetched and answers the next matching GET with it once. In
+// "url" mode the cache keys on the full URL and ignores request headers; in
+// "path" mode it ignores the query string except light= and honours
+// Cache-Control: no-cache with Pragma: no-cache.
+type clientLogoCachingServer struct {
+	mu      sync.Mutex
+	mode    string
+	current []byte
+	cache   map[string][]byte
+	stale   int
+}
+
+func (s *clientLogoCachingServer) serve(t *testing.T) *client.Client {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		switch r.Method + " " + r.URL.Path {
+		case "GET /api/oidc/clients/app":
+			_, _ = fmt.Fprint(w, `{"id":"app","name":"app","callbackURLs":[],"hasLogo":true}`)
+		case "POST /api/oidc/clients/app/logo":
+			s.current = []byte("stored:new")
+			w.WriteHeader(http.StatusNoContent)
+		case "GET /api/oidc/clients/app/logo":
+			key := r.URL.RequestURI()
+			bypass := false
+			if s.mode == "path" {
+				key = r.URL.Path + "?light=" + r.URL.Query().Get("light")
+				bypass = r.Header.Get("Cache-Control") == "no-cache" && r.Header.Get("Pragma") == "no-cache"
+			}
+			if cached, ok := s.cache[key]; ok && !bypass {
+				delete(s.cache, key)
+				s.stale++
+				_, _ = w.Write(cached)
+				return
+			}
+			s.cache[key] = s.current
+			_, _ = w.Write(s.current)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+	c, err := client.NewClient(server.URL, "synthetic-token", false, 2)
+	require.NoError(t, err)
+	return c
+}
+
+// A cache that saw the logo before an upload must not answer the read-back
+// after it or the next refresh: the recorded image is the uploaded one, and
+// the refresh shows no drift.
+func TestClientLogoResource_ReadsBypassCaches(t *testing.T) {
+	ctx := context.Background()
+	content := []byte("<svg>new</svg>")
+	source := clientLogoTestFile(t, "logo.svg", content)
+	for _, mode := range []string{"url", "path"} {
+		t.Run(mode, func(t *testing.T) {
+			server := &clientLogoCachingServer{mode: mode, current: []byte("stored:old"), cache: map[string][]byte{}}
+			r := &clientLogoResource{client: server.serve(t)}
+			state := clientLogoStored("light")
+
+			// A refresh before the upload puts the old logo into the cache.
+			var diags diag.Diagnostics
+			gone, record := r.refresh(ctx, &state, "", &diags)
+			require.False(t, diags.HasError())
+			require.False(t, gone)
+			require.Equal(t, clientLogoSHA256([]byte("stored:old")), record)
+
+			plan := clientLogoResourceModel{ID: types.StringValue("app/light"), ClientID: types.StringValue("app"), Variant: types.StringValue("light"),
+				Source: types.StringValue(source), SHA256: types.StringValue(clientLogoSHA256(content))}
+			uploaded, served := r.upload(ctx, &plan, &diags)
+			require.False(t, diags.HasError())
+			require.True(t, uploaded)
+			assert.Equal(t, clientLogoSHA256([]byte("stored:new")), served, "the read-back sees the uploaded logo")
+
+			after := plan
+			gone, record = r.refresh(ctx, &after, served, &diags)
+			require.False(t, diags.HasError())
+			assert.False(t, gone)
+			assert.Empty(t, record)
+			assert.Equal(t, clientLogoSHA256(content), after.SHA256.ValueString(), "no drift, so no second upload")
+			assert.Zero(t, server.stale, "no cached copy was ever served")
+		})
+	}
 }

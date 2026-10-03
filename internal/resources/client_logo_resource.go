@@ -281,43 +281,54 @@ func (r *clientLogoResource) Read(ctx context.Context, req resource.ReadRequest,
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	recorded, diags := clientLogoServedHash(ctx, req.Private)
+	resp.Diagnostics.Append(diags...)
+	gone, record := r.refresh(ctx, &state, recorded, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if gone {
+		resp.State.RemoveResource(ctx)
+		return
+	}
+	if record != "" {
+		resp.Diagnostics.Append(setClientLogoServedHash(ctx, resp.Private, record)...)
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+}
+
+// refresh reads the logo for state. It returns whether the logo is confirmed
+// gone, and the served hash to record ("" to keep the record as it is).
+// recorded is the hash recorded so far.
+func (r *clientLogoResource) refresh(ctx context.Context, state *clientLogoResourceModel, recorded string, diags *diag.Diagnostics) (bool, string) {
 	clientID, variant := state.ClientID.ValueString(), state.Variant.ValueString()
 	light := variant != clientLogoDark
 	current, err := r.client.GetClient(ctx, clientID)
 	if err != nil {
 		if client.IsNotFound(err, client.ResourceOIDCClient) {
 			tflog.Info(ctx, "OIDC client no longer exists; removing its logo from state", map[string]any{"client_id": clientID, "variant": variant})
-			resp.State.RemoveResource(ctx)
-			return
+			return true, ""
 		}
-		resp.Diagnostics.AddError("Error reading client logo", "Could not read OIDC client "+clientID+": "+err.Error())
-		return
+		diags.AddError("Error reading client logo", "Could not read OIDC client "+clientID+": "+err.Error())
+		return false, ""
 	}
 	// Asked for a dark logo the client lacks, Pocket ID serves the light
 	// one, so the client's own report decides whether the logo exists.
 	if !clientLogoPresent(current, light) {
 		tflog.Info(ctx, "The client has no such logo any more; removing it from state", map[string]any{"client_id": clientID, "variant": variant})
-		resp.State.RemoveResource(ctx)
-		return
+		return true, ""
 	}
 	served, err := r.client.GetClientLogo(ctx, clientID, light)
 	if client.IsNotFound(err, client.ResourceImage) || client.IsNotFound(err, client.ResourceOIDCClient) {
 		tflog.Info(ctx, "Pocket ID serves no such logo; removing it from state", map[string]any{"client_id": clientID, "variant": variant})
-		resp.State.RemoveResource(ctx)
-		return
+		return true, ""
 	}
 	if err != nil {
-		resp.Diagnostics.AddError("Error reading client logo", "Could not read the "+variant+" logo of OIDC client "+clientID+": "+err.Error())
-		return
+		diags.AddError("Error reading client logo", "Could not read the "+variant+" logo of OIDC client "+clientID+": "+err.Error())
+		return false, ""
 	}
-
-	recorded, diags := clientLogoServedHash(ctx, req.Private)
-	resp.Diagnostics.Append(diags...)
 	state.ID = types.StringValue(clientID + "/" + variant)
-	if record := clientLogoCompareServed(&state, recorded, clientLogoSHA256(served)); record != "" {
-		resp.Diagnostics.Append(setClientLogoServedHash(ctx, resp.Private, record)...)
-	}
-	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+	return false, clientLogoCompareServed(state, recorded, clientLogoSHA256(served))
 }
 
 // clientLogoCompareServed compares the hash of the image served now with the
