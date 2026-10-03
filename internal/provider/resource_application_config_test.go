@@ -6,6 +6,7 @@ package provider_test
 import (
 	"fmt"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
@@ -108,13 +109,15 @@ func TestAccResourceApplicationConfig_planTimeValidation(t *testing.T) {
 		{"session_duration", "0", `session_duration must be between 1 and`},
 		{"smtp_from", "Pocket ID <no-reply@example.com>", `smtp_from must be a plain e-mail address`},
 		{"app_name", "", `app_name must not be empty`},
+		{"cimd_url_allowlist", `["https://example(.com/"]`, `is not a valid URL pattern`},
 	}
 	steps := make([]resource.TestStep, 0, len(invalid))
 	for _, tc := range invalid {
 		steps = append(steps, resource.TestStep{
-			Config:      fmt.Sprintf("resource \"pocketid_application_config\" \"test\" {\n  %s = %q\n}\n", tc.attribute, tc.value),
-			PlanOnly:    true,
-			ExpectError: regexp.MustCompile(regexp.QuoteMeta(tc.message)),
+			Config:   fmt.Sprintf("resource \"pocketid_application_config\" \"test\" {\n  %s = %q\n}\n", tc.attribute, tc.value),
+			PlanOnly: true,
+			// Terraform wraps long messages: any space may be a line break.
+			ExpectError: regexp.MustCompile(strings.ReplaceAll(regexp.QuoteMeta(tc.message), " ", `\s+`)),
 		})
 	}
 	resource.Test(t, resource.TestCase{

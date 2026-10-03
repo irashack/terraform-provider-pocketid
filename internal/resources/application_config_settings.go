@@ -12,6 +12,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/dunglas/go-urlpattern"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
@@ -131,29 +132,30 @@ func appConfigJSONCustomClaims(value string) string {
 }
 
 // appConfigCIMDAllowlist is Pocket ID's cimd_url_allowlist: a JSON array of
-// callback URL patterns. Each pattern gets the checks of
-// utils.ValidateCallbackURLPattern that need no URL-pattern compiler; a
-// pattern that passes these and still does not compile is refused by Pocket
-// ID when the change is applied, before anything is stored.
+// callback URL patterns, each checked as utils.ValidateCallbackURLPattern
+// does, URL-pattern compilation included.
 func appConfigCIMDAllowlist(value string) string {
 	var patterns []string
 	if json.Unmarshal([]byte(value), &patterns) != nil || patterns == nil {
 		return `must be a JSON array of URL patterns, such as ["https://*.example.com/*"] or []`
 	}
 	for _, pattern := range patterns {
-		if problem := callbackURLPatternProblem(pattern); problem != "" {
+		if problem := appConfigCallbackURLPatternProblem(pattern); problem != "" {
 			return fmt.Sprintf("has an invalid URL pattern %q: %s", pattern, problem)
 		}
 	}
 	return ""
 }
 
-func callbackURLPatternProblem(pattern string) string {
+// appConfigCallbackURLPatternProblem is utils.ValidateCallbackURLPattern of
+// Pocket ID 2.15.0 to 2.17.0 (2.14.0 differs only in the version of
+// go-urlpattern): it returns "" when the server accepts pattern.
+func appConfigCallbackURLPatternProblem(pattern string) string {
 	if pattern == "*" {
 		return ""
 	}
 	pattern, _, _ = strings.Cut(pattern, "#")
-	u, err := url.Parse(callbackURLPatternForURLParse(pattern))
+	u, err := url.Parse(appConfigCallbackURLPatternForURLParse(pattern))
 	if err != nil {
 		return "it is not a URL"
 	}
@@ -164,12 +166,20 @@ func callbackURLPatternProblem(pattern string) string {
 	case "javascript", "data":
 		return "its scheme is not allowed"
 	}
+	if _, err := urlpattern.New(appConfigNormalizeURLPattern(pattern), "", nil); err != nil {
+		return "it is not a valid URL pattern"
+	}
 	return ""
 }
 
-// callbackURLPatternForURLParse is utils.callbackURLPatternForURLParse of
-// Pocket ID 2.17.0: it makes a wildcard scheme or port parseable.
-func callbackURLPatternForURLParse(pattern string) string {
+// The functions below are Pocket ID 2.17.0's (backend/internal/utils/
+// callback_url_util.go; BSD 2-Clause License, Copyright (c) 2024, Elias
+// Schneider), renamed, so the provider accepts exactly the patterns the
+// server does.
+
+// appConfigCallbackURLPatternForURLParse is callbackURLPatternForURLParse: it
+// makes a wildcard scheme or port parseable.
+func appConfigCallbackURLPatternForURLParse(pattern string) string {
 	if after, ok := strings.CutPrefix(pattern, "*://"); ok {
 		pattern = "https://" + after
 	}
@@ -201,6 +211,96 @@ func callbackURLPatternForURLParse(pattern string) string {
 		hostport = hostport[:i+1] + "443"
 	}
 	return scheme + "://" + userinfo + hostport + suffix
+}
+
+// appConfigNormalizeURLPattern is normalizeToURLPatternStandard: it turns *
+// and ** wildcards into urlpattern syntax and escapes literal colons.
+func appConfigNormalizeURLPattern(pattern string) string {
+	patternBase, patternPath := appConfigURLPatternExtractPath(pattern)
+	var result strings.Builder
+	result.Grow(len(pattern) + 5)
+	appConfigURLPatternWriteBase(&result, patternBase)
+	appConfigURLPatternWritePath(&result, patternPath)
+	return result.String()
+}
+
+// appConfigURLPatternWriteBase is writeNormalizedBase.
+func appConfigURLPatternWriteBase(result *strings.Builder, patternBase string) {
+	// 0 = scheme, 1 = host before any "[", 2 = inside an IPv6 literal,
+	// 3 = after the host.
+	var step int
+	for i := 0; i < len(patternBase); i++ {
+		switch step {
+		case 0:
+			if i > 3 && patternBase[i] == '/' && patternBase[i-1] == '/' && patternBase[i-2] == ':' {
+				step = 1
+			}
+		case 1:
+			switch patternBase[i] {
+			case '/', ']':
+				step = 3
+			case '[':
+				step = 2
+			case ':':
+				if !appConfigURLPatternIsPortSeparator(patternBase, i) {
+					result.WriteByte('\\')
+				}
+			}
+		case 2:
+			if patternBase[i] == '/' || patternBase[i] == ']' || patternBase[i] == '[' {
+				step = 3
+			}
+			switch patternBase[i] {
+			case ':':
+				result.WriteByte('\\')
+			case '/', ']', '[':
+				step = 3
+			}
+		}
+		result.WriteByte(patternBase[i])
+	}
+}
+
+// appConfigURLPatternWritePath is writeNormalizedPath.
+func appConfigURLPatternWritePath(result *strings.Builder, patternPath string) {
+	for i := 0; i < len(patternPath); i++ {
+		if patternPath[i] == '*' {
+			if i+1 < len(patternPath) && patternPath[i+1] == '*' {
+				result.WriteString("*")
+				i++
+			} else {
+				result.WriteString(":p")
+				result.WriteString(strconv.Itoa(i))
+			}
+		} else {
+			if patternPath[i] == ':' {
+				result.WriteByte('\\')
+			}
+			result.WriteByte(patternPath[i])
+		}
+	}
+}
+
+// appConfigURLPatternIsPortSeparator is isPortSeparator.
+func appConfigURLPatternIsPortSeparator(s string, i int) bool {
+	return i+1 < len(s) && s[i+1] >= '0' && s[i+1] <= '9'
+}
+
+// appConfigURLPatternExtractPath is extractPath.
+func appConfigURLPatternExtractPath(url string) (base string, path string) {
+	pathStart := -1
+	if i := strings.Index(url, "://"); i >= 0 {
+		rest := url[i+3:]
+		if j := strings.IndexByte(rest, '/'); j >= 0 {
+			pathStart = i + 3 + j
+		}
+	} else {
+		pathStart = strings.IndexByte(url, '/')
+	}
+	if pathStart >= 0 {
+		return url[:pathStart], url[pathStart:]
+	}
+	return url, ""
 }
 
 // appConfigEmailPattern is the e-mail expression of go-playground/validator
@@ -243,7 +343,7 @@ var appConfigSettings = []appConfigSetting{
 	{attribute: "webauthn_user_verification", key: "webauthnUserVerification", about: "Whether passkey sign-in requires user verification.", format: `"required" or "preferred"`, rule: appConfigOneOf("required", "preferred"), defaultValue: "required", required: true},
 	{attribute: "webauthn_allow_synced_passkeys", key: "webauthnAllowSyncedPasskeys", about: "Whether passkeys synced between devices are allowed.", format: booleanFormat, rule: appConfigBoolean, defaultValue: "true", required: true},
 	{attribute: "webauthn_authenticator_attachment", key: "webauthnAuthenticatorAttachment", about: "Which authenticators can hold a new passkey.", format: `"any", "platform" or "cross-platform"`, rule: appConfigOneOf("any", "platform", "cross-platform"), defaultValue: "any", required: true},
-	{attribute: "cimd_url_allowlist", key: "cimdUrlAllowlist", about: "The Client ID Metadata Document URLs Pocket ID accepts.", format: `a JSON array of URL patterns (the syntax of callback URLs, wildcards allowed), such as ["https://*.example.com/*"]; "[]" for none`, rule: appConfigCIMDAllowlist, defaultValue: "[]"},
+	{attribute: "cimd_url_allowlist", key: "cimdUrlAllowlist", about: "The Client ID Metadata Document URLs Pocket ID accepts.", format: `a JSON array of URL patterns (the syntax of callback URLs, wildcards allowed), such as ["https://*.example.com/*"]; "[]" for none. Each pattern is checked as Pocket ID checks it`, rule: appConfigCIMDAllowlist, defaultValue: "[]"},
 
 	{attribute: "smtp_host", key: "smtpHost", about: "The SMTP server's host name."},
 	{attribute: "smtp_port", key: "smtpPort", about: "The SMTP server's port."},

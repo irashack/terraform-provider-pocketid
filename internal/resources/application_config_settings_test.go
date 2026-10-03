@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
@@ -60,6 +61,16 @@ func TestAppConfigSettingsMatchModelAndClient(t *testing.T) {
 	}
 	// Pocket ID 2.17.0's AppConfigUpdateDto has 48 keys.
 	assert.Len(t, appConfigSettings, 48)
+}
+
+// The patterns that do not compile do parse with net/url: only the
+// URL-pattern compiler refuses them.
+func TestAppConfigCIMDPatternsNeedCompilation(t *testing.T) {
+	for _, pattern := range []string{"https://example(.com/", "https://example.com/(client", "https://example.com/{client"} {
+		_, err := url.Parse(appConfigCallbackURLPatternForURLParse(pattern))
+		assert.NoError(t, err, pattern)
+		assert.Equal(t, "it is not a valid URL pattern", appConfigCallbackURLPatternProblem(pattern), pattern)
+	}
 }
 
 func TestAppConfigSettingRules(t *testing.T) {
@@ -124,6 +135,12 @@ func TestAppConfigSettingRules(t *testing.T) {
 		{"cimd_url_allowlist", `["javascript:alert(1)"]`, false},
 		{"cimd_url_allowlist", `["example.com/client.json"]`, false},
 		{"cimd_url_allowlist", "null", false},
+		// Each parses as a URL but does not compile as a URL pattern.
+		{"cimd_url_allowlist", `["https://example(.com/"]`, false},
+		{"cimd_url_allowlist", `["https://example.com/(client"]`, false},
+		{"cimd_url_allowlist", `["https://example.com/{client"]`, false},
+		{"cimd_url_allowlist", `["https://[::1]:*/client.json"]`, true},
+		{"cimd_url_allowlist", `["https://example.com/a:b/**"]`, true},
 		{"cimd_url_allowlist", "", false},
 
 		{"smtp_host", "", true},

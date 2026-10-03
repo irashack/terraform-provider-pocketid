@@ -79,6 +79,10 @@ func TestAccAPI_applicationConfigRules(t *testing.T) {
 		{"cimdUrlAllowlist", `["javascript:alert(1)"]`},
 		{"cimdUrlAllowlist", `["example.com/client.json"]`},
 		{"cimdUrlAllowlist", "null"},
+		// URLs that net/url parses but that do not compile as URL patterns.
+		{"cimdUrlAllowlist", `["https://example(.com/"]`},
+		{"cimdUrlAllowlist", `["https://example.com/(client"]`},
+		{"cimdUrlAllowlist", `["https://example.com/{client"]`},
 		{"smtpFrom", "Pocket ID <no-reply@example.com>"},
 		{"smtpFrom", "no-reply"},
 		{"smtpTls", "STARTTLS"},
@@ -100,6 +104,7 @@ func TestAccAPI_applicationConfigRules(t *testing.T) {
 		{"sessionDuration", "+61"},
 		{"signupDefaultCustomClaims", `[{"key":"department","value":"it"}]`},
 		{"cimdUrlAllowlist", `["https://*.example.com/*", "*"]`},
+		{"cimdUrlAllowlist", `["https://[::1]:*/client.json", "https://example.com/a:b/**"]`},
 		{"smtpFrom", "no-reply@example.com"},
 		{"smtpHost", ""},
 	}

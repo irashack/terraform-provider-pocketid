@@ -8,7 +8,8 @@
   `allow_user_signups`, `smtp_tls`, `webauthn_user_verification`), the
   1-to-30-character `app_name`, a whole-number `session_duration`, the JSON
   formats of `signup_default_user_group_ids`, `signup_default_custom_claims` and
-  `cimd_url_allowlist`, and a plain e-mail address in `smtp_from`. A value
+  `cimd_url_allowlist` (each URL pattern compiled as Pocket ID compiles it), and
+  a plain e-mail address in `smtp_from`. A value
   Pocket ID would refuse now fails the plan instead of the apply.
 - **Breaking:** an empty string is refused at plan time for settings Pocket ID
   requires, and for settings whose empty value Pocket ID replaces with a
