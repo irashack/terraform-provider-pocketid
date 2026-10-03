@@ -339,10 +339,10 @@ func TestAccAPI_applicationImageDefaults(t *testing.T) {
 }
 
 // Pocket ID strips the EXIF data of a PNG it receives, so it serves other
-// bytes than the file's. The plan stays empty across refreshes, and the
-// baseline recorded after the upload (in private state) survives them: an
-// image replaced outside Terraform afterwards is still found and uploaded
-// again.
+// bytes than the file's. The plan stays empty across saved refreshes, and
+// the baseline recorded after the upload (in private state) survives them:
+// an image replaced outside Terraform afterwards is still found and
+// uploaded again.
 func TestAccResourceApplicationImage_metadataStripped(t *testing.T) {
 	resourceName := "pocketid_application_image.test"
 	source := filepath.Join(t.TempDir(), "avatar.png")
@@ -374,8 +374,12 @@ func TestAccResourceApplicationImage_metadataStripped(t *testing.T) {
 					},
 				),
 			},
-			{Config: testAccAppImageConfig("default_profile_picture", source), PlanOnly: true},
-			{Config: testAccAppImageConfig("default_profile_picture", source), PlanOnly: true},
+			// Two refreshes that are saved (a PlanOnly step's refresh is
+			// not), each followed by an empty plan: Read must carry the
+			// baseline in private state forward, or the replacement below
+			// goes unnoticed.
+			{RefreshState: true, Check: resource.TestCheckResourceAttr(resourceName, "sha256", testAccAppImageHash(content))},
+			{RefreshState: true, Check: resource.TestCheckResourceAttr(resourceName, "sha256", testAccAppImageHash(content))},
 			{
 				// Replaced outside Terraform: found against the recorded
 				// baseline, and uploaded again.
