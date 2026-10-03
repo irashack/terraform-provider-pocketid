@@ -456,7 +456,7 @@ func (r *apiClientAccessResource) apiAccessWrite(ctx context.Context, apiID, cli
 	}
 
 	if want.grantsClientAccess() {
-		oc, err := r.client.GetClient(ctx, clientID)
+		isPublic, err := r.client.IsOIDCClientPublic(ctx, clientID)
 		switch {
 		case client.IsNotFound(err, client.ResourceOIDCClient):
 			diags.AddAttributeError(path.Root("client_id"), "OIDC client not found", fmt.Sprintf("OIDC client %s does not exist; no mutation was attempted.", clientID))
@@ -464,7 +464,7 @@ func (r *apiClientAccessResource) apiAccessWrite(ctx context.Context, apiID, cli
 		case err != nil:
 			diags.AddError("Cannot grant API access", fmt.Sprintf("Could not read OIDC client %s to check that it may receive client access: %s; no mutation was attempted.", clientID, err))
 			return apiAccessOutcome{}
-		case oc.IsPublic:
+		case isPublic:
 			diags.AddAttributeError(path.Root("client_access"), "Public clients cannot receive client access",
 				fmt.Sprintf("OIDC client %s is public, so it cannot use the client credentials grant, and Pocket ID drops client access and client permissions for it without an error. Remove client_access and client_permissions, or make the client confidential; no mutation was attempted.", clientID))
 			return apiAccessOutcome{}

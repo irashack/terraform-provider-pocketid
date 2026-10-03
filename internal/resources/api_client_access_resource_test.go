@@ -54,6 +54,8 @@ type apiAccessTestPocketID struct {
 	// putBody and listBody, when set, replace the body of a successful grant
 	// write (after it was applied) and of the client's grant list.
 	putBody, listBody *string
+	// clientBody, when set, replaces the body of the OIDC client read.
+	clientBody *string
 }
 
 func newAPIAccessTestPocketID(t *testing.T) (*apiAccessTestPocketID, *client.Client) {
@@ -168,7 +170,7 @@ func (f *apiAccessTestPocketID) serve(w http.ResponseWriter, r *http.Request) {
 		f.fail(w, failure, route)
 		return
 	}
-	if override := map[string]*string{"PUT grant": f.putBody, "GET grants": f.listBody}[route]; override != nil {
+	if override := map[string]*string{"PUT grant": f.putBody, "GET grants": f.listBody, "GET client": f.clientBody}[route]; override != nil {
 		_, _ = w.Write([]byte(*override))
 		return
 	}
@@ -769,6 +771,41 @@ func TestAPIClientAccess_KeyBearingIdentities(t *testing.T) {
 			})
 		}
 	})
+}
+
+// The public-client check reads only the isPublic flag, so a numeric field
+// that overflows is not decoded at all, and an answer without a boolean flag
+// is refused with fixed text (never taken as "not public") before any write.
+func TestAPIClientAccess_ClientCheckDecodesOnlyTheFlag(t *testing.T) {
+	const numericKey = "1234567890123456"
+	overflow := "99" + numericKey + "999999"
+	for name, tc := range map[string]struct {
+		body    string
+		refused bool
+	}{
+		"overflowing other field": {`{"id":"app","isPublic":false,"accessTokenDurationMinutes":` + overflow + `}`, false},
+		"flag is a number":        {`{"id":"app","isPublic":` + numericKey + `}`, true},
+		"flag missing":            {`{"id":"app"}`, true},
+		"not an object":           {`[` + overflow + `]`, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, c := newAPIAccessTestPocketIDWithKey(t, numericKey)
+			f.clientBody = &tc.body
+			errs, state := apiAccessTestCreate(t, c, apiAccessTestPlan(false, nil, true, []string{"write"}))
+			if !tc.refused {
+				require.Empty(t, errs)
+				require.NotNil(t, state)
+				return
+			}
+			assert.Contains(t, errs, "Could not read OIDC client")
+			assert.Contains(t, errs, "could not be decoded")
+			assert.Contains(t, errs, "no mutation was attempted")
+			assert.NotContains(t, errs, numericKey)
+			assert.NotContains(t, errs, overflow)
+			assert.Nil(t, state)
+			assert.NotContains(t, f.routes(), "PUT grant")
+		})
+	}
 }
 
 // A destroy is never held back by an unresolved outcome: removing the grant

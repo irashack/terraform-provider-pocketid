@@ -438,6 +438,31 @@ func (c *Client) ListClientAPIGrants(ctx context.Context, clientID string) ([]Cl
 	return c.decodeClientAPIGrants(body)
 }
 
+// IsOIDCClientPublic reports whether the OIDC client is public, reading only
+// that field of GET /api/oidc/clients/{id}: a grant on a public client loses
+// its client access without an error, so the caller checks first. The client
+// being missing is reported as IsNotFound(err, ResourceOIDCClient). An answer
+// that is not an object with a boolean isPublic is an error with fixed text
+// (the flag is then unknown, and the caller must not assume false); no other
+// field is decoded, so nothing else of the answer can fail or leak.
+func (c *Client) IsOIDCClientPublic(ctx context.Context, clientID string) (bool, error) {
+	segment, err := c.clientSegment(clientID)
+	if err != nil {
+		return false, err
+	}
+	body, err := c.doRequest(ctx, "GET", "/api/oidc/clients/"+segment, nil)
+	if err != nil {
+		return false, err
+	}
+	var fields struct {
+		IsPublic *bool `json:"isPublic"`
+	}
+	if json.Unmarshal(body, &fields) != nil || fields.IsPublic == nil {
+		return false, errAPIResponseUndecodable
+	}
+	return *fields.IsPublic, nil
+}
+
 // FindClientAPIGrant returns the grant the client holds on the API, or nil
 // when the client's list has no grant written for it (the list may still show
 // the API when it reaches it only through CIMD access).

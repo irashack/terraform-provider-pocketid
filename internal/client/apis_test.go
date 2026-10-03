@@ -270,6 +270,56 @@ func TestClient_APIDecodeErrorsCarryNoValue(t *testing.T) {
 	}
 }
 
+// IsOIDCClientPublic reads only the flag: other fields cannot fail or leak,
+// and an answer without a boolean flag is an error, never "not public".
+func TestClient_IsOIDCClientPublic(t *testing.T) {
+	const numericKey = "1234567890123456"
+	overflow := "99" + numericKey + "999999"
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		body   string
+		public bool
+		fails  bool
+	}{
+		"public":                  {`{"id":"app","isPublic":true}`, true, false},
+		"confidential":            {`{"id":"app","isPublic":false}`, false, false},
+		"overflowing other field": {`{"isPublic":true,"accessTokenDurationMinutes":` + overflow + `}`, true, false},
+		"flag missing":            {`{"id":"app"}`, false, true},
+		"flag null":               {`{"isPublic":null}`, false, true},
+		"flag is a number":        {`{"isPublic":` + numericKey + `}`, false, true},
+		"not an object":           {`null`, false, true},
+		"garbage":                 {`{`, false, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/api/oidc/clients/app", r.URL.Path)
+				_, _ = fmt.Fprint(w, tc.body)
+			}))
+			t.Cleanup(server.Close)
+			c, err := client.NewClient(server.URL, numericKey, false, 5)
+			require.NoError(t, err)
+			public, err := c.IsOIDCClientPublic(ctx, "app")
+			if tc.fails {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "could not be decoded")
+				assert.NotContains(t, err.Error(), numericKey)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.public, public)
+		})
+	}
+
+	gone := apiTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = fmt.Fprint(w, apiTestClientNotFoundBody)
+	})
+	_, err := gone.IsOIDCClientPublic(ctx, "app")
+	assert.True(t, client.IsNotFound(err, client.ResourceOIDCClient))
+	_, err = gone.IsOIDCClientPublic(ctx, "https://cimd.example/client")
+	assert.ErrorIs(t, err, client.ErrInvalidIdentifier)
+}
+
 // The checks leave a normal response alone: UUID identifiers, text without
 // the key, null permissions.
 func TestClient_APIResponses_NormalPass(t *testing.T) {
