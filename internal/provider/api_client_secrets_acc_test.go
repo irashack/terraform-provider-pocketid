@@ -32,8 +32,8 @@ func TestAccAPI_clientSecretCreation(t *testing.T) {
 	generated, err := c.GenerateClientSecret(ctx, created.ID, nil)
 	require.NoError(t, err)
 	require.NoError(t, client.ValidateUUID("client secret", generated.ID))
-	assert.Len(t, generated.Value, 32)
-	assert.Equal(t, generated.Value[:4], generated.Prefix)
+	testAccRequireFormat(t, "the generated secret", generated.Value, testAccSecretFormat)
+	testAccAssertSame(t, "the generated secret's prefix", generated.Value[:4], generated.Prefix)
 	assert.True(t, generated.IsActive)
 	assert.Nil(t, generated.ExpiresAt)
 
@@ -41,8 +41,8 @@ func TestAccAPI_clientSecretCreation(t *testing.T) {
 	expires := time.Now().Add(time.Hour).Truncate(time.Second).UTC()
 	supplied, err := c.GenerateClientSecret(ctx, created.ID, &client.ClientSecretOptions{Value: chosen, ExpiresAt: &expires})
 	require.NoError(t, err)
-	assert.Equal(t, chosen, supplied.Value)
-	assert.Equal(t, chosen[:4], supplied.Prefix)
+	testAccAssertSame(t, "the supplied secret's value", chosen, supplied.Value)
+	testAccAssertSame(t, "the supplied secret's prefix", chosen[:4], supplied.Prefix)
 	require.NotNil(t, supplied.ExpiresAt)
 	assert.True(t, supplied.ExpiresAt.Equal(expires), "expiry %s, want %s", supplied.ExpiresAt, expires)
 
@@ -52,9 +52,11 @@ func TestAccAPI_clientSecretCreation(t *testing.T) {
 	for _, secret := range listed {
 		byID[secret.ID] = secret
 	}
-	require.Contains(t, byID, generated.ID)
-	require.Contains(t, byID, supplied.ID)
-	assert.Equal(t, generated.Prefix, byID[generated.ID].Prefix)
+	_, generatedListed := byID[generated.ID]
+	_, suppliedListed := byID[supplied.ID]
+	require.True(t, generatedListed, "the generated secret is listed")
+	require.True(t, suppliedListed, "the supplied secret is listed")
+	testAccAssertSame(t, "the listed prefix of the generated secret", generated.Prefix, byID[generated.ID].Prefix)
 	assert.False(t, byID[generated.ID].CreatedAt.IsZero())
 	require.NotNil(t, byID[supplied.ID].ExpiresAt)
 	assert.True(t, byID[supplied.ID].ExpiresAt.Equal(expires))
@@ -93,7 +95,7 @@ func TestAccAPI_clientSecretLimitAndRevoke(t *testing.T) {
 	time.Sleep(time.Until(expires.Add(time.Second)))
 	listed, err = c.ListClientSecrets(ctx, created.ID)
 	require.NoError(t, err)
-	require.Len(t, listed, client.MaxClientSecrets)
+	testAccRequireCount(t, "secrets on the client at the limit", client.MaxClientSecrets, len(listed))
 	expired := 0
 	for _, secret := range listed {
 		if !secret.IsActive {
@@ -107,7 +109,7 @@ func TestAccAPI_clientSecretLimitAndRevoke(t *testing.T) {
 	assert.True(t, client.IsDefiniteRejection(err))
 	after, err := c.ListClientSecrets(ctx, created.ID)
 	require.NoError(t, err)
-	assert.Len(t, after, client.MaxClientSecrets, "the refused request created nothing")
+	testAccRequireCount(t, "secrets on the client after the refused request", client.MaxClientSecrets, len(after))
 
 	require.NoError(t, c.RevokeClientSecret(ctx, created.ID, kept.ID))
 	after, err = c.ListClientSecrets(ctx, created.ID)

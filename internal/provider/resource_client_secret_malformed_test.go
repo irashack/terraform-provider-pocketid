@@ -156,8 +156,8 @@ resource "pocketid_client" "app" {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					testAccClientSecretResChanged(&orphan),
 					testAccClientSecretResAbsent(&clientID, &orphan),
-					resource.TestMatchResourceAttr(testAccClientSecretAddr, "secret", regexp.MustCompile(`^[A-Za-z0-9]{32}$`)),
-					resource.TestMatchResourceAttr(testAccClientSecretAddr, "prefix", regexp.MustCompile(`^[A-Za-z0-9]{4}$`)),
+					testAccCheckSensitiveMatches(testAccClientSecretAddr, "secret", testAccSecretFormat),
+					testAccCheckSensitiveMatches(testAccClientSecretAddr, "prefix", testAccPrefixFormat),
 					testAccClientSecretResOnServer(),
 					func(s *terraform.State) error {
 						attrs, err := testAccClientSecretResAttrs(s, testAccClientSecretAddr)

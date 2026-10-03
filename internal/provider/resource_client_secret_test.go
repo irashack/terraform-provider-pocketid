@@ -87,8 +87,11 @@ func testAccClientSecretResOnServer(keep ...*string) resource.TestCheckFunc {
 		if !ok {
 			return fmt.Errorf("secret %s is not listed on client %s", attrs["id"], attrs["client_id"])
 		}
-		if secret.Prefix != attrs["prefix"] || fmt.Sprint(secret.IsActive) != attrs["is_active"] {
-			return fmt.Errorf("listed prefix %q active %t, state prefix %q active %s", secret.Prefix, secret.IsActive, attrs["prefix"], attrs["is_active"])
+		if err := testAccSameError("the state's prefix of secret "+attrs["id"], secret.Prefix, attrs["prefix"]); err != nil {
+			return err
+		}
+		if fmt.Sprint(secret.IsActive) != attrs["is_active"] {
+			return fmt.Errorf("secret %s is listed with is_active %t, state has %s", attrs["id"], secret.IsActive, attrs["is_active"])
 		}
 		for _, id := range keep {
 			if _, ok := listed[*id]; !ok {
@@ -192,8 +195,8 @@ resource "pocketid_client_secret" "app" {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestMatchResourceAttr(testAccClientSecretAddr, "id", regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)),
 					resource.TestCheckResourceAttrPair(testAccClientSecretAddr, "client_id", "pocketid_client.app", "id"),
-					resource.TestMatchResourceAttr(testAccClientSecretAddr, "secret", regexp.MustCompile(`^[A-Za-z0-9]{32}$`)),
-					resource.TestMatchResourceAttr(testAccClientSecretAddr, "prefix", regexp.MustCompile(`^[A-Za-z0-9]{4}$`)),
+					testAccCheckSensitiveMatches(testAccClientSecretAddr, "secret", testAccSecretFormat),
+					testAccCheckSensitiveMatches(testAccClientSecretAddr, "prefix", testAccPrefixFormat),
 					resource.TestCheckResourceAttr(testAccClientSecretAddr, "is_active", "true"),
 					resource.TestCheckResourceAttrSet(testAccClientSecretAddr, "created_at"),
 					resource.TestCheckNoResourceAttr(testAccClientSecretAddr, "expires_at"),
@@ -292,7 +295,7 @@ resource "pocketid_client_secret" "app" {
 					resource.TestCheckNoResourceAttr(testAccClientSecretAddr, "secret"),
 					resource.TestCheckNoResourceAttr(testAccClientSecretAddr, "secret_wo"),
 					resource.TestCheckResourceAttr(testAccClientSecretAddr, "secret_wo_version", "1"),
-					resource.TestCheckResourceAttr(testAccClientSecretAddr, "prefix", values[0][:4]),
+					testAccCheckSensitiveEquals(testAccClientSecretAddr, "prefix", values[0][:4]),
 					noValueInState,
 					testAccClientSecretResOnServer(),
 					testAccClientSecretResCapture("pocketid_client.app", "id", &clientID),
@@ -307,7 +310,7 @@ resource "pocketid_client_secret" "app" {
 					},
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr(testAccClientSecretAddr, "prefix", values[1][:4]),
+					testAccCheckSensitiveEquals(testAccClientSecretAddr, "prefix", values[1][:4]),
 					testAccClientSecretResChanged(&firstID),
 					testAccClientSecretResAbsent(&clientID, &firstID),
 					testAccClientSecretResOnServer(),
@@ -668,11 +671,11 @@ resource "pocketid_client_secret" "supplied" {
 					},
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestMatchResourceAttr("pocketid_client_secret.generated", "secret", regexp.MustCompile(`^[A-Za-z0-9]{32}$`)),
+					testAccCheckSensitiveMatches("pocketid_client_secret.generated", "secret", testAccSecretFormat),
 					resource.TestCheckNoResourceAttr("pocketid_client_secret.generated", "secret_wo_version"),
 					resource.TestCheckNoResourceAttr("pocketid_client_secret.supplied", "secret"),
 					resource.TestCheckResourceAttr("pocketid_client_secret.supplied", "secret_wo_version", "1"),
-					resource.TestCheckResourceAttr("pocketid_client_secret.supplied", "prefix", supplied[:4]),
+					testAccCheckSensitiveEquals("pocketid_client_secret.supplied", "prefix", supplied[:4]),
 				),
 			},
 		},
