@@ -33,9 +33,9 @@ func New(version string) func() provider.Provider {
 
 // pocketIDProvider is the provider implementation.
 type pocketIDProvider struct {
-	// version is set to the provider version on release, "dev" when the
-	// provider is built and ran locally, and "test" when running acceptance
-	// testing.
+	// version is set to the provider version on release, "3.0.0-dev" when
+	// the provider is built locally without a version stamp, and "test" when
+	// running acceptance testing.
 	version string
 }
 
