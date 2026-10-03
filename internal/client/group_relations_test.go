@@ -77,3 +77,53 @@ func TestClient_GetUserGroupDetail_RefusesANonUUID(t *testing.T) {
 	_, err := c.GetUserGroupDetail(context.Background(), "../x")
 	require.ErrorIs(t, err, client.ErrInvalidIdentifier)
 }
+
+// A group record is complete or it is an error: the callers that replace a
+// membership decide from it, so a record that merely lacks the users must not
+// read as a group with none.
+func TestClient_GetUserGroupDetail_RequiresACompleteRecordOfTheGroupAsked(t *testing.T) {
+	const asked = "22222222-2222-4222-8222-222222222222"
+	const other = "33333333-3333-4333-8333-333333333333"
+	full := func(id string) map[string]any {
+		return map[string]any{"id": id, "name": "g", "customClaims": nil, "users": nil, "allowedOidcClients": nil}
+	}
+	without := func(key string) map[string]any {
+		m := full(asked)
+		delete(m, key)
+		return m
+	}
+	encode := func(v any) string { b, _ := json.Marshal(v); return string(b) }
+
+	for name, body := range map[string]string{
+		"null":                "null",
+		"only an id":          encode(map[string]any{"id": asked}),
+		"an empty object":     "{}",
+		"an array":            "[]",
+		"no users":            encode(without("users")),
+		"no allowed clients":  encode(without("allowedOidcClients")),
+		"no claims":           encode(without("customClaims")),
+		"no id":               encode(without("id")),
+		"another group":       encode(full(other)),
+		"users is not a list": `{"id":"` + asked + `","customClaims":null,"users":"x","allowedOidcClients":null}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := groupRelationsClient(t, body)
+			detail, err := c.GetUserGroupDetail(context.Background(), asked)
+			require.Error(t, err)
+			assert.Nil(t, detail)
+		})
+	}
+
+	// Explicit nulls are what Pocket ID sends for empty lists, and the ID may
+	// differ in case.
+	c := groupRelationsClient(t, encode(full("22222222-2222-4222-8222-222222222222")))
+	detail, err := c.GetUserGroupDetail(context.Background(), asked)
+	require.NoError(t, err)
+	assert.Empty(t, detail.MemberIDs)
+	assert.Empty(t, detail.AllowedClientIDs)
+
+	c = groupRelationsClient(t, `{"id":"`+asked+`","customClaims":[],"users":[{"id":"u1"},{"id":"u1"},{"id":"u2"}],"allowedOidcClients":[]}`)
+	detail, err = c.GetUserGroupDetail(context.Background(), asked)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"u1", "u2"}, detail.MemberIDs, "a repeated ID counts once")
+}

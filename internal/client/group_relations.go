@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // GroupDetail is a user group with everything the single-object endpoint
@@ -40,6 +41,13 @@ func groupRelationIDs(refs []groupRelationRef) []string {
 
 // GetUserGroupDetail reads one group from GET /api/user-groups/{id}. A group
 // that does not exist is an error satisfying IsNotFound(err, ResourceUserGroup).
+//
+// The answer must be a complete record of the group that was asked for: the
+// request's own ID, and the claims, users and allowed clients present (each
+// may be null, which Pocket ID sends for an empty list). An answer that is
+// null, names another group or lacks one of them is an error, never an empty
+// membership: callers decide what may be replaced from it. The duplicates
+// within a list, if any, are dropped.
 func (c *Client) GetUserGroupDetail(ctx context.Context, groupID string) (*GroupDetail, error) {
 	id, err := uuidSegment("user group", groupID)
 	if err != nil {
@@ -48,6 +56,15 @@ func (c *Client) GetUserGroupDetail(ctx context.Context, groupID string) (*Group
 	body, err := c.doRequest(ctx, "GET", "/api/user-groups/"+id, nil)
 	if err != nil {
 		return nil, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return nil, fmt.Errorf("error unmarshaling response: %w", err)
+	}
+	for _, key := range []string{"id", "customClaims", "users", "allowedOidcClients"} {
+		if _, present := fields[key]; !present {
+			return nil, fmt.Errorf("the answer for user group %s is not a complete group record (a field is missing); refusing to read it as an empty group", groupID)
+		}
 	}
 	var wire struct {
 		ID                 string             `json:"id"`
@@ -62,6 +79,9 @@ func (c *Client) GetUserGroupDetail(ctx context.Context, groupID string) (*Group
 	if err := json.Unmarshal(body, &wire); err != nil {
 		return nil, fmt.Errorf("error unmarshaling response: %w", err)
 	}
+	if !strings.EqualFold(wire.ID, groupID) {
+		return nil, fmt.Errorf("the answer for user group %s describes another group; refusing to use it", groupID)
+	}
 	return &GroupDetail{
 		ID:               wire.ID,
 		Name:             wire.Name,
@@ -69,9 +89,23 @@ func (c *Client) GetUserGroupDetail(ctx context.Context, groupID string) (*Group
 		LdapID:           wire.LdapID,
 		CreatedAt:        wire.CreatedAt,
 		CustomClaims:     wire.CustomClaims,
-		MemberIDs:        groupRelationIDs(wire.Users),
-		AllowedClientIDs: groupRelationIDs(wire.AllowedOidcClients),
+		MemberIDs:        groupRelationUnique(groupRelationIDs(wire.Users)),
+		AllowedClientIDs: groupRelationUnique(groupRelationIDs(wire.AllowedOidcClients)),
 	}, nil
+}
+
+// groupRelationUnique drops repeated IDs, keeping the first of each in order.
+func groupRelationUnique(ids []string) []string {
+	seen := make(map[string]struct{}, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
 }
 
 // GroupMemberIDs returns, for every user group that has members, the IDs of its

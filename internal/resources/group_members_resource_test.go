@@ -520,3 +520,31 @@ func TestGroupMembersResource_WritesWaitForTheSharedMembershipLock(t *testing.T)
 		})
 	}
 }
+
+// A group answer without its users is not an empty group: Create must not read
+// it as one, pass its safety check and replace real members.
+func TestGroupMembersResource_IncompleteGroupAnswerIsNeverReadAsEmpty(t *testing.T) {
+	for name, body := range map[string]any{
+		"only an id": map[string]any{"id": gmUUID(1)},
+		"null":       nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, c := newGMServer(t, gmUUID(103))
+			s.getStatus, s.getBody = 200, body
+			r, sch := gmResource(t, c)
+
+			create := gmCreate(t, r, sch, s.groupID, []string{gmUUID(101)})
+			require.True(t, create.Diagnostics.HasError())
+			update := gmUpdate(t, r, sch, s.groupID, []string{gmUUID(103)}, []string{gmUUID(101)})
+			require.True(t, update.Diagnostics.HasError())
+			del := gmDelete(t, r, sch, s.groupID, []string{gmUUID(103)})
+			require.True(t, del.Diagnostics.HasError())
+			read := gmRead(t, r, sch, s.groupID, []string{gmUUID(103)})
+			require.True(t, read.Diagnostics.HasError())
+			assert.False(t, read.State.Raw.IsNull(), "a bad answer is not confirmation that the group is gone")
+
+			assert.Zero(t, s.putCount(), "nothing is written on the strength of a snapshot that cannot be trusted")
+			assert.Equal(t, []string{gmUUID(103)}, s.memberSet())
+		})
+	}
+}
