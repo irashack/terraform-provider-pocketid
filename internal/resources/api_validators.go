@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"unicode/utf8"
 
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
@@ -31,6 +32,34 @@ func checkAPISupport(ctx context.Context, api *client.Client) error {
 	return nil
 }
 
+// apiRootPath is the attribute a validation diagnostic is attached to: the
+// top-level attribute, never the map key or set element below it. Those are
+// text the operator typed, which can carry a credential, and a diagnostic's
+// attribute path is shown to the operator and logged.
+func apiRootPath(p path.Path) path.Path {
+	if steps := p.Steps(); len(steps) > 0 {
+		if name, ok := steps[0].(path.PathStepAttributeName); ok {
+			return path.Root(string(name))
+		}
+	}
+	return p
+}
+
+// apiValidatedLabel names the value a message is about without any dynamic
+// path step: "name" for a top-level attribute, "name in permissions" for the
+// name inside a permission, and the collection itself for a map key or a set
+// element.
+func apiValidatedLabel(p path.Path) string {
+	steps := p.Steps()
+	root := apiRootPath(p).String()
+	if len(steps) > 1 {
+		if last, ok := steps[len(steps)-1].(path.PathStepAttributeName); ok {
+			return fmt.Sprintf("%s in %s", string(last), root)
+		}
+	}
+	return root
+}
+
 // apiRuneLengthValidator checks a string's length in Unicode characters, the
 // way Pocket ID's min and max bindings count it (stringvalidator counts
 // bytes, which would refuse names the server accepts).
@@ -54,7 +83,7 @@ func (v apiRuneLengthValidator) ValidateString(ctx context.Context, req validato
 		return
 	}
 	if n := utf8.RuneCountInString(req.ConfigValue.ValueString()); n < v.min || n > v.max {
-		resp.Diagnostics.AddAttributeError(req.Path, "Invalid length", fmt.Sprintf("%s %s; got %d.", req.Path, v.Description(ctx), n))
+		resp.Diagnostics.AddAttributeError(apiRootPath(req.Path), "Invalid length", fmt.Sprintf("The %s %s; got %d.", apiValidatedLabel(req.Path), v.Description(ctx), n))
 	}
 }
 
@@ -74,7 +103,7 @@ func (apiResourceValidator) ValidateString(_ context.Context, req validator.Stri
 		return
 	}
 	if problem := client.APIResourceProblem(req.ConfigValue.ValueString()); problem != "" {
-		resp.Diagnostics.AddAttributeError(req.Path, "Invalid API resource identifier", fmt.Sprintf("%s %s.", req.Path, problem))
+		resp.Diagnostics.AddAttributeError(apiRootPath(req.Path), "Invalid API resource identifier", fmt.Sprintf("The %s %s.", apiValidatedLabel(req.Path), problem))
 	}
 }
 
@@ -96,7 +125,8 @@ func (apiPermissionKeyValidator) ValidateString(_ context.Context, req validator
 		return
 	}
 	if problem := client.APIPermissionKeyProblem(req.ConfigValue.ValueString()); problem != "" {
-		resp.Diagnostics.AddAttributeError(req.Path, "Invalid permission key", fmt.Sprintf("Permission key at %s %s.", req.Path, problem))
+		// Neither the key nor its path is shown: it is a map key or a set element.
+		resp.Diagnostics.AddAttributeError(apiRootPath(req.Path), "Invalid permission key", fmt.Sprintf("A permission key in %s %s.", apiRootPath(req.Path), problem))
 	}
 }
 
@@ -119,6 +149,6 @@ func (v apiIdentifierValidator) ValidateString(_ context.Context, req validator.
 		return
 	}
 	if err := v.check(req.ConfigValue.ValueString()); err != nil {
-		resp.Diagnostics.AddAttributeError(req.Path, "Invalid identifier", err.Error())
+		resp.Diagnostics.AddAttributeError(apiRootPath(req.Path), "Invalid identifier", err.Error())
 	}
 }

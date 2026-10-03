@@ -707,7 +707,8 @@ func APIPermissionKeyProblem(key string) string {
 	}
 	for _, reserved := range apiReservedPermissionKeys {
 		if strings.EqualFold(key, reserved) {
-			return fmt.Sprintf("%q is reserved by Pocket ID (reserved, in any case: %s)", key, strings.Join(apiReservedPermissionKeys, ", "))
+			// The key is not repeated: validation messages never echo configured text.
+			return fmt.Sprintf("is one of the scope or claim names reserved by Pocket ID (in any case: %s)", strings.Join(apiReservedPermissionKeys, ", "))
 		}
 	}
 	return ""

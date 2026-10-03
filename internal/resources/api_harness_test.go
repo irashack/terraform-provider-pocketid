@@ -137,6 +137,18 @@ func (h *apiHarness) apply(typeName string, prior, config tftypes.Value, planned
 	return resp
 }
 
+// validate runs ValidateResourceConfig: the schema validators and the
+// resource's ValidateConfig, which run before planning.
+func (h *apiHarness) validate(typeName string, config tftypes.Value) []*tfprotov6.Diagnostic {
+	h.t.Helper()
+	resp, err := h.server.ValidateResourceConfig(context.Background(), &tfprotov6.ValidateResourceConfigRequest{
+		TypeName: typeName,
+		Config:   h.dynamic(typeName, config),
+	})
+	require.NoError(h.t, err)
+	return resp.Diagnostics
+}
+
 // read runs ReadResource (a refresh) on a state with its private state.
 func (h *apiHarness) read(typeName string, current tftypes.Value, private []byte) *tfprotov6.ReadResourceResponse {
 	h.t.Helper()
