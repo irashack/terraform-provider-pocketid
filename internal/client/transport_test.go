@@ -151,8 +151,9 @@ func TestClient_RetryLogic(t *testing.T) {
 		// Success on third attempt
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(&client.OIDCClient{
-			ID:   "test-client-id",
-			Name: "Test Client",
+			ID:                "test-client-id",
+			Name:              "Test Client",
+			AllowedUserGroups: []client.UserGroup{{ID: "aaaaaaaa-0000-4000-8000-000000000001"}},
 		}); err != nil {
 			t.Fatalf("Failed to encode response: %v", err)
 		}
@@ -400,8 +401,9 @@ func TestClient_RateLimitHandling(t *testing.T) {
 		// Success on third attempt
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(&client.OIDCClient{
-			ID:   "test-client-id",
-			Name: "Test Client",
+			ID:                "test-client-id",
+			Name:              "Test Client",
+			AllowedUserGroups: []client.UserGroup{{ID: "aaaaaaaa-0000-4000-8000-000000000001"}},
 		}); err != nil {
 			t.Fatalf("Failed to encode response: %v", err)
 		}
@@ -440,8 +442,9 @@ func TestClient_RateLimitWithoutRetryAfter(t *testing.T) {
 		// Success on second attempt
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(&client.OIDCClient{
-			ID:   "test-client-id",
-			Name: "Test Client",
+			ID:                "test-client-id",
+			Name:              "Test Client",
+			AllowedUserGroups: []client.UserGroup{{ID: "aaaaaaaa-0000-4000-8000-000000000001"}},
 		}); err != nil {
 			t.Fatalf("Failed to encode response: %v", err)
 		}
@@ -474,7 +477,7 @@ func TestClient_RateLimitWithRetryAfterSeconds(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		if _, err := fmt.Fprint(w, `{"id": "test-id", "name": "Test Client"}`); err != nil {
+		if _, err := fmt.Fprint(w, `{"id": "test-id", "name": "Test Client", "allowedUserGroups": []}`); err != nil {
 			t.Fatalf("Failed to write response: %v", err)
 		}
 	}))
@@ -636,7 +639,7 @@ func TestClient_RealNetwork_RetryDeadlineLeavesFastReadsAndMutationsAlone(t *tes
 			time.Sleep(4 * time.Second) // well past the read deadline below
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"id":"test-client-id","name":"n"}`)
+		_, _ = fmt.Fprint(w, `{"id":"test-client-id","name":"n","allowedUserGroups":[]}`)
 	}))
 	defer server.Close()
 

@@ -131,7 +131,7 @@ func (f *clientLogoFake) serve(t *testing.T) *client.Client {
 				}
 				return
 			}
-			_, _ = fmt.Fprintf(w, `{"id":"app","name":"app","callbackURLs":[],"hasLogo":%t,"hasDarkLogo":%t}`, f.hasLogo, f.hasDarkLogo)
+			_, _ = fmt.Fprintf(w, `{"id":"app","name":"app","callbackURLs":[],"hasLogo":%t,"hasDarkLogo":%t,"allowedUserGroups":[]}`, f.hasLogo, f.hasDarkLogo)
 		case "GET /api/oidc/clients/app/logo":
 			if (r.URL.Query().Get("light") == "true" && !f.hasLogo) || (!f.hasLogo && !f.hasDarkLogo) {
 				w.WriteHeader(http.StatusNotFound)
@@ -353,7 +353,7 @@ func (s *clientLogoCachingServer) serve(t *testing.T) *client.Client {
 		defer s.mu.Unlock()
 		switch r.Method + " " + r.URL.Path {
 		case "GET /api/oidc/clients/app":
-			_, _ = fmt.Fprint(w, `{"id":"app","name":"app","callbackURLs":[],"hasLogo":true}`)
+			_, _ = fmt.Fprint(w, `{"id":"app","name":"app","callbackURLs":[],"hasLogo":true,"allowedUserGroups":[]}`)
 		case "POST /api/oidc/clients/app/logo":
 			s.current = []byte("stored:new")
 			w.WriteHeader(http.StatusNoContent)

@@ -111,6 +111,7 @@ func TestClient_GetClient(t *testing.T) {
 		HasLogo:                  false,
 		RequiresReauthentication: true,
 		LaunchURL:                "https://example.com/start",
+		AllowedUserGroups:        []client.UserGroup{{ID: "aaaaaaaa-0000-4000-8000-000000000001", Name: "g", FriendlyName: "G"}},
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -143,6 +144,7 @@ func TestClient_UpdateClient(t *testing.T) {
 		HasLogo:                  false,
 		RequiresReauthentication: true,
 		LaunchURL:                "https://example.com/start",
+		AllowedUserGroups:        []client.UserGroup{{ID: "aaaaaaaa-0000-4000-8000-000000000001", Name: "g", FriendlyName: "G"}},
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -22,7 +22,7 @@ import (
 const clientNotFoundBody = `{"error":"OIDC client not found","code":"not_found","details":{"resource":"OIDC client"},"request_id":"r"}`
 
 func TestClientPartialCreation(t *testing.T) {
-	const existing = `{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc"}`
+	const existing = `{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","allowedUserGroups":[]}`
 	for _, tc := range []struct {
 		name                                   string
 		secretStatus, deleteStatus, readStatus int
@@ -136,7 +136,7 @@ func TestClientCreateGuards(t *testing.T) {
 						w.WriteHeader(404)
 						return
 					}
-					_, _ = fmt.Fprint(w, `{"id":"fixed-fixture"}`)
+					_, _ = fmt.Fprint(w, `{"id":"fixed-fixture","allowedUserGroups":[]}`)
 				case req.Method == "POST" && req.URL.Path == "/api/oidc/clients":
 					posts++
 					if scenario == "uncertain_fixed_id" {
@@ -272,7 +272,7 @@ func TestClientCreateRevokesServerCreatedSecret(t *testing.T) {
 						_, _ = fmt.Fprint(w, tc.readBody)
 						return
 					}
-					_, _ = fmt.Fprint(w, `{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc"}`)
+					_, _ = fmt.Fprint(w, `{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","allowedUserGroups":[]}`)
 				default:
 					t.Errorf("unexpected method/path %s %s", r.Method, r.URL.Path)
 					w.WriteHeader(400)
@@ -426,14 +426,14 @@ func TestClientCreateGroupReadBackRefusedIsUncertain(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 			_, _ = fmt.Fprint(w, `{"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","prefix":"synt","secret":"synthetic-managed-secret"}`)
 		case "PUT /api/oidc/clients/cccccccc-cccc-4ccc-8ccc-cccccccccccc/allowed-user-groups":
-			_, _ = fmt.Fprint(w, `{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc"}`)
+			_, _ = fmt.Fprint(w, `{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","allowedUserGroups":[]}`)
 		case "GET /api/oidc/clients/cccccccc-cccc-4ccc-8ccc-cccccccccccc":
 			reads++
 			if reads == 1 {
 				w.WriteHeader(http.StatusForbidden) // the read-back
 				return
 			}
-			_, _ = fmt.Fprint(w, `{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc"}`)
+			_, _ = fmt.Fprint(w, `{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","allowedUserGroups":[]}`)
 		case "DELETE /api/oidc/clients/cccccccc-cccc-4ccc-8ccc-cccccccccccc":
 			deletes++
 			w.WriteHeader(http.StatusNoContent)

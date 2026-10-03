@@ -116,7 +116,7 @@ func (s *backchannelServer) start(t *testing.T) *client.Client {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		respond := func(url string) {
-			body := map[string]any{"id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd", "name": "fixture", "callbackURLs": []string{"https://example.invalid/callback"}, "pkceEnabled": true}
+			body := map[string]any{"id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd", "name": "fixture", "callbackURLs": []string{"https://example.invalid/callback"}, "pkceEnabled": true, "allowedUserGroups": []any{}}
 			if url != "" {
 				body["backchannelLogoutURL"] = url
 			}

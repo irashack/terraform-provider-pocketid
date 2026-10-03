@@ -80,7 +80,7 @@ func (f *clientSecretFake) serve(t *testing.T) *client.Client {
 				_, _ = fmt.Fprint(w, missingClient)
 				return
 			}
-			_, _ = fmt.Fprintf(w, `{"id":"app","name":"app","callbackURLs":[],"isPublic":%t}`, f.public)
+			_, _ = fmt.Fprintf(w, `{"id":"app","name":"app","callbackURLs":[],"isPublic":%t,"allowedUserGroups":[]}`, f.public)
 		case "GET /api/oidc/clients/app/secrets":
 			if f.clientMissing {
 				w.WriteHeader(http.StatusNotFound)

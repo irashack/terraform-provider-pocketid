@@ -396,3 +396,37 @@ func TestClient_BodyIdentifiersCarryingTheKeyAreNotSent(t *testing.T) {
 		})
 	}
 }
+
+// A single client's answer always lists its allowed groups (null or [] when
+// it has none). One that leaves the field out says nothing about them and is
+// never read as an empty set, which could confirm a change that was not made
+// or hide groups the client still allows.
+func TestClient_ClientAnswerWithoutAllowedGroupsIsRefused(t *testing.T) {
+	ctx := context.Background()
+	for name, body := range map[string]string{
+		"field missing": `{"id":"app","isGroupRestricted":true}`,
+		"empty object":  `{}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, _ := returnedIDsServer(t, body)
+			_, err := c.GetClient(ctx, "app")
+			require.ErrorIs(t, err, client.ErrIncompleteClient)
+			assert.NotErrorIs(t, err, client.ErrResultUnread)
+
+			_, err = c.UpdateClient(ctx, "app", &client.OIDCClientCreateRequest{Name: "n"})
+			require.ErrorIs(t, err, client.ErrIncompleteClient)
+			assert.ErrorIs(t, err, client.ErrResultUnread, "the update was made; only its result is unknown")
+		})
+	}
+	for name, body := range map[string]string{
+		"null":  `{"id":"app","allowedUserGroups":null}`,
+		"empty": `{"id":"app","allowedUserGroups":[]}`,
+	} {
+		t.Run("none, as "+name, func(t *testing.T) {
+			c, _ := returnedIDsServer(t, body)
+			got, err := c.GetClient(ctx, "app")
+			require.NoError(t, err)
+			assert.Empty(t, got.AllowedUserGroups)
+		})
+	}
+}

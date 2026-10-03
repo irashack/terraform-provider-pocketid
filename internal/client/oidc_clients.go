@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
@@ -176,14 +177,39 @@ func (c *Client) GetClient(ctx context.Context, clientID string) (*OIDCClient, e
 		return nil, err
 	}
 
-	var result OIDCClient
-	if err := decodeResponse(body, &result); err != nil {
+	result, err := decodeClientResponse(body, decodeResponse)
+	if err != nil {
 		return nil, err
 	}
-	if err := c.checkOIDCClient(clientID, &result); err != nil {
+	if err := c.checkOIDCClient(clientID, result); err != nil {
 		return nil, err
 	}
 
+	return result, nil
+}
+
+// ErrIncompleteClient marks a client response without its allowedUserGroups
+// field. Pocket ID 2.14.0 to 2.17.0 always send it with a single client
+// (OidcClientWithAllowedUserGroupsDto has no omitempty; null or [] means
+// none), so an answer without it says nothing about the client's groups and
+// is never read as an empty set.
+var ErrIncompleteClient = errors.New("the OIDC client response does not list the client's allowed user groups")
+
+// decodeClientResponse decodes a single client (the answer to a GET or a PUT
+// of /api/oidc/clients/{id}) with decode, and requires the allowedUserGroups
+// field (see ErrIncompleteClient).
+func decodeClientResponse(body []byte, decode func([]byte, any) error) (*OIDCClient, error) {
+	var result OIDCClient
+	if err := decode(body, &result); err != nil {
+		return nil, err
+	}
+	var fields map[string]json.RawMessage
+	if err := decode(body, &fields); err != nil {
+		return nil, err
+	}
+	if _, present := fields["allowedUserGroups"]; !present {
+		return nil, ErrIncompleteClient
+	}
 	return &result, nil
 }
 
@@ -198,15 +224,18 @@ func (c *Client) UpdateClient(ctx context.Context, clientID string, updateReq *O
 		return nil, err
 	}
 
-	var result OIDCClient
-	if err := decodeResult(body, &result); err != nil {
+	result, err := decodeClientResponse(body, decodeResult)
+	if errors.Is(err, ErrIncompleteClient) {
+		return nil, unreadResult(err)
+	}
+	if err != nil {
 		return nil, err
 	}
-	if err := c.checkOIDCClient(clientID, &result); err != nil {
+	if err := c.checkOIDCClient(clientID, result); err != nil {
 		return nil, unreadResult(err)
 	}
 
-	return &result, nil
+	return result, nil
 }
 
 // DeleteClient deletes an OIDC client
