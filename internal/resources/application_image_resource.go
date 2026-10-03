@@ -29,6 +29,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/valuefree"
 )
 
 var (
@@ -83,6 +84,7 @@ func applicationImageKinds() []string {
 }
 
 func (r *applicationImageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	defer func() { resp.Schema = valuefree.ResourceSchema(resp.Schema) }()
 	var kinds strings.Builder
 	for _, kind := range client.ApplicationImages() {
 		removal := "destroying the resource removes it"
@@ -162,8 +164,8 @@ func applicationImageExtensionProblem(kind client.ApplicationImage, source strin
 			return ""
 		}
 	}
-	return fmt.Sprintf("Pocket ID takes the image type from the file extension, and accepts only %s for the %s; %q has %s.",
-		strings.Join(kind.Extensions(), ", "), kind, filepath.Base(source), map[bool]string{true: "none", false: "." + extension}[extension == ""])
+	return fmt.Sprintf("Pocket ID takes the image type from the file extension, and accepts only %s for the %s; the source file's extension is not one of them (its name is not shown).",
+		strings.Join(kind.Extensions(), ", "), kind)
 }
 
 // ValidateConfig checks the source's extension against the kind.

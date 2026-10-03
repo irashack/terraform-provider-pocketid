@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/valuefree"
 )
 
 // Ensure the implementation satisfies the expected interfaces.
@@ -52,6 +53,7 @@ func (d *groupDataSource) Metadata(_ context.Context, req datasource.MetadataReq
 
 // Schema defines the schema for the data source.
 func (d *groupDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+	defer func() { resp.Schema = valuefree.DataSourceSchema(resp.Schema) }()
 	resp.Schema = schema.Schema{
 		Description: "Retrieves information about a Pocket-ID group, by ID or by exact name. A name is looked up in one request and the group found is then read in another; if the group is renamed in between, the read fails with an error instead of returning a group that no longer has the name.",
 

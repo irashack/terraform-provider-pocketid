@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/valuefree"
 )
 
 // Ensure the implementation satisfies the expected interfaces.
@@ -36,6 +37,7 @@ func (d *currentUserDataSource) Metadata(_ context.Context, req datasource.Metad
 // Schema defines the schema for the data source: every attribute of
 // pocketid_user, none of them an argument.
 func (d *currentUserDataSource) Schema(ctx context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+	defer func() { resp.Schema = valuefree.DataSourceSchema(resp.Schema) }()
 	var user datasource.SchemaResponse
 	(&userDataSource{}).Schema(ctx, datasource.SchemaRequest{}, &user)
 

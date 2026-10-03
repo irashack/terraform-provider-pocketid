@@ -145,7 +145,7 @@ func appConfigCIMDAllowlist(value string) string {
 	}
 	for _, pattern := range patterns {
 		if problem := appConfigCallbackURLPatternProblem(pattern); problem != "" {
-			return fmt.Sprintf("has an invalid URL pattern %q: %s", pattern, problem)
+			return "has an invalid URL pattern: " + problem
 		}
 	}
 	return ""
@@ -438,10 +438,17 @@ type appConfigValueValidator struct {
 }
 
 func (v appConfigValueValidator) Description(context.Context) string {
-	if v.setting.format == "" {
-		return "any text"
+	rule := "may be any text"
+	if v.setting.format != "" {
+		rule = "must be " + v.setting.format
 	}
-	return v.setting.format
+	switch {
+	case v.setting.required:
+		rule += "; it must not be empty, because Pocket ID requires a value"
+	case v.setting.defaultValue != "":
+		rule += fmt.Sprintf("; it must not be empty, because Pocket ID would store its default %q instead", v.setting.defaultValue)
+	}
+	return rule
 }
 
 func (v appConfigValueValidator) MarkdownDescription(ctx context.Context) string {

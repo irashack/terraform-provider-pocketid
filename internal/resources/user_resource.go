@@ -22,6 +22,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/valuefree"
 )
 
 // Ensure the implementation satisfies the expected interfaces.
@@ -70,6 +71,7 @@ func (r *userResource) Metadata(_ context.Context, req resource.MetadataRequest,
 
 // Schema defines the schema for the resource.
 func (r *userResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	defer func() { resp.Schema = valuefree.ResourceSchema(resp.Schema) }()
 	resp.Schema = schema.Schema{
 		Description: "Manages a user in Pocket-ID.",
 		MarkdownDescription: `Manages a user in Pocket-ID.
@@ -203,6 +205,9 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 	diags := req.Plan.Get(ctx, &plan)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "configuration", knownAs("user", plan.ID)) || !collectionOK(r.client, &resp.Diagnostics, "configuration", "user group", plan.Groups) {
 		return
 	}
 	// A computed value must be known after the apply, whichever way it ends.
@@ -442,6 +447,9 @@ func (r *userResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("user", state.ID)) || !collectionOK(r.client, &resp.Diagnostics, "state", "user group", state.Groups) {
+		return
+	}
 
 	tflog.Debug(ctx, "Reading user", map[string]any{
 		"id": state.ID.ValueString(),
@@ -504,6 +512,12 @@ func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	resp.Diagnostics.Append(diags...)
 
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("user", state.ID)) || !collectionOK(r.client, &resp.Diagnostics, "state", "user group", state.Groups) {
+		return
+	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "configuration", knownAs("user", plan.ID)) || !collectionOK(r.client, &resp.Diagnostics, "configuration", "user group", plan.Groups) {
 		return
 	}
 
@@ -689,6 +703,9 @@ func (r *userResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 	diags := req.State.Get(ctx, &state)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("user", state.ID)) {
 		return
 	}
 

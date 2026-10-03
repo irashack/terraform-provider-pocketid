@@ -384,7 +384,7 @@ func TestClientCreateGroupFailureCleanupUnconfirmed(t *testing.T) {
 			schemaResp := resource.SchemaResponse{}
 			r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
 			model := lifecycleModel()
-			model.AllowedUserGroups = types.SetValueMust(types.StringType, []attr.Value{types.StringValue("group-1")})
+			model.AllowedUserGroups = types.SetValueMust(types.StringType, []attr.Value{types.StringValue("bbbbbbbb-0000-4000-8000-0000000000b1")})
 			plan := tfsdk.Plan{Schema: schemaResp.Schema}
 			require.False(t, plan.Set(ctx, &model).HasError())
 			response := resource.CreateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
@@ -449,7 +449,7 @@ func TestClientCreateGroupReadBackRefusedIsUncertain(t *testing.T) {
 	schemaResp := resource.SchemaResponse{}
 	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
 	model := lifecycleModel()
-	model.AllowedUserGroups = types.SetValueMust(types.StringType, []attr.Value{types.StringValue("group-1")})
+	model.AllowedUserGroups = types.SetValueMust(types.StringType, []attr.Value{types.StringValue("bbbbbbbb-0000-4000-8000-0000000000b1")})
 	plan := tfsdk.Plan{Schema: schemaResp.Schema}
 	require.False(t, plan.Set(ctx, &model).HasError())
 	response := resource.CreateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}

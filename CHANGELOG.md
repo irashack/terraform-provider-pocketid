@@ -925,6 +925,14 @@ go-playground/validator and the URL-pattern libraries.
   `pocketid_group_members` or a signup token's `user_group_ids` that break
   Pocket ID's rules are reported on the attribute as a whole, without naming
   the offending key or element.
+- Every plan-time validation message names the attribute and its rule and
+  never the configured value: Terraform's and this provider's validators
+  alike, for strings, numbers, lists, sets and maps, nested attributes
+  included. A map key or set element is never named. Some messages read
+  differently as a result (for example a JWK, a URL or a setting now names
+  the rule it breaks rather than quoting the value). An identifier from state
+  (a user, group, client, secret, SCIM provider or signup token ID, a user's
+  groups) is checked before any log line, diagnostic or request uses it.
 
 ## 2.4.104 — 2026-10-02
 

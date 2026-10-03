@@ -21,6 +21,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/valuefree"
 )
 
 var (
@@ -71,6 +72,7 @@ func (r *apiResource) Metadata(_ context.Context, req resource.MetadataRequest, 
 }
 
 func (r *apiResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	defer func() { resp.Schema = valuefree.ResourceSchema(resp.Schema) }()
 	resp.Schema = schema.Schema{
 		Description: "Manages a Pocket ID API (a protected resource that clients request access tokens for), its permissions and its CIMD access. Requires Pocket ID 2.14.0 or later.",
 		MarkdownDescription: "Manages a Pocket ID API: a protected resource (an OAuth 2.0 resource server) that clients " +

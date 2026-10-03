@@ -69,6 +69,27 @@ func knownAs(kind string, value types.String) func() (identity, bool) {
 	return func() (identity, bool) { return known(kind, value) }
 }
 
+// collectionOK checks every known element of a configured or stored set of
+// identifiers (a user's groups, a group's members) as identitiesOK checks one
+// identifier, before any of them is logged, shown or sent. Unknown and null
+// collections and elements pass.
+func collectionOK(c *client.Client, diags *diag.Diagnostics, source, kind string, set types.Set) bool {
+	if set.IsNull() || set.IsUnknown() {
+		return true
+	}
+	for _, element := range set.Elements() {
+		text, ok := element.(types.String)
+		if !ok || text.IsNull() || text.IsUnknown() {
+			continue
+		}
+		if c.ValidateIdentifier(kind, text.ValueString()) != nil {
+			identityRefused(diags, source)
+			return false
+		}
+	}
+	return true
+}
+
 func identityRefused(diags *diag.Diagnostics, source string) {
 	diags.AddError("Unusable identifier",
 		fmt.Sprintf("An identifier in the %s is not valid, or contains the API key this provider authenticates with. It is not shown, and no request was made. "+

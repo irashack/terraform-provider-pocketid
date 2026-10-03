@@ -234,7 +234,8 @@ func TestAppConfigSchemaValidators(t *testing.T) {
 		ConfigValue: types.StringValue("everyone"),
 	}, &resp)
 	require.True(t, resp.Diagnostics.HasError())
-	assert.Contains(t, resp.Diagnostics.Errors()[0].Detail(), `"disabled", "withToken" or "open"`)
+	assert.Contains(t, resp.Diagnostics.Errors()[0].Detail(), `must be "disabled", "withToken" (with a signup token only) or "open"`)
+	assert.NotContains(t, resp.Diagnostics.Errors()[0].Detail(), "everyone", "the configured value is not shown")
 
 	resp = validator.StringResponse{}
 	s.Attributes["allow_user_signups"].(schema.StringAttribute).Validators[0].ValidateString(context.Background(), validator.StringRequest{

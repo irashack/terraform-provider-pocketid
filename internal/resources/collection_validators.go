@@ -24,7 +24,7 @@ import (
 type customClaimsValidator struct{}
 
 func (customClaimsValidator) Description(context.Context) string {
-	return "keys and values must not be empty, and keys must not be a reserved claim name (" + strings.Join(reservedClaimKeys, ", ") + ")"
+	return "must have no empty custom claim key or value, and no key that is one of the claim names Pocket ID reserves (" + strings.Join(reservedClaimKeys, ", ") + ")"
 }
 
 func (v customClaimsValidator) MarkdownDescription(ctx context.Context) string {

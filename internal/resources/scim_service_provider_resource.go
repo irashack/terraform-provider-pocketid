@@ -19,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/valuefree"
 )
 
 // Ensure the implementation satisfies the expected interfaces.
@@ -59,6 +60,7 @@ func (r *scimServiceProviderResource) Metadata(_ context.Context, req resource.M
 
 // Schema defines the schema for the resource.
 func (r *scimServiceProviderResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	defer func() { resp.Schema = valuefree.ResourceSchema(resp.Schema) }()
 	resp.Schema = schema.Schema{
 		Description: "Manages the SCIM service provider configuration for an OIDC client in Pocket-ID.",
 		MarkdownDescription: "Manages the SCIM service provider configuration for an OIDC client in Pocket-ID. " +
@@ -215,6 +217,9 @@ func (r *scimServiceProviderResource) Read(ctx context.Context, req resource.Rea
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("SCIM service provider", state.ID)) {
+		return
+	}
 	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("OIDC client", state.ClientID)) {
 		return
 	}
@@ -269,6 +274,9 @@ func (r *scimServiceProviderResource) Update(ctx context.Context, req resource.U
 	diags = req.State.Get(ctx, &state)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("SCIM service provider", state.ID)) {
 		return
 	}
 
@@ -339,6 +347,9 @@ func (r *scimServiceProviderResource) Delete(ctx context.Context, req resource.D
 	diags := req.State.Get(ctx, &state)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("SCIM service provider", state.ID)) {
 		return
 	}
 	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("OIDC client", state.ClientID)) {

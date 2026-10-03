@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/valuefree"
 )
 
 // Ensure the implementation satisfies the expected interfaces.
@@ -60,6 +61,7 @@ func (r *groupMembershipResource) Metadata(_ context.Context, req resource.Metad
 
 // Schema defines the schema for the resource.
 func (r *groupMembershipResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	defer func() { resp.Schema = valuefree.ResourceSchema(resp.Schema) }()
 	resp.Schema = schema.Schema{
 		Description: "Adds a single user to a single group in Pocket-ID without taking ownership of the group's other members.",
 		MarkdownDescription: "Adds a single user to a single group in Pocket-ID.\n\n" +

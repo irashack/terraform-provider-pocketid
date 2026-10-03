@@ -7,7 +7,9 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -112,5 +114,79 @@ func TestIdentifiersCarryingTheKeyAreRefusedBeforeUse(t *testing.T) {
 		cresp := resource.ImportStateResponse{State: tfsdk.State{Schema: csr.Schema, Raw: tftypes.NewValue(csr.Schema.Type().TerraformType(ctx), nil)}}
 		cr.ImportState(ctx, resource.ImportStateRequest{ID: "app-" + identityKey}, &cresp)
 		requireRefusedQuietly(t, cresp.Diagnostics, requests)
+	})
+}
+
+// identityState returns a state of r's schema with only the given attributes
+// set.
+func identityState(t *testing.T, r resource.Resource, attributes map[string]any) tfsdk.State {
+	t.Helper()
+	ctx := context.Background()
+	sr := resource.SchemaResponse{}
+	r.Schema(ctx, resource.SchemaRequest{}, &sr)
+	state := tfsdk.State{Schema: sr.Schema, Raw: tftypes.NewValue(sr.Schema.Type().TerraformType(ctx), nil)}
+	for name, value := range attributes {
+		require.False(t, state.SetAttribute(ctx, path.Root(name), value).HasError(), name)
+	}
+	return state
+}
+
+// Identifiers from state, secondary ones included, are checked before Read,
+// Update or Delete logs, shows or sends them; a configured set of group IDs
+// is checked before anything uses it; the SCIM sync checks its provider ID
+// before its log line and its failure message.
+func TestStateAndConfiguredIdentifiersAreCheckedFirst(t *testing.T) {
+	ctx := context.Background()
+	const user = "aaaaaaaa-0000-4000-8000-0000000000a1"
+	keyedGroups := types.SetValueMust(types.StringType, []attr.Value{types.StringValue(identityKey)})
+
+	reads := map[string]struct {
+		r     func(c *client.Client) resource.Resource
+		state map[string]any
+	}{
+		"user ID":                  {func(c *client.Client) resource.Resource { return &userResource{client: c} }, map[string]any{"id": identityKey}},
+		"user groups":              {func(c *client.Client) resource.Resource { return &userResource{client: c} }, map[string]any{"id": user, "groups": keyedGroups}},
+		"group ID":                 {func(c *client.Client) resource.Resource { return &groupResource{client: c} }, map[string]any{"id": identityKey}},
+		"client ID":                {func(c *client.Client) resource.Resource { return &clientResource{client: c} }, map[string]any{"id": "app-" + identityKey}},
+		"client secret ID":         {func(c *client.Client) resource.Resource { return &clientSecretResource{client: c} }, map[string]any{"client_id": "app", "id": identityKey}},
+		"SCIM service provider ID": {func(c *client.Client) resource.Resource { return &scimServiceProviderResource{client: c} }, map[string]any{"client_id": "app", "id": identityKey}},
+		"signup token ID":          {func(c *client.Client) resource.Resource { return &signupTokenResource{client: c} }, map[string]any{"id": identityKey}},
+		"one-time token user":      {func(c *client.Client) resource.Resource { return &OneTimeAccessTokenResource{client: c} }, map[string]any{"id": user, "user_id": identityKey}},
+	}
+	for name, tc := range reads {
+		t.Run("read "+name, func(t *testing.T) {
+			c, requests := identityServer(t)
+			r := tc.r(c)
+			state := identityState(t, r, tc.state)
+			resp := resource.ReadResponse{State: state}
+			r.Read(ctx, resource.ReadRequest{State: state}, &resp)
+			requireRefusedQuietly(t, resp.Diagnostics, requests)
+		})
+		t.Run("delete "+name, func(t *testing.T) {
+			c, requests := identityServer(t)
+			r := tc.r(c)
+			state := identityState(t, r, tc.state)
+			resp := resource.DeleteResponse{State: state}
+			r.Delete(ctx, resource.DeleteRequest{State: state}, &resp)
+			switch name {
+			case "one-time token user":
+				return // nothing to delete in Pocket ID, so nothing is sent or shown
+			case "user groups":
+				return // deleting the user names only its (valid) ID, so it may go ahead
+			}
+			requireRefusedQuietly(t, resp.Diagnostics, requests)
+		})
+	}
+
+	t.Run("SCIM sync provider ID", func(t *testing.T) {
+		c, requests := identityServer(t)
+		r := &scimSyncResource{client: c}
+		sr := resource.SchemaResponse{}
+		r.Schema(ctx, resource.SchemaRequest{}, &sr)
+		plan := tfsdk.Plan{Schema: sr.Schema, Raw: tftypes.NewValue(sr.Schema.Type().TerraformType(ctx), nil)}
+		require.False(t, plan.SetAttribute(ctx, path.Root("service_provider_id"), identityKey).HasError())
+		resp := resource.CreateResponse{State: tfsdk.State{Schema: sr.Schema, Raw: tftypes.NewValue(sr.Schema.Type().TerraformType(ctx), nil)}}
+		r.Create(ctx, resource.CreateRequest{Plan: plan}, &resp)
+		requireRefusedQuietly(t, resp.Diagnostics, requests)
 	})
 }

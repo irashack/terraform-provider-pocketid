@@ -20,6 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/valuefree"
 )
 
 var (
@@ -69,6 +70,7 @@ func (r *apiClientAccessResource) Metadata(_ context.Context, req resource.Metad
 }
 
 func (r *apiClientAccessResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	defer func() { resp.Schema = valuefree.ResourceSchema(resp.Schema) }()
 	emptySet := setdefault.StaticValue(types.SetValueMust(types.StringType, []attr.Value{}))
 	resp.Schema = schema.Schema{
 		Description: "Grants one OIDC client access to one Pocket ID API, with the permissions it may request. Requires Pocket ID 2.14.0 or later.",

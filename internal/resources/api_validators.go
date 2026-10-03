@@ -91,7 +91,7 @@ func (v apiRuneLengthValidator) ValidateString(ctx context.Context, req validato
 type apiResourceValidator struct{}
 
 func (apiResourceValidator) Description(context.Context) string {
-	return "must be an absolute URI without whitespace, a fragment or a trailing slash, at most 350 characters long"
+	return "must be an absolute URI without whitespace or a fragment, at most 350 characters long, and must not end with a slash (Pocket ID removes trailing slashes)"
 }
 
 func (v apiResourceValidator) MarkdownDescription(ctx context.Context) string {
@@ -113,7 +113,7 @@ func (apiResourceValidator) ValidateString(_ context.Context, req validator.Stri
 type apiPermissionKeyValidator struct{}
 
 func (apiPermissionKeyValidator) Description(context.Context) string {
-	return "must be a permission key Pocket ID accepts: 1 to 128 OAuth scope characters, not a reserved scope or claim name"
+	return "must be a permission key Pocket ID accepts: 1 to 128 characters valid in an OAuth scope (printable ASCII other than space, '\"' and '\\'), and not one of the scope or claim names reserved by Pocket ID"
 }
 
 func (v apiPermissionKeyValidator) MarkdownDescription(ctx context.Context) string {

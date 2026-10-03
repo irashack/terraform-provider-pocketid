@@ -19,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/valuefree"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -55,6 +56,7 @@ func (r *scimSyncResource) Metadata(_ context.Context, req resource.MetadataRequ
 }
 
 func (r *scimSyncResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	defer func() { resp.Schema = valuefree.ResourceSchema(resp.Schema) }()
 	resp.Schema = schema.Schema{
 		Description: "Triggers a SCIM synchronization of one SCIM service provider in Pocket-ID.",
 		MarkdownDescription: "Triggers a SCIM synchronization of one `pocketid_scim_service_provider`. This is an action " +
@@ -125,6 +127,9 @@ func (r *scimSyncResource) Create(ctx context.Context, req resource.CreateReques
 		return
 	}
 
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "configuration", knownAs("SCIM service provider", plan.ServiceProviderID)) {
+		return
+	}
 	id := plan.ServiceProviderID.ValueString()
 	tflog.Debug(ctx, "triggering SCIM sync", map[string]any{"service_provider_id": id})
 	if err := r.client.SyncScimServiceProvider(ctx, id); err != nil {

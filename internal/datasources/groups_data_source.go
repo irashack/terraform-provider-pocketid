@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/valuefree"
 )
 
 // Ensure the implementation satisfies the expected interfaces.
@@ -56,6 +57,7 @@ func (d *groupsDataSource) Metadata(_ context.Context, req datasource.MetadataRe
 
 // Schema defines the schema for the data source.
 func (d *groupsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+	defer func() { resp.Schema = valuefree.DataSourceSchema(resp.Schema) }()
 	resp.Schema = schema.Schema{
 		Description: "Retrieves information about all Pocket-ID groups. Each group's members are built from one pass over the user list and its allowed clients from one pass over the client list, so the cost grows with the number of users and clients, not with one request per group (except against Pocket ID 2.14, whose client list does not carry groups: there the allowed clients cost one request per group). " +
 			"The groups, the users and the clients are read in separate passes, which together are not an atomic snapshot: a change made while the data source is being read can show in one collection and not in another. " +

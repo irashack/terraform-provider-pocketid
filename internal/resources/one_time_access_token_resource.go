@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/valuefree"
 )
 
 // maxOneTimeAccessTokenTTL mirrors the pocket-id API limit (31 days).
@@ -51,6 +52,7 @@ func (r *OneTimeAccessTokenResource) Metadata(ctx context.Context, req resource.
 }
 
 func (r *OneTimeAccessTokenResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
+	defer func() { resp.Schema = valuefree.ResourceSchema(resp.Schema) }()
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Manages a one-time access token for a user in Pocket-ID. These tokens let a user authenticate when they don't have access to their passkey. " +
 			"The token value is returned only once on creation and cannot be read back (pocket-id exposes no read endpoint), so it is stored in Terraform state as a sensitive value. " +
@@ -196,6 +198,9 @@ func (r *OneTimeAccessTokenResource) Read(ctx context.Context, req resource.Read
 	// pocket-id exposes no endpoint to read a one-time access token back, and the
 	// token is consumed on use. There is nothing to refresh, so the prior state is
 	// preserved as-is.
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("user", data.UserID)) {
+		return
+	}
 	tflog.Trace(ctx, "one-time access token is write-only, preserving state", map[string]interface{}{
 		"user_id": data.UserID.ValueString(),
 	})

@@ -2,6 +2,7 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"time"
@@ -94,10 +95,10 @@ func (v oneTimeTokenTTLValidator) ValidateString(ctx context.Context, req valida
 func checkOneTimeTokenTTL(ttl string) error {
 	d, err := time.ParseDuration(ttl)
 	if err != nil {
-		return fmt.Errorf("the ttl value must be a Go duration string such as \"15m\" or \"1h\": %w", err)
+		return errors.New("the ttl value must be a Go duration string such as \"15m\" or \"1h\"")
 	}
 	if d <= time.Second || d > maxOneTimeAccessTokenTTL {
-		return fmt.Errorf("the ttl must be greater than 1 second and at most 744h (31 days)")
+		return errors.New("the ttl must be greater than 1 second and at most 744h (31 days)")
 	}
 	return nil
 }

@@ -30,6 +30,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/valuefree"
 )
 
 var (
@@ -83,6 +84,7 @@ func (r *clientLogoResource) Metadata(_ context.Context, req resource.MetadataRe
 }
 
 func (r *clientLogoResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	defer func() { resp.Schema = valuefree.ResourceSchema(resp.Schema) }()
 	extensions := strings.Join(client.ClientLogoExtensions(), ", ")
 	resp.Schema = schema.Schema{
 		Description: "Uploads the light or dark logo of an OIDC client in Pocket ID from a local image file.",

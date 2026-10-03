@@ -304,8 +304,8 @@ func TestAccResourceAPIClientAccess_planTimeValidation(t *testing.T) {
   user_delegated_permissions = ["read"]`, `Access cannot be off with permissions`},
 		"empty grant":     {`client_access = false`, `Grant gives nothing`},
 		"reserved key":    {`client_permissions = ["openid"]`, `reserved by Pocket ID`},
-		"not an API ID":   {`user_delegated_access = true`, `API ID must be a UUID`},
-		"CIMD client URL": {`user_delegated_access = true`, `OIDC client ID must be`},
+		"not an API ID":   {`user_delegated_access = true`, `must be an API ID`},
+		"CIMD client URL": {`user_delegated_access = true`, `must be an OIDC client ID`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			apiID, clientID := "00000000-0000-4000-8000-000000000001", "app"

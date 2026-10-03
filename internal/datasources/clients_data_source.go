@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/valuefree"
 )
 
 // Ensure the implementation satisfies the expected interfaces.
@@ -42,6 +43,7 @@ func (d *clientsDataSource) Metadata(_ context.Context, req datasource.MetadataR
 
 // Schema defines the schema for the data source.
 func (d *clientsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+	defer func() { resp.Schema = valuefree.DataSourceSchema(resp.Schema) }()
 	attributes := clientAttributes(schema.StringAttribute{
 		Description: "The ID of the OIDC client.",
 		Computed:    true,

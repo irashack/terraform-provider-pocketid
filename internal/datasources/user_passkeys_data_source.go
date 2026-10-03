@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/valuefree"
 )
 
 // Ensure the implementation satisfies the expected interfaces.
@@ -61,6 +62,7 @@ func (d *userPasskeysDataSource) Metadata(_ context.Context, req datasource.Meta
 
 // Schema defines the schema for the data source.
 func (d *userPasskeysDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+	defer func() { resp.Schema = valuefree.DataSourceSchema(resp.Schema) }()
 	resp.Schema = schema.Schema{
 		Description: "Lists the passkeys a Pocket-ID user has registered, read-only. For example, a precondition can require an administrator to have at least two. " +
 			"It reports each passkey's identifier, name, registration time and whether it is backed up or synced, and no credential material: not the credential ID, not the public key. " +

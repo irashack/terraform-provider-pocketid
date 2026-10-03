@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/valuefree"
 )
 
 // Ensure the implementation satisfies the expected interfaces.
@@ -51,6 +52,7 @@ func (r *groupResource) Metadata(_ context.Context, req resource.MetadataRequest
 
 // Schema defines the schema for the resource.
 func (r *groupResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	defer func() { resp.Schema = valuefree.ResourceSchema(resp.Schema) }()
 	resp.Schema = schema.Schema{
 		Description:         "Manages a user group in Pocket-ID.",
 		MarkdownDescription: "Manages a user group in Pocket-ID. Groups can be used to organize users and control access to OIDC clients.",
@@ -186,6 +188,9 @@ func (r *groupResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("user group", state.ID)) {
+		return
+	}
 
 	tflog.Debug(ctx, "Reading user group", map[string]any{
 		"id": state.ID.ValueString(),
@@ -240,6 +245,9 @@ func (r *groupResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	resp.Diagnostics.Append(diags...)
 
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("user group", state.ID)) {
 		return
 	}
 
@@ -320,6 +328,9 @@ func (r *groupResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	diags := req.State.Get(ctx, &state)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("user group", state.ID)) {
 		return
 	}
 

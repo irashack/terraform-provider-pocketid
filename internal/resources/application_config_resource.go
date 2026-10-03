@@ -19,6 +19,7 @@ import (
 	"golang.org/x/mod/semver"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/valuefree"
 )
 
 // applicationConfigID is the fixed identifier used for the singleton
@@ -295,6 +296,7 @@ func (r *applicationConfigResource) Metadata(_ context.Context, req resource.Met
 
 // Schema defines the schema for the resource.
 func (r *applicationConfigResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	defer func() { resp.Schema = valuefree.ResourceSchema(resp.Schema) }()
 	attributes := map[string]schema.Attribute{
 		"id": schema.StringAttribute{
 			Description: "Fixed identifier of the application configuration singleton.",

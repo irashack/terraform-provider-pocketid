@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/valuefree"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -46,6 +47,7 @@ func (r *ldapSyncResource) Metadata(_ context.Context, req resource.MetadataRequ
 }
 
 func (r *ldapSyncResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	defer func() { resp.Schema = valuefree.ResourceSchema(resp.Schema) }()
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Triggers an LDAP synchronization in Pocket-ID. This is an action resource: applying it " +
 			"runs a sync, and changing `triggers` forces a new sync (the resource is recreated). LDAP must be enabled " +

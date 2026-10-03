@@ -19,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/valuefree"
 )
 
 var (
@@ -61,6 +62,7 @@ func (r *clientSecretResource) Metadata(_ context.Context, req resource.Metadata
 }
 
 func (r *clientSecretResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	defer func() { resp.Schema = valuefree.ResourceSchema(resp.Schema) }()
 	resp.Schema = schema.Schema{
 		Description: "Manages one secret of an OIDC client in Pocket ID 2.14.0 or later, so a client's secret can be rotated without replacing the client.",
 		MarkdownDescription: "Manages one secret of an OIDC client in Pocket ID 2.14.0 or later, so a client's secret can be " +
@@ -465,7 +467,7 @@ func (r *clientSecretResource) Read(ctx context.Context, req resource.ReadReques
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("OIDC client", state.ClientID)) {
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("OIDC client", state.ClientID), knownAs("client secret", state.ID)) {
 		return
 	}
 	clientID, secretID := state.ClientID.ValueString(), state.ID.ValueString()
@@ -528,7 +530,7 @@ func (r *clientSecretResource) Delete(ctx context.Context, req resource.DeleteRe
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("OIDC client", state.ClientID)) {
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("OIDC client", state.ClientID), knownAs("client secret", state.ID)) {
 		return
 	}
 	clientID, secretID := state.ClientID.ValueString(), state.ID.ValueString()

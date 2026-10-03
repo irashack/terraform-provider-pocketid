@@ -126,14 +126,15 @@ data "pocketid_application_config" "test" {
 // Values Pocket ID would refuse, or would store as something else, are
 // refused at plan time with the attribute and the rule named.
 func TestAccResourceApplicationConfig_planTimeValidation(t *testing.T) {
+	// The messages name the attribute and its rule, never the value.
 	invalid := []struct{ attribute, value, message string }{
-		{"allow_user_signups", "everyone", `allow_user_signups must be one of "disabled", "withToken" or "open"`},
-		{"accent_color", "", `accent_color must not be empty: Pocket ID would store its default "default"`},
+		{"allow_user_signups", "everyone", `allow_user_signups must be "disabled", "withToken" (with a signup token only) or "open"`},
+		{"accent_color", "", `accent_color must be "default" or a CSS color; it must not be empty, because Pocket ID would store its default "default" instead`},
 		{"signup_default_custom_claims", `{"department":"it"}`, `signup_default_custom_claims must be a JSON array of objects`},
-		{"session_duration", "0", `session_duration must be between 1 and`},
+		{"session_duration", "0", `session_duration must be a whole number of minutes, at least 1`},
 		{"smtp_from", "Pocket ID <no-reply@example.com>", `smtp_from must be a plain e-mail address`},
-		{"app_name", "", `app_name must not be empty`},
-		{"cimd_url_allowlist", `["https://example(.com/"]`, `is not a valid URL pattern`},
+		{"app_name", "", `app_name must be 1 to 30 characters; it must not be empty, because Pocket ID requires a value`},
+		{"cimd_url_allowlist", `["https://example(.com/"]`, `cimd_url_allowlist must be a JSON array of URL patterns`},
 	}
 	steps := make([]resource.TestStep, 0, len(invalid))
 	for _, tc := range invalid {
@@ -441,7 +442,7 @@ resource "pocketid_application_config" "test" {
 }
 `,
 				PlanOnly:    true,
-				ExpectError: regexp.MustCompile(`(?s)smtp_password.*cannot be specified when.*smtp_password_wo`),
+				ExpectError: regexp.MustCompile(`(?s)smtp_password.*these\s+are\s+not\s+set.*smtp_password_wo`),
 			},
 			{
 				Config: `
@@ -450,7 +451,7 @@ resource "pocketid_application_config" "test" {
 }
 `,
 				PlanOnly:    true,
-				ExpectError: regexp.MustCompile(`(?s)ldap_bind_password_wo_version.*must be specified`),
+				ExpectError: regexp.MustCompile(`(?s)ldap_bind_password_wo.*also\s+these\s+are\s+set.*ldap_bind_password_wo_version`),
 			},
 		},
 	})

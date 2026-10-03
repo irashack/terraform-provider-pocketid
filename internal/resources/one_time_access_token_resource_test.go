@@ -123,8 +123,8 @@ func TestOneTimeAccessTokenResource_Configure(t *testing.T) {
 
 func samplePriorTokenState() resources.OneTimeAccessTokenResourceModel {
 	return resources.OneTimeAccessTokenResourceModel{
-		ID:        types.StringValue("user-123"),
-		UserID:    types.StringValue("user-123"),
+		ID:        types.StringValue("dddddddd-0000-4000-8000-000000000123"),
+		UserID:    types.StringValue("dddddddd-0000-4000-8000-000000000123"),
 		TTL:       types.StringValue("15m"),
 		Token:     types.StringValue("ABC123"),
 		ExpiresAt: types.StringValue("2026-01-01T00:15:00Z"),
@@ -154,7 +154,7 @@ func TestOneTimeAccessTokenResource_Read_PreservesState(t *testing.T) {
 
 	var got resources.OneTimeAccessTokenResourceModel
 	require.False(t, resp.State.Get(ctx, &got).HasError())
-	assert.Equal(t, "user-123", got.UserID.ValueString())
+	assert.Equal(t, "dddddddd-0000-4000-8000-000000000123", got.UserID.ValueString())
 	assert.Equal(t, "15m", got.TTL.ValueString())
 	assert.Equal(t, "ABC123", got.Token.ValueString(), "token should be preserved")
 	assert.Equal(t, "2026-01-01T00:15:00Z", got.ExpiresAt.ValueString())

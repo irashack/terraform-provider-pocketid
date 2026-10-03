@@ -192,7 +192,7 @@ func TestAccResourceClient_federatedPublicKeysRejected(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				Config:      testAccFederatedClient(fmt.Sprintf(`    { issuer = "https://keys.example.com", public_keys = [%q] },`, privateJWK)),
-				ExpectError: regexp.MustCompile(`private key material`),
+				ExpectError: regexp.MustCompile(`(?s)Invalid\s+federated\s+identity\s+public\s+key.*public,\s+asymmetric\s+JWK`),
 			},
 			{
 				Config:      testAccFederatedClient(fmt.Sprintf(`    { issuer = "https://keys.example.com", jwks = "https://keys.example.com/jwks.json", public_keys = [%q] },`, testAccPublicJWK1)),
@@ -263,11 +263,11 @@ func TestAccResourceClient_federatedPublicKeysNullElement(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				Config:      testAccFederatedClient(fmt.Sprintf(`    { issuer = "https://keys.example.com", public_keys = [%q, null] },`, testAccPublicJWK1)),
-				ExpectError: regexp.MustCompile(`must not be null`),
+				ExpectError: regexp.MustCompile(`Invalid\s+federated\s+identity\s+public\s+key`),
 			},
 			{
 				Config:      testAccFederatedClient(`    { issuer = "https://keys.example.com", public_keys = [null] },`),
-				ExpectError: regexp.MustCompile(`must not be null`),
+				ExpectError: regexp.MustCompile(`Invalid\s+federated\s+identity\s+public\s+key`),
 			},
 		},
 	})

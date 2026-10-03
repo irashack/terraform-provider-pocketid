@@ -41,7 +41,7 @@ func TestClientReadKeepsEmptyValues(t *testing.T) {
 			assert.True(t, stringSet("bbbbbbbb-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002").Equal(m.AllowedUserGroups), "%v", m.AllowedUserGroups)
 			assert.Equal(t, "https://example.invalid/", m.LaunchURL.ValueString())
 		}},
-		"stale values cleared": {types.ListValueMust(types.StringType, []attr.Value{types.StringValue("https://old.invalid/")}), stringSet("g9"), types.StringValue("https://old.invalid/"), nil, func(t *testing.T, m clientResourceModel) {
+		"stale values cleared": {types.ListValueMust(types.StringType, []attr.Value{types.StringValue("https://old.invalid/")}), stringSet("bbbbbbbb-0000-4000-8000-000000000009"), types.StringValue("https://old.invalid/"), nil, func(t *testing.T, m clientResourceModel) {
 			assert.True(t, m.LogoutCallbackURLs.IsNull())
 			assert.True(t, m.AllowedUserGroups.IsNull())
 			assert.True(t, m.LaunchURL.IsNull())

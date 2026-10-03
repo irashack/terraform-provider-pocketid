@@ -26,6 +26,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/valuefree"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -77,6 +78,7 @@ func (r *signupTokenResource) Metadata(_ context.Context, req resource.MetadataR
 }
 
 func (r *signupTokenResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	defer func() { resp.Schema = valuefree.ResourceSchema(resp.Schema) }()
 	resp.Schema = schema.Schema{
 		Description: "Manages a signup token in Pocket-ID: a token that lets people register an account.",
 		MarkdownDescription: "Manages a signup token in Pocket-ID: a token that lets people register an account, " +
@@ -196,7 +198,7 @@ func validateSignupTokenTTL(value string) error {
 type signupTokenTTLValidator struct{}
 
 func (signupTokenTTLValidator) Description(context.Context) string {
-	return "a Go duration longer than 1 second and at most 744h"
+	return "must be a Go duration (such as 15m or 24h) longer than 1 second and at most 744h (31 days)"
 }
 
 func (v signupTokenTTLValidator) MarkdownDescription(ctx context.Context) string {
@@ -246,6 +248,9 @@ func (r *signupTokenResource) Create(ctx context.Context, req resource.CreateReq
 	var plan signupTokenResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !collectionOK(r.client, &resp.Diagnostics, "configuration", "user group", plan.UserGroupIDs) {
 		return
 	}
 
@@ -386,6 +391,9 @@ func (r *signupTokenResource) Read(ctx context.Context, req resource.ReadRequest
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("signup token", state.ID)) {
+		return
+	}
 
 	// Pocket ID has no endpoint for one token, so read the list. Any failure
 	// to read it is an error: only a list that was read and does not hold the
@@ -424,6 +432,9 @@ func (r *signupTokenResource) Delete(ctx context.Context, req resource.DeleteReq
 	var state signupTokenResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("signup token", state.ID)) {
 		return
 	}
 

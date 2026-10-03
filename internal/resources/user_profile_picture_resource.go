@@ -19,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/valuefree"
 )
 
 // Ensure the implementation satisfies the expected interfaces.
@@ -57,6 +58,7 @@ func (r *userProfilePictureResource) Metadata(_ context.Context, req resource.Me
 
 // Schema defines the schema for the resource.
 func (r *userProfilePictureResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	defer func() { resp.Schema = valuefree.ResourceSchema(resp.Schema) }()
 	resp.Schema = schema.Schema{
 		Description: "Sets a Pocket-ID user's profile picture from a local image file. Destroying the resource restores the default picture if the stored picture is still the one it uploaded.",
 		MarkdownDescription: "Sets a Pocket-ID user's profile picture from a local image file. Destroying the resource restores the default picture if the stored picture is still the one it uploaded (see Destroy below).\n\n" +

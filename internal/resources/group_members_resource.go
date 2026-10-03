@@ -21,6 +21,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/valuefree"
 )
 
 // Ensure the implementation satisfies the expected interfaces.
@@ -59,6 +60,7 @@ func (r *groupMembersResource) Metadata(_ context.Context, req resource.Metadata
 
 // Schema defines the schema for the resource.
 func (r *groupMembersResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	defer func() { resp.Schema = valuefree.ResourceSchema(resp.Schema) }()
 	resp.Schema = schema.Schema{
 		Description: "Owns the whole membership of one Pocket-ID group: the users in `user_ids` are exactly the group's members.",
 		MarkdownDescription: "Owns the whole membership of one Pocket-ID group: the users in `user_ids` are exactly the group's members. " +
@@ -480,6 +482,9 @@ func (r *groupMembersResource) Create(ctx context.Context, req resource.CreateRe
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if !collectionOK(r.client, &resp.Diagnostics, "configuration", "user", plan.UserIDs) {
+		return
+	}
 	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "configuration", knownAs("user group", plan.GroupID)) {
 		return
 	}
@@ -598,6 +603,9 @@ func (r *groupMembersResource) Update(ctx context.Context, req resource.UpdateRe
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !collectionOK(r.client, &resp.Diagnostics, "configuration", "user", plan.UserIDs) {
 		return
 	}
 	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "configuration", knownAs("user group", plan.GroupID)) {

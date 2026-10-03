@@ -168,7 +168,7 @@ func TestAccResourceClient_backchannelLogoutURLValidation(t *testing.T) {
 			{
 				Config:      testAccBackchannelClient("backchannel-fragment", "  backchannel_logout_url = \"https://rp.example.invalid/logout#frag\""),
 				PlanOnly:    true,
-				ExpectError: regexp.MustCompile(`must\s+not\s+contain\s+a\s+fragment`),
+				ExpectError: regexp.MustCompile(`without\s+a\s+fragment`),
 			},
 			{
 				Config:      testAccBackchannelClient("backchannel-relative", "  backchannel_logout_url = \"/logout\""),

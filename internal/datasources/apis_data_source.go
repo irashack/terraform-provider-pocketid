@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/valuefree"
 )
 
 var (
@@ -35,6 +36,7 @@ func (d *apisDataSource) Metadata(_ context.Context, req datasource.MetadataRequ
 }
 
 func (d *apisDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+	defer func() { resp.Schema = valuefree.DataSourceSchema(resp.Schema) }()
 	attributes := apiDataSourceAttributes()
 	attributes["id"] = schema.StringAttribute{
 		Description: "The ID of the API.",

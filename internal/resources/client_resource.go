@@ -25,6 +25,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/valuefree"
 )
 
 // Ensure the implementation satisfies the expected interfaces.
@@ -104,6 +105,7 @@ func (r *clientResource) Metadata(_ context.Context, req resource.MetadataReques
 
 // Schema defines the schema for the resource.
 func (r *clientResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	defer func() { resp.Schema = valuefree.ResourceSchema(resp.Schema) }()
 	resp.Schema = schema.Schema{
 		Description: "Manages an OIDC client in Pocket-ID.",
 		MarkdownDescription: `Manages an OIDC client in Pocket-ID. OIDC clients are applications that can authenticate users through Pocket-ID.
@@ -431,6 +433,9 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "configuration", knownAs("OIDC client", plan.ClientID)) || !collectionOK(r.client, &resp.Diagnostics, "configuration", "user group", plan.AllowedUserGroups) {
+		return
+	}
 
 	// Convert from Terraform types to Go types
 	var callbackURLs []string
@@ -599,6 +604,9 @@ func (r *clientResource) Read(ctx context.Context, req resource.ReadRequest, res
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("OIDC client", state.ID)) || !collectionOK(r.client, &resp.Diagnostics, "state", "user group", state.AllowedUserGroups) {
+		return
+	}
 
 	tflog.Debug(ctx, "Reading OIDC client", map[string]any{
 		"id": state.ID.ValueString(),
@@ -712,6 +720,12 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !collectionOK(r.client, &resp.Diagnostics, "configuration", "user group", plan.AllowedUserGroups) {
+		return
+	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("OIDC client", state.ID)) || !collectionOK(r.client, &resp.Diagnostics, "state", "user group", state.AllowedUserGroups) {
 		return
 	}
 
@@ -1009,6 +1023,9 @@ func (r *clientResource) Delete(ctx context.Context, req resource.DeleteRequest,
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("OIDC client", state.ID)) {
+		return
+	}
 
 	tflog.Debug(ctx, "Deleting OIDC client", map[string]any{
 		"id": state.ID.ValueString(),
@@ -1056,11 +1073,11 @@ var errCIMDClient = errors.New("this client was registered from a Client ID Meta
 type urlValidator struct{}
 
 func (v urlValidator) Description(ctx context.Context) string {
-	return "string must be a valid URL"
+	return "must be a URL with a scheme and a host, path or opaque part (or a pattern with *)"
 }
 
 func (v urlValidator) MarkdownDescription(ctx context.Context) string {
-	return "string must be a valid URL"
+	return "must be a URL with a scheme and a host, path or opaque part (or a pattern with *)"
 }
 
 func (v urlValidator) ValidateString(ctx context.Context, req validator.StringRequest, resp *validator.StringResponse) {
@@ -1090,7 +1107,7 @@ func (v urlValidator) ValidateString(ctx context.Context, req validator.StringRe
 		resp.Diagnostics.AddAttributeError(
 			req.Path,
 			"invalid callback URL",
-			fmt.Sprintf("The value %q is not a valid URL: %s", value, err),
+			"The value is not a valid URL. It is not repeated here.",
 		)
 		return
 	}
@@ -1099,7 +1116,7 @@ func (v urlValidator) ValidateString(ctx context.Context, req validator.StringRe
 		resp.Diagnostics.AddAttributeError(
 			req.Path,
 			"invalid callback URL",
-			fmt.Sprintf("The value %q is not a valid URL: must include a scheme and a host, path, or opaque data", value),
+			"The value is not a valid URL: it must include a scheme and a host, path, or opaque data. It is not repeated here.",
 		)
 		return
 	}

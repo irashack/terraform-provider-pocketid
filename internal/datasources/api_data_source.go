@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/valuefree"
 )
 
 var (
@@ -99,6 +100,7 @@ func (d *apiDataSource) Metadata(_ context.Context, req datasource.MetadataReque
 }
 
 func (d *apiDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+	defer func() { resp.Schema = valuefree.DataSourceSchema(resp.Schema) }()
 	attributes := apiDataSourceAttributes()
 	attributes["id"] = schema.StringAttribute{
 		Description: "The ID of the API. Exactly one of `id` and `resource` must be set.",
