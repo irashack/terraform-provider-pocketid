@@ -248,7 +248,7 @@ func (r *clientResource) generateHeldSecret(ctx context.Context, model *clientRe
 	if err != nil {
 		model.ClientSecret = types.StringNull()
 		model.ClientSecretID = types.StringNull()
-		if client.IsDefiniteRejection(err) {
+		if definitelyRejected(err) {
 			return fmt.Errorf("the server refused to create a client secret, so none was created: %w", err)
 		}
 		return fmt.Errorf("the result of creating a client secret is uncertain: one may have been created. It was not retried. List the client's secrets in Pocket ID and revoke any you do not recognize before applying again: %w", err)
@@ -328,4 +328,13 @@ func skipSecretAction(action secretAction, prior clientResourceModel, model *cli
 		model.GenerateSecret = types.BoolValue(false)
 	}
 	return action == secretRevoke
+}
+
+// definitelyRejected reports whether a failed request certainly changed
+// nothing: a 4xx answer (client.IsDefiniteRejection) to the request itself.
+// An error wrapping client.ErrResultUnread is never one, whatever status it
+// carries: the mutation was accepted and only reading its result failed (a
+// 403 on the read-back, for example).
+func definitelyRejected(err error) bool {
+	return !errors.Is(err, client.ErrResultUnread) && client.IsDefiniteRejection(err)
 }

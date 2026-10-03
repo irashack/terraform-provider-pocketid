@@ -491,7 +491,7 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 	clientResp, err := r.client.CreateClient(ctx, createReq)
 	if err != nil {
 		detail := "Client creation failed: " + err.Error()
-		if !client.IsDefiniteRejection(err) {
+		if !definitelyRejected(err) {
 			detail += ". The POST result is uncertain; inspect read-only before retrying. No cleanup was attempted."
 			if createReq.ClientID != nil {
 				plan.ID = types.StringValue(*createReq.ClientID)
@@ -837,7 +837,7 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 				// The write happened; record what the server kept.
 				state.AllowedUserGroups = groupSetFromServer(groupsFromIDs(got), plan.AllowedUserGroups)
 				resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
-			} else if !client.IsDefiniteRejection(err) {
+			} else if !definitelyRejected(err) {
 				detail += "The allowed groups may have changed; refresh to see them. "
 			}
 			resp.Diagnostics.AddAttributeError(path.Root("allowed_user_groups"), "Error updating allowed user groups", detail+err.Error())
@@ -854,7 +854,7 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 	updateReq.IsGroupRestricted = isGroupRestricted
 	clientResp, err := r.client.UpdateClient(ctx, plan.ID.ValueString(), updateReq)
 	if err != nil {
-		if !client.IsDefiniteRejection(err) || errors.Is(err, client.ErrResultUnread) {
+		if !definitelyRejected(err) {
 			// The update may have been applied although its answer was
 			// lost (the client may now be confidential or public). Keep a
 			// planned secret step due for the next plan, which the
@@ -1200,7 +1200,7 @@ func (r *clientResource) revokeServerCreatedSecret(ctx context.Context, clientID
 // rejection. An ambiguous mutation is inspected, never retried or deleted.
 func (r *clientResource) failedCreate(ctx context.Context, plan *clientResourceModel, cause error, resp *resource.CreateResponse) {
 	id := plan.ID.ValueString()
-	if client.IsDefiniteRejection(cause) || errors.Is(cause, errUnidentifiedCreatedSecret) || errors.Is(cause, errGroupsDropped) {
+	if definitelyRejected(cause) || errors.Is(cause, errUnidentifiedCreatedSecret) || errors.Is(cause, errGroupsDropped) {
 		if cleanupErr := r.client.DeleteClient(ctx, id); cleanupErr == nil {
 			resp.Diagnostics.AddError("OIDC client creation rolled back", "The newly created client was deleted after a rejected operation: "+cause.Error())
 			return

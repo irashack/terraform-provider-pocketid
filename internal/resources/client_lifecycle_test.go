@@ -407,3 +407,62 @@ func TestClientCreateGroupFailureCleanupUnconfirmed(t *testing.T) {
 		})
 	}
 }
+
+// A group write that Pocket ID accepted, but whose read-back was refused
+// (an error wrapping ErrResultUnread that carries a 403), is not a
+// rejection: the new client and its secret stay in state, nothing is
+// deleted.
+func TestClientCreateGroupReadBackRefusedIsUncertain(t *testing.T) {
+	deletes, reads := 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method + " " + r.URL.Path {
+		case "GET /api/version/current":
+			_, _ = fmt.Fprint(w, `{"currentVersion":"2.16.0"}`)
+		case "POST /api/oidc/clients":
+			w.WriteHeader(http.StatusCreated)
+			_, _ = fmt.Fprint(w, `{"id":"new-fixture","name":"fixture","callbackURLs":["https://example.invalid/callback"],"pkceEnabled":true}`)
+		case "POST /api/oidc/clients/new-fixture/secrets":
+			w.WriteHeader(http.StatusCreated)
+			_, _ = fmt.Fprint(w, `{"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","secret":"synthetic-managed-secret"}`)
+		case "PUT /api/oidc/clients/new-fixture/allowed-user-groups":
+			_, _ = fmt.Fprint(w, `{"id":"new-fixture"}`)
+		case "GET /api/oidc/clients/new-fixture":
+			reads++
+			if reads == 1 {
+				w.WriteHeader(http.StatusForbidden) // the read-back
+				return
+			}
+			_, _ = fmt.Fprint(w, `{"id":"new-fixture"}`)
+		case "DELETE /api/oidc/clients/new-fixture":
+			deletes++
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected method/path %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(400)
+		}
+	}))
+	defer server.Close()
+	c, _ := client.NewClient(server.URL, "synthetic-token", false, 1)
+	r := &clientResource{client: c}
+	ctx := context.Background()
+	schemaResp := resource.SchemaResponse{}
+	r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
+	model := lifecycleModel()
+	model.AllowedUserGroups = types.SetValueMust(types.StringType, []attr.Value{types.StringValue("group-1")})
+	plan := tfsdk.Plan{Schema: schemaResp.Schema}
+	require.False(t, plan.Set(ctx, &model).HasError())
+	response := resource.CreateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	r.Create(ctx, resource.CreateRequest{Plan: plan}, &response)
+
+	require.True(t, response.Diagnostics.HasError())
+	require.Zero(t, deletes, "an accepted write is never rolled back as if rejected")
+	require.Equal(t, "OIDC client creation result uncertain", response.Diagnostics[len(response.Diagnostics)-1].Summary())
+	var state clientResourceModel
+	require.False(t, response.State.Get(ctx, &state).HasError())
+	require.Equal(t, "new-fixture", state.ID.ValueString())
+	require.Equal(t, "synthetic-managed-secret", state.ClientSecret.ValueString())
+	for _, d := range response.Diagnostics {
+		require.NotContains(t, d.Detail(), "synthetic-managed-secret")
+	}
+}
