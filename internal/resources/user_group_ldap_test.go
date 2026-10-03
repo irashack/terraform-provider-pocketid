@@ -190,6 +190,9 @@ func TestUserUpdateLDAPManaged(t *testing.T) {
 		r.Delete(ctx, resource.DeleteRequest{State: state}, &resp)
 		require.True(t, resp.Diagnostics.HasError())
 		require.Equal(t, "User is managed by LDAP", resp.Diagnostics.Errors()[0].Summary())
+		detail := resp.Diagnostics.Errors()[0].Detail()
+		require.Contains(t, detail, "LDAP sync", "the route that works is through the directory")
+		require.NotContains(t, detail, "disabled = true", "the update guard refuses that")
 	})
 }
 

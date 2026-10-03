@@ -72,7 +72,7 @@ func (r *userResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 
 ~> **Important** Users must complete passkey registration through the Pocket-ID web interface. This resource only creates the user account; authentication setup must be done separately.
 
-~> **LDAP** While LDAP is enabled, Pocket ID lets the API change only the locale of a user synchronized from LDAP (one with an LDAP ID), besides its groups and custom claims; it silently keeps every other field. The provider checks this before an update and fails, naming the attributes the configuration changes, instead of applying a change that would not take effect; the user's other fields, including a display name that is not configured, are sent back as the directory has them. Pocket ID also refuses to delete such a user unless it is disabled, which for such a user happens in the directory.`,
+~> **LDAP** While LDAP is enabled, Pocket ID lets the API change only the locale of a user synchronized from LDAP (one with an LDAP ID), besides its groups and custom claims; it silently keeps every other field. The provider checks this before an update and fails, naming the attributes the configuration changes, instead of applying a change that would not take effect; the user's other fields, including a display name that is not configured, are sent back as the directory has them. Pocket ID also refuses to delete such a user unless it is disabled; for such a user that happens through the directory and an LDAP sync, not through this resource.`,
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The ID of the user, a lowercase UUID. Pocket ID generates it unless it is set here, which needs Pocket ID 2.12.0 or later. " +
@@ -647,7 +647,9 @@ func (r *userResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 	if client.HasErrorCode(err, client.CodeLDAPUserUpdate) {
 		resp.Diagnostics.AddError("User is managed by LDAP",
 			"Pocket ID refuses to delete user "+state.ID.ValueString()+" because it is synchronized from LDAP, LDAP is enabled and the user is not disabled. "+
-				"Disable the user first (disabled = true), remove it from the directory, or remove it from Terraform state without destroying it.")
+				"Setting disabled here does not help: Pocket ID keeps that field for LDAP users. Remove the user from the directory and run an LDAP sync "+
+				"(pocketid_ldap_sync or the admin UI): Pocket ID then disables it (with ldap_soft_delete_users, the default), after which this delete succeeds, "+
+				"or deletes it itself. Or remove it from Terraform state without destroying it (a removed block or terraform state rm).")
 		return
 	}
 	if err != nil && client.IsNotFound(err, client.ResourceUser) {

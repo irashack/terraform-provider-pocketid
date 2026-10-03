@@ -96,3 +96,7 @@
   `custom_claims` is applied, and a `display_name` that is not configured
   keeps the directory's value instead of being replaced by first and last
   name.
+- The error for a refused deletion of an LDAP user no longer suggests setting
+  `disabled = true` (Pocket ID ignores that for LDAP users); it points to
+  removing the user in the directory and running an LDAP sync, or removing it
+  from state.
