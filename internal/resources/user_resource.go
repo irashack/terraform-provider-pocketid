@@ -154,7 +154,8 @@ func (r *userResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 			"groups": schema.SetAttribute{
 				Description: "IDs of the groups the user belongs to. Authoritative: the user is in exactly these groups, and in none when the attribute is omitted or empty. " +
 					"On creation the groups are sent with the request, which keeps Pocket ID from adding the instance's signup default groups; when no groups are set, Pocket ID adds those defaults to the new user and the provider removes them right after, before the new account has a passkey or a session. " +
-					"Pocket ID ignores an ID that names no group, so the provider checks the user's groups after each change and fails, naming the group, if one was not applied.",
+					"Pocket ID ignores an ID that names no group, so the provider checks the user's groups after each change and fails, naming the group, if one was not applied. " +
+					"Do not list a group whose members `pocketid_group_members` manages: that resource replaces the group's whole member list, so the two undo each other's changes on every apply.",
 				Optional:    true,
 				ElementType: types.StringType,
 			},

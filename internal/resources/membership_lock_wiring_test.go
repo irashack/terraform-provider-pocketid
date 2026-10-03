@@ -273,3 +273,22 @@ func TestMembershipLock_TheThreeResourceTypesSerialize(t *testing.T) {
 	assert.True(t, slices.Contains(s.groups, membershipVerifyGroupID))
 	assert.True(t, slices.Contains(s.groups, membershipVerifyExistingID))
 }
+
+// pocketid_group_members states that it conflicts with the other two
+// writers of a group's membership; they say the same of it.
+func TestMembershipExclusivityIsDocumented(t *testing.T) {
+	ctx := context.Background()
+	membership := resource.SchemaResponse{}
+	(&groupMembershipResource{}).Schema(ctx, resource.SchemaRequest{}, &membership)
+	assert.Contains(t, membership.Schema.MarkdownDescription, "Do not combine with `pocketid_group_members` on the same group")
+
+	user := resource.SchemaResponse{}
+	(&userResource{}).Schema(ctx, resource.SchemaRequest{}, &user)
+	groups := user.Schema.Attributes["groups"].GetDescription()
+	assert.Contains(t, groups, "Do not list a group whose members `pocketid_group_members` manages")
+
+	members := resource.SchemaResponse{}
+	(&groupMembersResource{}).Schema(ctx, resource.SchemaRequest{}, &members)
+	assert.Contains(t, members.Schema.MarkdownDescription, "do not use this resource together with `pocketid_group_membership`")
+	assert.Contains(t, members.Schema.MarkdownDescription, "with the `groups` attribute of `pocketid_user`")
+}

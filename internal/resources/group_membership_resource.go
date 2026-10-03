@@ -68,6 +68,9 @@ func (r *groupMembershipResource) Schema(_ context.Context, _ resource.SchemaReq
 			"that user, leaving every other member untouched. Use it when a group's membership is partly or " +
 			"fully managed outside Terraform (for example, by a self-service onboarding process or an identity " +
 			"broker) and Terraform should only ever add or remove specific users, never own the full list.\n\n" +
+			"~> **Do not combine with `pocketid_group_members` on the same group** `pocketid_group_members` replaces a group's whole " +
+			"member list, so it removes a user this resource added and puts back one this resource removed; the two undo each " +
+			"other's changes on every apply. For one group, use either this resource or `pocketid_group_members`.\n\n" +
 			"~> **API mechanism** Pocket-ID exposes no endpoint to add or remove a single group member. This " +
 			"resource reads the user's current group list, adds or removes the target group, and writes the " +
 			"full list back (`PUT /api/users/{id}/user-groups`, the same endpoint `pocketid_user`'s `groups` " +
