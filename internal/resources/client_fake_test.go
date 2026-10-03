@@ -70,6 +70,11 @@ type fakePocketID struct {
 	// lostResponse lists "METHOD path" calls that are carried out but
 	// answered with a truncated body, as when a response is lost.
 	lostResponse map[string]bool
+	// answerName, when set, replaces the name the create answer shows.
+	answerName string
+	// missing makes the client absent (Pocket ID's not-found error) until
+	// it is created.
+	missing bool
 }
 
 // generatedClientID is the ID the fake gives a client created without a
@@ -205,7 +210,11 @@ func (f *fakePocketID) serve(w http.ResponseWriter, r *http.Request) {
 			f.client.ID = id
 		}
 		f.applyUpdate(in)
+		f.missing = false
 		body := f.clientJSON()
+		if f.answerName != "" {
+			body["name"] = f.answerName
+		}
 		if f.atLeast("2.17.0") && !f.client.IsPublic {
 			// autoCreateOidcClientSecret, on by default.
 			auto := fakeSecret{ID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", Prefix: "auto", Created: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
@@ -213,6 +222,8 @@ func (f *fakePocketID) serve(w http.ResponseWriter, r *http.Request) {
 			body["createdSecret"] = map[string]any{"id": auto.ID, "prefix": auto.Prefix, "secret": "autosynthetic-server-created"}
 		}
 		write(201, body)
+	case call == "GET "+base && f.missing:
+		write(404, map[string]any{"error": "OIDC client not found", "code": "not_found", "details": map[string]string{"resource": "OIDC client"}})
 	case call == "GET "+base:
 		write(200, f.clientJSON())
 	case call == "PUT "+base:

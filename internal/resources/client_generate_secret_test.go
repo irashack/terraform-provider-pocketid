@@ -2,6 +2,7 @@ package resources
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -303,4 +304,44 @@ func TestClientCreateRecordsSecretID(t *testing.T) {
 	require.Len(t, fake.secrets, 1)
 	assert.Equal(t, fake.secrets[0].ID, after.ClientSecretID.ValueString())
 	assert.Equal(t, "gen1synthetic-generated-secret-value", after.ClientSecret.ValueString())
+}
+
+// A create answer that names the client with a usable ID but carries the API
+// key in another value ("synthetic-token" for this fake) is not used: the
+// client is kept in state by that ID alone, for recovery (Terraform taints
+// it), and no secret step runs on what the answer said.
+func TestClientCreateKeepsTheIDOfAnAnswerCarryingTheKey(t *testing.T) {
+	for _, chosen := range []bool{false, true} {
+		t.Run(fmt.Sprintf("chosen ID %v", chosen), func(t *testing.T) {
+			id := generatedClientID
+			if chosen {
+				id = "my-app"
+			}
+			fake := newFakePocketID(t, "2.17.0", &fakeClient{ID: id})
+			fake.missing = chosen
+			fake.answerName = "fixture synthetic-token"
+			r := &clientResource{client: fake.start()}
+			ctx := context.Background()
+			s := clientSchema(t).Schema
+			model := lifecycleModel()
+			if chosen {
+				model.ClientID = types.StringValue(id)
+			}
+			plan := tfsdk.Plan{Schema: s}
+			require.False(t, plan.Set(ctx, &model).HasError())
+			resp := resource.CreateResponse{State: tfsdk.State{Schema: s}}
+			r.Create(ctx, resource.CreateRequest{Plan: plan}, &resp)
+			require.True(t, resp.Diagnostics.HasError())
+			for _, d := range resp.Diagnostics {
+				assert.NotContains(t, d.Summary()+d.Detail(), "synthetic-token")
+			}
+			var after clientResourceModel
+			require.False(t, resp.State.Get(ctx, &after).HasError())
+			assert.Equal(t, id, after.ID.ValueString(), "the client is kept by its ID")
+			assert.Equal(t, "fixture", after.Name.ValueString(), "the planned name, not the answer's")
+			assert.True(t, after.UnresolvedCreation.IsNull(), "a create Pocket ID answered is this create's, not unresolved")
+			assert.True(t, after.ClientSecret.IsNull())
+			assert.Zero(t, fake.called("POST /api/oidc/clients/"+id+"/secrets"), "no secret step runs")
+		})
+	}
 }

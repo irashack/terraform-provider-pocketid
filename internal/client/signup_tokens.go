@@ -53,7 +53,9 @@ type SignupTokenCreateRequest struct {
 // value is missing, or a group it lists fails the ID check (the error then
 // also wraps ErrInvalidIdentifier, and the result lists no groups), the error
 // wraps ErrResultUnread and the result is returned, so the caller can record
-// the ID of the token that exists.
+// the ID of the token that exists. An answer whose text carries the API key
+// returns only the ID and the value, with an error wrapping ErrResultUnread
+// and ErrKeyInResponse: what the token grants is then unknown.
 func (c *Client) CreateSignupToken(ctx context.Context, req *SignupTokenCreateRequest) (*SignupToken, error) {
 	body := *req
 	if body.UserGroupIDs == nil {
@@ -86,6 +88,12 @@ func (c *Client) CreateSignupToken(ctx context.Context, req *SignupTokenCreateRe
 		result.UserGroups = nil
 		return &result, fmt.Errorf("signup token %s: %w", result.ID, unreadResult(err))
 	}
+	// An answer whose text carries the API key is not used beyond the
+	// token's ID and value (the token exists and may be valid): what it
+	// grants is unknown.
+	if err := c.checkReturnedText(result.shownTexts()...); err != nil {
+		return &SignupToken{ID: result.ID, Token: result.Token}, fmt.Errorf("signup token %s: %w", result.ID, unreadResult(err))
+	}
 	if result.Token == "" {
 		return &result, fmt.Errorf("signup token %s: %w: the response held no token value", result.ID, ErrResultUnread)
 	}
@@ -104,6 +112,9 @@ func (c *Client) ListSignupTokens(ctx context.Context) ([]SignupToken, error) {
 			return nil, err
 		}
 		if err := c.checkGroupIDs(tokens[i].UserGroups); err != nil {
+			return nil, err
+		}
+		if err := c.checkReturnedText(tokens[i].shownTexts()...); err != nil {
 			return nil, err
 		}
 	}

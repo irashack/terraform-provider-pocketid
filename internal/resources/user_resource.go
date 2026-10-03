@@ -291,11 +291,16 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 	}
 	defer releaseMembership()
 	userResp, err := r.client.CreateUser(ctx, createReq)
-	if err != nil && createReq.ID != "" && !writeRefused(err) {
+	// An answer that names the new user with a usable ID but cannot be used
+	// otherwise (a value in it carries the API key): the user exists and is
+	// this create's, so it is corrected and rolled back below, not adopted
+	// as an unresolved creation and not forgotten.
+	unusableAnswer := err != nil && userResp != nil
+	if err != nil && !unusableAnswer && createReq.ID != "" && !writeRefused(err) {
 		r.uncertainFixedIDCreate(ctx, &plan, displayName, err, resp)
 		return
 	}
-	if err != nil {
+	if err != nil && !unusableAnswer {
 		detail := "Could not create user, unexpected error: " + err.Error()
 		var status *client.HTTPError
 		if createReq.Email == "" && errors.As(err, &status) && status.StatusCode == http.StatusBadRequest {
@@ -311,7 +316,14 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 
 	// Set state values from API response
 	plan.ID = types.StringValue(userResp.ID)
-	setUserFieldsFromAPI(&plan, userResp)
+	if unusableAnswer {
+		// Nothing of the answer is used: the planned values stand in.
+		if plan.DisplayName.IsUnknown() {
+			plan.DisplayName = types.StringValue(displayName)
+		}
+	} else {
+		setUserFieldsFromAPI(&plan, userResp)
+	}
 	if createReq.ID != "" && userResp.ID != createReq.ID {
 		r.failedCreate(ctx, &plan, "ID", fmt.Errorf("the user was created with ID %s instead of the requested %s", userResp.ID, createReq.ID), resp)
 		return
@@ -349,6 +361,12 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 	}
 	releaseMembership()
 	plan.Groups = groupIDsToState(ctx, groupIDs, plan.Groups)
+	if unusableAnswer {
+		// The groups are corrected (no signup default group stays), and the
+		// user, whose answer could not be used, is rolled back.
+		r.failedCreate(ctx, &plan, createAnswerStep, err, resp)
+		return
+	}
 
 	// The create response does not show default claims, so the claims are
 	// always replaced, with an empty list when none are planned.

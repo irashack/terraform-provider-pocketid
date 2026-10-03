@@ -45,13 +45,17 @@
 // 2.14.0 to 2.17.0 fill that object only where they load the client with
 // the provider, which none of the endpoints this client calls does.
 //
-// Text going out and coming back. Beyond identifiers, doRequest refuses a
-// JSON request body that carries the API key in any string, number or object
-// key, and a successful JSON answer that does (text_checks.go), so no name,
+// Text going out and coming back. Beyond identifiers, every request type
+// declares the text it sends and every answer type the text the provider
+// takes from it (text_checks.go): doRequest refuses a body whose text carries
+// the API key, and each method refuses an answer whose decoded fields do
+// (ErrKeyInResponse; after a mutation also ErrResultUnread), so no name,
 // e-mail address, claim, setting, URL or other text can carry the key into
-// state, a log line or a diagnostic. Values are checked once decoded, so an
-// escaped key is found. Secret values (a client secret, a SCIM, signup or
-// one-time token, the SMTP and LDAP passwords) are exempt: they go only to
-// sensitive state and are never shown. A refused answer to a mutation wraps
-// ErrResultUnread.
+// state, a log line or a diagnostic. Decoded values are checked, so an
+// escaped key is found, and JSON field names never are. Only the secret
+// values of a type are exempt (a client secret, a SCIM, signup or one-time
+// token, the SMTP and LDAP passwords of the application configuration): they
+// go only to sensitive state and are never shown. A create whose answer
+// names the new object with a usable ID but fails this check returns that ID
+// alone with the error, so the caller can recover the object.
 package client

@@ -34,8 +34,11 @@ func (c *Client) ListAPIKeys(ctx context.Context) ([]APIKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, key := range keys {
-		if err := c.checkReturnedID("API key", "", key.ID); err != nil {
+	for i := range keys {
+		if err := c.checkReturnedID("API key", "", keys[i].ID); err != nil {
+			return nil, err
+		}
+		if err := c.checkReturnedText(keys[i].shownTexts()...); err != nil {
 			return nil, err
 		}
 	}

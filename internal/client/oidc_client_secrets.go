@@ -248,10 +248,7 @@ func secretCreateBody(opts *ClientSecretOptions) (any, error) {
 			return nil, err
 		}
 	}
-	return struct {
-		Secret    string     `json:"secret,omitempty"`
-		ExpiresAt *time.Time `json:"expiresAt,omitempty"`
-	}{opts.Value, opts.ExpiresAt}, nil
+	return secretCreateRequest{Secret: opts.Value, ExpiresAt: opts.ExpiresAt}, nil
 }
 
 // errUndecodableSecret is a create response that cannot be decoded at all: the

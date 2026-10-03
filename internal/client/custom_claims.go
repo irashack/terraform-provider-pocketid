@@ -20,7 +20,7 @@ func (c *Client) UpdateUserCustomClaims(ctx context.Context, userID string, clai
 	if err != nil {
 		return nil, err
 	}
-	body, err := c.doRequest(ctx, "PUT", "/api/custom-claims/user/"+id, claims)
+	body, err := c.doRequest(ctx, "PUT", "/api/custom-claims/user/"+id, customClaimsRequest(claims))
 	if err != nil {
 		return nil, err
 	}
@@ -28,6 +28,9 @@ func (c *Client) UpdateUserCustomClaims(ctx context.Context, userID string, clai
 	var result []CustomClaim
 	if err := decodeResult(body, &result); err != nil {
 		return nil, err
+	}
+	if err := c.checkReturnedText(claimTexts(result)...); err != nil {
+		return nil, unreadResult(err)
 	}
 
 	return result, nil
@@ -43,7 +46,7 @@ func (c *Client) UpdateGroupCustomClaims(ctx context.Context, groupID string, cl
 	if err != nil {
 		return nil, err
 	}
-	body, err := c.doRequest(ctx, "PUT", "/api/custom-claims/user-group/"+id, claims)
+	body, err := c.doRequest(ctx, "PUT", "/api/custom-claims/user-group/"+id, customClaimsRequest(claims))
 	if err != nil {
 		return nil, err
 	}
@@ -51,6 +54,9 @@ func (c *Client) UpdateGroupCustomClaims(ctx context.Context, groupID string, cl
 	var result []CustomClaim
 	if err := decodeResult(body, &result); err != nil {
 		return nil, err
+	}
+	if err := c.checkReturnedText(claimTexts(result)...); err != nil {
+		return nil, unreadResult(err)
 	}
 
 	return result, nil

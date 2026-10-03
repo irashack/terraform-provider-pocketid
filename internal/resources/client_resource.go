@@ -504,6 +504,24 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 		}
 	}
 	clientResp, err := r.client.CreateClient(ctx, createReq)
+	if err != nil && clientResp != nil {
+		// Pocket ID created the client and named it with a usable ID (the
+		// chosen one, for a chosen ID), but the rest of its answer cannot be
+		// used (a value in it carries the API key). The client is this
+		// create's: its ID is kept for recovery, with nothing else of the
+		// answer, and Terraform taints it (failedCreate's uncertain branch).
+		plan.ID = types.StringValue(clientResp.ID)
+		plan.ClientID = plan.ID
+		plan.UnresolvedCreation = types.BoolNull()
+		plan.IsGroupRestricted = types.BoolValue(createReq.IsGroupRestricted)
+		plan.ClientSecret = types.StringNull()
+		plan.ClientSecretID = types.StringNull()
+		fillComputedFromServer(&plan, &client.OIDCClient{})
+		unlock := lockClientSecrets(clientResp.ID)
+		r.failedCreate(ctx, &plan, err, resp)
+		unlock()
+		return
+	}
 	if err != nil {
 		detail := "Client creation failed: " + err.Error()
 		if !definitelyRejected(err) {

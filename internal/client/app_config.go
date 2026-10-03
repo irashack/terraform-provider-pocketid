@@ -221,6 +221,9 @@ func (c *Client) GetApplicationConfig(ctx context.Context) (*ApplicationConfig, 
 	if err := c.checkAppConfigGroupIDs(cfg); err != nil {
 		return nil, err
 	}
+	if err := c.checkReturnedText(cfg.shownTexts()...); err != nil {
+		return nil, err
+	}
 	return cfg, nil
 }
 
@@ -251,7 +254,7 @@ func (c *Client) checkAppConfigGroupIDs(cfg *ApplicationConfig) error {
 // body: a key that is missing, or an empty string, resets that setting to its
 // default.
 func (c *Client) UpdateApplicationConfig(ctx context.Context, cfg *ApplicationConfig) (*ApplicationConfig, error) {
-	body, err := c.doRequest(ctx, "PUT", "/api/application-configuration", cfg.Values())
+	body, err := c.doRequest(ctx, "PUT", "/api/application-configuration", appConfigRequest{cfg: cfg})
 	if err != nil {
 		return nil, err
 	}
@@ -264,6 +267,9 @@ func (c *Client) UpdateApplicationConfig(ctx context.Context, cfg *ApplicationCo
 		return nil, fmt.Errorf("%w: %w", ErrResultUnread, err)
 	}
 	if err := c.checkAppConfigGroupIDs(updated); err != nil {
+		return nil, unreadResult(err)
+	}
+	if err := c.checkReturnedText(updated.shownTexts()...); err != nil {
 		return nil, unreadResult(err)
 	}
 	return updated, nil

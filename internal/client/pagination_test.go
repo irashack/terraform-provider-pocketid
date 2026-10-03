@@ -270,7 +270,7 @@ func TestListAll_RefusesTheReflectedKey(t *testing.T) {
 			_, err = c.ListClients(context.Background())
 			server.Close()
 			require.ErrorIs(t, err, client.ErrInvalidIdentifier, name)
-			assert.Contains(t, err.Error(), "contains the API key this provider", name)
+			assert.Contains(t, err.Error(), "contains the API key this provider sent", name)
 			assert.NotContains(t, err.Error(), key, name)
 		}
 	}
@@ -315,23 +315,6 @@ func TestListAll_PaginationErrorsQuoteNothing(t *testing.T) {
 			c, err := client.NewClient(server.URL, tc.key, false, 30)
 			require.NoError(t, err)
 
-			// An answer that carries the key is refused before the
-			// pagination block is looked at.
-			_, err = c.ListUserGroups(context.Background())
-			require.ErrorIs(t, err, client.ErrInvalidIdentifier)
-			assert.NotContains(t, err.Error(), tc.key)
-			assert.NotContains(t, err.Error(), tc.key[:16], "not even in part")
-			assert.Positive(t, requests.Load())
-
-			// The same numbers, when they are not the key, fail the
-			// pagination checks or the decoder, which quote nothing either.
-			numbers := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = fmt.Fprintf(w, `{"data":%s,"pagination":%s}`, oneGroup, strings.ReplaceAll(tc.block, "KEY", tc.key))
-			}))
-			defer numbers.Close()
-			c, err = client.NewClient(numbers.URL, "an-unrelated-static-key", false, 30)
-			require.NoError(t, err)
 			_, err = c.ListUserGroups(context.Background())
 			require.Error(t, err)
 			assert.NotContains(t, err.Error(), tc.key)
@@ -342,6 +325,7 @@ func TestListAll_PaginationErrorsQuoteNothing(t *testing.T) {
 			} else {
 				assert.Contains(t, err.Error(), tc.want)
 			}
+			assert.Positive(t, requests.Load())
 		})
 	}
 }

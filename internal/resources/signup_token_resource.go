@@ -291,17 +291,27 @@ func (r *signupTokenResource) Create(ctx context.Context, req resource.CreateReq
 	}
 
 	// The token exists from here on: record it, whatever else is wrong, so
-	// its ID and value are never lost while it may still be valid.
+	// its ID and value are never lost while it may still be valid. An
+	// answer that cannot be used beyond the ID and the value (a value in it
+	// carries the API key) leaves everything else unknown: the planned
+	// values stand in, and the token is deleted below.
+	unusableAnswer := errors.Is(err, client.ErrKeyInResponse)
 	plan.ID = types.StringValue(created.ID)
 	plan.Token = types.StringValue(created.Token)
-	plan.ExpiresAt = types.StringValue(created.ExpiresAt)
-	plan.CreatedAt = types.StringValue(created.CreatedAt)
-	plan.UsageCount = types.Int64Value(int64(created.UsageCount))
 	plan.Expired = types.BoolValue(false)
+	limitMatches := true
+	if unusableAnswer {
+		plan.ExpiresAt, plan.CreatedAt = types.StringNull(), types.StringNull()
+		plan.UsageCount = types.Int64Value(0)
+	} else {
+		plan.ExpiresAt = types.StringValue(created.ExpiresAt)
+		plan.CreatedAt = types.StringValue(created.CreatedAt)
+		plan.UsageCount = types.Int64Value(int64(created.UsageCount))
+		plan.UserGroupIDs = signupTokenGroupSet(created.UserGroupIDs(), plan.UserGroupIDs)
+		limitMatches = int64(created.UsageLimit) == plan.UsageLimit.ValueInt64()
+		plan.UsageLimit = types.Int64Value(int64(created.UsageLimit))
+	}
 	granted := created.UserGroupIDs()
-	plan.UserGroupIDs = signupTokenGroupSet(granted, plan.UserGroupIDs)
-	limitMatches := int64(created.UsageLimit) == plan.UsageLimit.ValueInt64()
-	plan.UsageLimit = types.Int64Value(int64(created.UsageLimit))
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 
 	// Check what Pocket ID created against what was asked for. A token that
@@ -311,6 +321,8 @@ func (r *signupTokenResource) Create(ctx context.Context, req resource.CreateReq
 	var problems []string
 	groupsUnknown := errors.Is(err, client.ErrInvalidIdentifier)
 	switch {
+	case unusableAnswer:
+		problems = append(problems, "its answer carried a value the provider cannot use, so the groups and limits of the token are unknown")
 	case groupsUnknown:
 		problems = append(problems, "its answer listed a group whose ID could not be used, so the groups it joins are unknown")
 	case err != nil:

@@ -308,7 +308,7 @@ func TestOversizedBodyErrorsQuoteNoServerNumber(t *testing.T) {
 			return err
 		}},
 		"declared, JSON mutation": {declared, func(c *Client, ctx context.Context) error {
-			_, err := c.doRequest(ctx, http.MethodPut, "/api/x", map[string]string{})
+			_, err := c.doRequest(ctx, http.MethodPut, "/api/x", plainBody{})
 			return err
 		}},
 		"streamed, binary read": {streamed, func(c *Client, ctx context.Context) error {

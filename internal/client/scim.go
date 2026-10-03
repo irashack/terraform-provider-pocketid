@@ -53,6 +53,9 @@ func (c *Client) CreateScimServiceProvider(ctx context.Context, req *ScimService
 	if err := c.checkScimClient(req.OidcClientID, &result); err != nil {
 		return nil, fmt.Errorf("SCIM service provider creation returned a provider of another client; the SCIM service provider may exist: inspect before recovery: %w", unreadResult(err))
 	}
+	if err := c.checkReturnedText(result.shownTexts()...); err != nil {
+		return nil, fmt.Errorf("SCIM service provider creation returned an answer that cannot be used; the SCIM service provider may exist: inspect before recovery: %w", unreadResult(err))
+	}
 
 	return &result, nil
 }
@@ -92,6 +95,9 @@ func (c *Client) GetClientScimServiceProvider(ctx context.Context, clientID stri
 	if err := c.checkScimClient(clientID, &result); err != nil {
 		return nil, err
 	}
+	if err := c.checkReturnedText(result.shownTexts()...); err != nil {
+		return nil, err
+	}
 
 	return &result, nil
 }
@@ -118,6 +124,9 @@ func (c *Client) UpdateScimServiceProvider(ctx context.Context, id string, req *
 		return nil, unreadResult(err)
 	}
 	if err := c.checkScimClient(req.OidcClientID, &result); err != nil {
+		return nil, unreadResult(err)
+	}
+	if err := c.checkReturnedText(result.shownTexts()...); err != nil {
 		return nil, unreadResult(err)
 	}
 

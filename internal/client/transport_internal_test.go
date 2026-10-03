@@ -27,6 +27,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// plainBody is a request body for transport tests whose values are all
+// ordinary text.
+type plainBody map[string]string
+
+func (b plainBody) textsToSend() []string {
+	texts := make([]string, 0, len(b))
+	for _, value := range b {
+		texts = append(texts, value)
+	}
+	return texts
+}
+
 func TestHTTPLogsAndDiagnosticsExcludeCredentials(t *testing.T) {
 	for _, status := range []int{201, 400, 500} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
@@ -38,7 +50,7 @@ func TestHTTPLogsAndDiagnosticsExcludeCredentials(t *testing.T) {
 			}))
 			defer s.Close()
 			c, _ := NewClient(s.URL, "fixture-token", false, 1)
-			_, err := c.doRequest(ctx, "POST", "/api/oidc/clients/fixture/secrets", map[string]string{"secret": "fixture-secret"})
+			_, err := c.doRequest(ctx, "POST", "/api/oidc/clients/fixture/secrets", secretCreateRequest{Secret: "fixture-secret"})
 			require.NotEmpty(t, logs.String())
 			require.NotContains(t, logs.String(), "fixture-token")
 			require.NotContains(t, logs.String(), "fixture-secret")
@@ -356,7 +368,7 @@ func TestUnreadableSuccessBody(t *testing.T) {
 			c, err := NewClient(url, "test-token", false, 5)
 			require.NoError(t, err)
 
-			_, err = c.doRequest(context.Background(), tc.method, "/api/x", map[string]string{"a": "b"})
+			_, err = c.doRequest(context.Background(), tc.method, "/api/x", plainBody{"a": "b"})
 			require.Error(t, err)
 			assert.ErrorIs(t, err, ErrResultUnread)
 			assert.ErrorIs(t, err, tc.cause)

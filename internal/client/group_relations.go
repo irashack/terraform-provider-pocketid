@@ -91,7 +91,7 @@ func (c *Client) GetUserGroupDetail(ctx context.Context, groupID string) (*Group
 			return nil, err
 		}
 	}
-	return &GroupDetail{
+	detail := &GroupDetail{
 		ID:               wire.ID,
 		Name:             wire.Name,
 		FriendlyName:     wire.FriendlyName,
@@ -100,7 +100,11 @@ func (c *Client) GetUserGroupDetail(ctx context.Context, groupID string) (*Group
 		CustomClaims:     wire.CustomClaims,
 		MemberIDs:        groupRelationUnique(groupRelationIDs(wire.Users)),
 		AllowedClientIDs: groupRelationUnique(groupRelationIDs(wire.AllowedOidcClients)),
-	}, nil
+	}
+	if err := c.checkReturnedText(detail.shownTexts()...); err != nil {
+		return nil, err
+	}
+	return detail, nil
 }
 
 // groupRelationUnique drops repeated IDs, keeping the first of each in order.

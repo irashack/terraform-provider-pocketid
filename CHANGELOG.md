@@ -952,16 +952,23 @@ go-playground/validator and the URL-pattern libraries.
 - The server's version (from `/api/version/current`) is refused if it contains
   the provider's API key, so it never reaches `pocketid_version` or a
   diagnostic.
-- The same rule now covers all text, not only IDs: an answer from Pocket ID
-  that contains the provider's API key anywhere (a username, a name or e-mail
-  address, a custom claim's key or value, a group or API-key name, a URL, a
-  setting, a number), in plain or escaped JSON, is not used at all; the error
+- The same rule now covers text, not only IDs: an answer from Pocket ID
+  whose decoded values contain the provider's API key in any field the
+  provider stores, logs or shows (a username, a name or e-mail address, a
+  custom claim's key or value, a group, API-key or passkey name, a URL, a
+  setting, a time, a count), in plain or escaped JSON, is not used; the error
   is fixed text, and after a change Pocket ID accepted it says the result
-  could not be read. A request whose body would carry the key (in a name, a
-  claim, a URL, a setting, ...) is not sent. Secret values are the exception
-  both ways: a client secret, a SCIM, signup or one-time token and the SMTP
-  and LDAP passwords go only to sensitive state and are never shown, so the
-  provider sends and accepts them as they are.
+  could not be read. JSON field names are never taken for data, so a key
+  that happens to equal one does not make answers unusable. A create whose
+  answer names the new object with a usable ID but carries the key elsewhere
+  keeps only that ID, so the user's groups are still corrected and the user
+  or group rolled back, a signup token deleted, and a client kept for
+  recovery. A request whose configured text would carry the key (a name, a
+  claim, a URL, a setting, ...) is not sent. Only secret values are exempt,
+  and only in their own fields: a client secret, a SCIM, signup or one-time
+  token and the SMTP and LDAP passwords of the application configuration go
+  only to sensitive state and are never shown, so the provider sends and
+  accepts them as they are; a custom claim named like one is ordinary text.
 - An identifier a request carries in its body (the groups of a user or a
   client, a group's members, a signup token's groups, a chosen user or client
   ID, a SCIM provider's client) is refused before anything is sent if it

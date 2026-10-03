@@ -205,3 +205,49 @@ func TestGroupFailedCreateCleanup(t *testing.T) {
 		})
 	}
 }
+
+// A group create answer that names the group with a usable ID but carries the
+// API key in another value ("synthetic-token" for this server) is not used:
+// the group is rolled back, or kept by its ID alone when the rollback cannot
+// be confirmed.
+func TestGroupCreateRollsBackAnAnswerCarryingTheKey(t *testing.T) {
+	groupPath := "/api/user-groups/" + failedCreateGroupID
+	for _, tc := range []usersGroupsFailedCreateCase{
+		{name: "rolled_back", stepStatus: 400, deleteStatus: 204, title: "creation rolled back"},
+		{name: "cleanup_failed", stepStatus: 400, deleteStatus: 403, readStatus: 200, readBody: "{}", retained: true, title: "cleanup failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			c, calls := usersGroupsFailedCreateServer(t, tc, func() {}, "/api/user-groups",
+				`{"id":"`+failedCreateGroupID+`","name":"fixture synthetic-token","friendlyName":"Fixture"}`,
+				"/api/custom-claims/user-group/"+failedCreateGroupID, groupPath)
+			r := &groupResource{client: c}
+			sr := resource.SchemaResponse{}
+			r.Schema(ctx, resource.SchemaRequest{}, &sr)
+			model := groupResourceModel{
+				ID: types.StringUnknown(), Name: types.StringValue("fixture"), FriendlyName: types.StringValue("Fixture"),
+				CustomClaims: types.MapNull(types.StringType),
+			}
+			plan := tfsdk.Plan{Schema: sr.Schema}
+			require.False(t, plan.Set(ctx, &model).HasError())
+			resp := resource.CreateResponse{State: tfsdk.State{Schema: sr.Schema}}
+			r.Create(ctx, resource.CreateRequest{Plan: plan}, &resp)
+
+			require.True(t, resp.Diagnostics.HasError())
+			var summaries []string
+			var details strings.Builder
+			for _, d := range resp.Diagnostics {
+				summaries = append(summaries, d.Summary())
+				details.WriteString(d.Summary() + d.Detail())
+			}
+			usersGroupsCheckFailedCreate(t, tc, summaries, details.String(), resp.State.Raw.IsNull(), *calls, groupPath)
+			require.Contains(t, details.String(), "could not be used")
+			if tc.retained {
+				var state groupResourceModel
+				require.False(t, resp.State.Get(ctx, &state).HasError())
+				require.Equal(t, failedCreateGroupID, state.ID.ValueString())
+				require.Equal(t, "fixture", state.Name.ValueString(), "the planned name, not the answer's")
+			}
+		})
+	}
+}

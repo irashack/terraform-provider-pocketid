@@ -133,31 +133,25 @@ var defaultRetryPolicy = retryPolicy{
 // retry. A GET, its retries included, also ends at the retry deadline (see
 // maxRetryElapsed); a mutation is sent once and bounded by the HTTP timeout.
 //
-// A request body that contains the API key outside a secret value is never
-// sent, and a successful JSON answer that contains it outside a secret value
-// is never returned (checkRequestText, checkResponseText).
+// A request body must declare the text it carries (textBearing), and one
+// that carries the API key outside a secret value is never sent
+// (checkRequestText). The answer's text is checked by each method on the
+// fields it decodes (text_checks.go).
 func (c *Client) doRequest(ctx context.Context, method, endpoint string, body interface{}) ([]byte, error) {
 	var payload []byte
 	if body != nil {
+		if err := c.checkRequestText(body); err != nil {
+			return nil, err
+		}
 		encoded, err := json.Marshal(body)
 		if err != nil {
 			return nil, fmt.Errorf("error marshaling request body: %w", err)
 		}
 		payload = encoded
-		if err := c.checkRequestText(payload); err != nil {
-			return nil, err
-		}
 	}
-	respBody, err := c.withRetries(ctx, method, func(ctx context.Context) ([]byte, error) {
+	return c.withRetries(ctx, method, func(ctx context.Context) ([]byte, error) {
 		return c.send(ctx, method, endpoint, "application/json", payload)
 	})
-	if err != nil {
-		return nil, err
-	}
-	if err := c.checkResponseText(method, respBody); err != nil {
-		return nil, err
-	}
-	return respBody, nil
 }
 
 // withRetries runs attempt once, or for a GET under the retry policy: a GET,

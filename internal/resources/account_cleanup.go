@@ -32,6 +32,11 @@ type accountCleanupOutcome struct {
 	summary, detail string
 }
 
+// createAnswerStep is the step of a create whose answer named the new object
+// with a usable ID but could not be used otherwise (client.ErrKeyInResponse):
+// the object exists, and nothing else of the answer is known.
+const createAnswerStep = ""
+
 // rollBackAccountObject deletes an object a Create made before step failed with
 // cause, and reports what is known afterwards. The cleanup runs on a context
 // that keeps the caller's values but not its cancellation, bounded by
@@ -45,6 +50,9 @@ func rollBackAccountObject(ctx context.Context, obj createdAccountObject, step s
 	defer cancel()
 
 	why := "Setting the " + step + " of the new " + obj.kind + " failed: " + cause.Error()
+	if step == createAnswerStep {
+		why = "The answer to creating the new " + obj.kind + " could not be used: " + cause.Error()
+	}
 	deleteErr := obj.remove(cleanupCtx, obj.id)
 	if deleteErr == nil {
 		return accountCleanupOutcome{gone: true,

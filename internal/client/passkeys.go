@@ -58,11 +58,15 @@ func (c *Client) ListUserPasskeys(ctx context.Context, userID string) ([]Passkey
 		if err := c.checkReturnedID("passkey", "", item.ID); err != nil {
 			return nil, err
 		}
-		passkeys = append(passkeys, Passkey{
+		passkey := Passkey{
 			ID: item.ID, Name: item.Name, CreatedAt: item.CreatedAt,
 			BackupEligible: item.BackupEligible, BackupState: item.BackupState,
 			Transports: item.Transport, AAGUID: item.AAGUID,
-		})
+		}
+		if err := c.checkReturnedText(passkey.shownTexts()...); err != nil {
+			return nil, err
+		}
+		passkeys = append(passkeys, passkey)
 	}
 	return passkeys, nil
 }

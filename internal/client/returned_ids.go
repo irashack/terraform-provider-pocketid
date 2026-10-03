@@ -4,16 +4,21 @@ import "fmt"
 
 // This file holds the checkReturnedID walks shared by several area files:
 // the IDs a user, a user group or an OIDC client response carries, nested
-// objects included. Each returns the first failure, which wraps
+// objects included, followed by the check of the text the provider takes
+// from it (checkReturnedText). Each returns the first failure, which wraps
 // ErrInvalidIdentifier and never includes a value.
 
 // checkUser checks a user's own ID (against addressed, the user the request
-// named, when it is not "") and the ID of every group it lists.
+// named, when it is not "") and the ID of every group it lists, then its
+// text.
 func (c *Client) checkUser(addressed string, user *User) error {
 	if err := c.checkReturnedID("user", addressed, user.ID); err != nil {
 		return err
 	}
-	return c.checkGroupIDs(user.UserGroups)
+	if err := c.checkGroupIDs(user.UserGroups); err != nil {
+		return err
+	}
+	return c.checkReturnedText(user.shownTexts()...)
 }
 
 // checkUsers checks every user of a list: none was addressed.
@@ -37,12 +42,16 @@ func (c *Client) checkGroupIDs(groups []UserGroup) error {
 }
 
 // checkUserGroup checks a group's own ID (against addressed when it is not
-// "") and every member it lists, with each member's own groups.
+// "") and every member it lists, with each member's own groups, then its
+// text.
 func (c *Client) checkUserGroup(addressed string, group *UserGroup) error {
 	if err := c.checkReturnedID("user group", addressed, group.ID); err != nil {
 		return err
 	}
-	return c.checkUsers(group.Users)
+	if err := c.checkUsers(group.Users); err != nil {
+		return err
+	}
+	return c.checkReturnedText(group.shownTexts()...)
 }
 
 // checkUserGroups checks every group of a list: none was addressed.
@@ -56,8 +65,8 @@ func (c *Client) checkUserGroups(groups []UserGroup) error {
 }
 
 // checkOIDCClient checks a client's own ID (byte for byte against addressed
-// when it is not "") and the IDs nested in it: its allowed user groups and
-// its listed secrets.
+// when it is not "") and the IDs nested in it (its allowed user groups and
+// its listed secrets), then its text.
 func (c *Client) checkOIDCClient(addressed string, oidcClient *OIDCClient) error {
 	if err := c.checkReturnedID(kindOIDCClient, addressed, oidcClient.ID); err != nil {
 		return err
@@ -70,7 +79,7 @@ func (c *Client) checkOIDCClient(addressed string, oidcClient *OIDCClient) error
 			return err
 		}
 	}
-	return nil
+	return c.checkReturnedText(oidcClient.shownTexts()...)
 }
 
 // checkRequestIDs refuses identifiers a request would carry in its body (the

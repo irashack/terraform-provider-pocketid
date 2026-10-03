@@ -362,7 +362,7 @@ func TestSend_BodyFraming(t *testing.T) {
 		assert.Equal(t, len(payload), n)
 	}
 
-	_, err = c.doRequest(ctx, http.MethodPut, "/api/x", map[string]string{"a": "b"})
+	_, err = c.doRequest(ctx, http.MethodPut, "/api/x", plainBody{"a": "b"})
 	require.NoError(t, err)
 	length, encoding, n := seen()
 	assert.Equal(t, fmt.Sprint(n), length, "doRequest's JSON body")

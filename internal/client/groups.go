@@ -43,6 +43,12 @@ func (c *Client) CreateUserGroup(ctx context.Context, group *UserGroupCreateRequ
 	if c.checkUsers(result.Users) != nil {
 		result.Users = nil
 	}
+	// An answer whose text carries the API key is not used; the group exists
+	// under its usable ID, which alone is returned so the caller can recover
+	// it.
+	if err := c.checkReturnedText(result.shownTexts()...); err != nil {
+		return &UserGroup{ID: result.ID}, fmt.Errorf("user group %s was created, but its answer cannot be used; only its ID is kept: %w", result.ID, unreadResult(err))
+	}
 
 	return &result, nil
 }

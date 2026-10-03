@@ -40,6 +40,12 @@ type usersGroupsDefaultsServer struct {
 	// answerGroups, when not nil, replaces the groups the create answer
 	// lists (the server holds what it holds regardless).
 	answerGroups []map[string]string
+	// answerDisplayName, when set, replaces the display name the create
+	// answer shows.
+	answerDisplayName string
+	// deletes counts DELETEs of the user; failDelete makes them fail.
+	deletes    int
+	failDelete bool
 }
 
 func (s *usersGroupsDefaultsServer) user() map[string]any {
@@ -80,6 +86,9 @@ func (s *usersGroupsDefaultsServer) start(t *testing.T) *client.Client {
 			if s.answerGroups != nil {
 				created["userGroups"] = s.answerGroups
 			}
+			if s.answerDisplayName != "" {
+				created["displayName"] = s.answerDisplayName
+			}
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(created)
 		case "PUT /api/users/" + defaultsUserID + "/user-groups":
@@ -97,7 +106,19 @@ func (s *usersGroupsDefaultsServer) start(t *testing.T) *client.Client {
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&s.claims))
 			_ = json.NewEncoder(w).Encode(s.claims)
 		case "GET /api/users/" + defaultsUserID:
+			if s.deletes > 0 && !s.failDelete {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"error":"User not found","code":"not_found","details":{"resource":"User"}}`))
+				return
+			}
 			_ = json.NewEncoder(w).Encode(s.user())
+		case "DELETE /api/users/" + defaultsUserID:
+			s.deletes++
+			if s.failDelete {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusBadRequest)
@@ -224,6 +245,54 @@ func TestUserCreateDoesNotTrustTheAnswersGroups(t *testing.T) {
 			require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
 			assert.Equal(t, 1, s.groupPuts, "the groups are written and verified")
 			assert.Equal(t, tc.wantGroups, s.groups, "the server holds exactly the planned groups")
+		})
+	}
+}
+
+// A create answer that names the user with a usable ID but carries the API
+// key in another value ("synthetic-token" for this server) is not used: the
+// user's groups are still written and verified, so no signup default group
+// stays, and the user is rolled back; when the rollback cannot be confirmed,
+// its ID stays in state with the planned values, never the answer's.
+func TestUserCreateRecoversAnAnswerCarryingTheKey(t *testing.T) {
+	ctx := context.Background()
+	other := types.SetValueMust(types.StringType, []attr.Value{types.StringValue(defaultsOtherGroup)})
+	for _, tc := range []struct {
+		name       string
+		groups     types.Set
+		failDelete bool
+		wantGroups []string
+	}{
+		{"no groups planned", types.SetNull(types.StringType), false, nil},
+		{"groups planned", other, false, []string{defaultsOtherGroup}},
+		{"no groups planned, the rollback fails", types.SetNull(types.StringType), true, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &usersGroupsDefaultsServer{answerDisplayName: "Shown synthetic-token here", failDelete: tc.failDelete}
+			r := &userResource{client: s.start(t)}
+			sr := resource.SchemaResponse{}
+			r.Schema(ctx, resource.SchemaRequest{}, &sr)
+			model := defaultsPlanModel(tc.groups, types.MapNull(types.StringType))
+			plan := tfsdk.Plan{Schema: sr.Schema}
+			require.False(t, plan.Set(ctx, &model).HasError())
+			resp := resource.CreateResponse{State: tfsdk.State{Schema: sr.Schema}}
+			r.Create(ctx, resource.CreateRequest{Plan: plan}, &resp)
+			require.True(t, resp.Diagnostics.HasError())
+			for _, d := range resp.Diagnostics {
+				assert.NotContains(t, d.Summary()+d.Detail(), "synthetic-token")
+			}
+			assert.Equal(t, 1, s.groupPuts, "the groups are written and verified")
+			assert.Equal(t, tc.wantGroups, s.groups, "no signup default group stays")
+			assert.Equal(t, 1, s.deletes, "the user is rolled back")
+			if !tc.failDelete {
+				assert.True(t, resp.State.Raw.IsNull(), "nothing is recorded")
+				return
+			}
+			var state userResourceModel
+			require.False(t, resp.State.Get(ctx, &state).HasError())
+			assert.Equal(t, defaultsUserID, state.ID.ValueString())
+			assert.Equal(t, "", state.DisplayName.ValueString(), "the planned display name, not the answer's")
+			assert.Equal(t, "fixture", state.Username.ValueString())
 		})
 	}
 }

@@ -37,9 +37,7 @@ func (c *Client) SetGroupMembers(ctx context.Context, groupID string, userIDs []
 	if err := c.checkRequestIDs("user", userIDs...); err != nil {
 		return nil, err
 	}
-	body, err := c.doRequest(ctx, "PUT", "/api/user-groups/"+id+"/users", struct {
-		UserIDs []string `json:"userIds"`
-	}{UserIDs: userIDs})
+	body, err := c.doRequest(ctx, "PUT", "/api/user-groups/"+id+"/users", groupMembersRequest{UserIDs: userIDs})
 	if err != nil {
 		return nil, err
 	}

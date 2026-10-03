@@ -138,6 +138,13 @@ func (r *groupResource) Create(ctx context.Context, req resource.CreateRequest, 
 	})
 
 	groupResp, err := r.client.CreateUserGroup(ctx, createReq)
+	if err != nil && groupResp != nil {
+		// The group exists under a usable ID, but its answer could not be
+		// used (a value in it carries the API key): it is rolled back.
+		plan.ID = types.StringValue(groupResp.ID)
+		r.failedCreate(ctx, &plan, createAnswerStep, err, resp)
+		return
+	}
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error creating user group",

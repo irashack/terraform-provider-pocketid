@@ -264,9 +264,9 @@ func TestClient_CreateRefusesTheReflectedKey(t *testing.T) {
 				assert.Contains(t, err.Error(), "contains the API key", kind)
 			}
 
-			// An answer that carries the key anywhere, here only as the
-			// ID of the secret Pocket ID creates with a client, is not used
-			// at all: the create's result is unread.
+			// The secret Pocket ID creates with a client is dropped, not
+			// refused: the client resource then rolls the new client back
+			// as having an unidentified secret.
 			requested := "my-app"
 			keyed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusCreated)
@@ -276,10 +276,9 @@ func TestClient_CreateRefusesTheReflectedKey(t *testing.T) {
 			c, err = client.NewClient(keyed.URL, token, false, 30)
 			require.NoError(t, err)
 			created, err := c.CreateClient(ctx, &client.OIDCClientCreateRequest{Name: "n", ClientID: &requested})
-			require.ErrorIs(t, err, client.ErrResultUnread)
-			require.ErrorIs(t, err, client.ErrInvalidIdentifier)
-			assert.Nil(t, created)
-			assert.NotContains(t, err.Error(), key)
+			require.NoError(t, err)
+			require.NotNil(t, created.CreatedSecret)
+			assert.Empty(t, created.CreatedSecret.ID)
 		})
 	}
 }

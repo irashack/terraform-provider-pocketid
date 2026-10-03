@@ -90,6 +90,12 @@ func (c *Client) CreateUser(ctx context.Context, user *UserCreateRequest) (*User
 		result.UserGroups = nil
 		result.GroupsUnknown = true
 	}
+	// An answer whose text carries the API key is not used, but the user
+	// exists under its usable ID: only that ID is returned, with the groups
+	// unknown, so the caller can still correct them and recover the user.
+	if err := c.checkReturnedText(result.shownTexts()...); err != nil {
+		return &User{ID: result.ID, GroupsUnknown: true}, fmt.Errorf("user %s was created, but its answer cannot be used; only its ID is kept: %w", result.ID, unreadResult(err))
+	}
 
 	return &result, nil
 }

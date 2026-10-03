@@ -473,27 +473,79 @@ func TestSignupTokenResource_CreateDeletesATokenWithGroupsOrALimitNobodyAskedFor
 	}
 }
 
-// A create answer whose groups fail the identifier check (here a group that
-// is not a UUID) says nothing reliable about what the token grants: the
-// token is deleted again like one with the wrong groups, and no listed group
-// reaches state or a diagnostic.
+// A create answer whose groups fail the identifier check (a group that is not
+// a UUID, or one whose ID carries the API key, "test-token" for this fake)
+// says nothing reliable about what the token grants: the token is deleted
+// again, and the deletion confirmed, like one with the wrong groups, and no
+// listed group reaches state or a diagnostic.
 func TestSignupTokenResource_CreateDeletesATokenWhoseGroupsAreUnusable(t *testing.T) {
-	const unusable = "not-a-group-id-from-pocket-id"
-	fake, c := newSignupFake(t)
-	fake.attachExtra = []string{unusable}
-	r, sch := signupResource(t, c)
+	for _, unusable := range []string{"not-a-group-id-from-pocket-id", "group-test-token-0000"} {
+		t.Run(unusable, func(t *testing.T) {
+			fake, c := newSignupFake(t)
+			fake.attachExtra = []string{unusable}
+			r, sch := signupResource(t, c)
 
-	resp := signupCreate(t, r, sch, signupPlan(signupSet(signupTestGroupA), 3))
-	require.True(t, resp.Diagnostics.HasError())
-	mutations := fake.mutations()
-	require.Len(t, mutations, 2, "one creation and one deletion")
-	assert.Equal(t, http.MethodDelete, mutations[1].Method)
-	assert.True(t, resp.State.Raw.IsNull())
-	detail := signupDiagnosticText(resp)
-	assert.Contains(t, detail, "listed a group whose ID could not be used")
-	assert.NotContains(t, detail, unusable)
-	assert.NotContains(t, detail, "did not carry the token value")
-	assert.NotContains(t, detail, signupTestSecret)
+			resp := signupCreate(t, r, sch, signupPlan(signupSet(signupTestGroupA), 3))
+			require.True(t, resp.Diagnostics.HasError())
+			mutations := fake.mutations()
+			require.Len(t, mutations, 2, "one creation and one deletion")
+			assert.Equal(t, http.MethodDelete, mutations[1].Method)
+			assert.Equal(t, http.MethodGet, fake.recorded()[2].Method, "the deletion is confirmed against the list")
+			assert.True(t, resp.State.Raw.IsNull())
+			detail := signupDiagnosticText(resp)
+			assert.Contains(t, detail, "listed a group whose ID could not be used")
+			assert.Contains(t, detail, "confirmed")
+			assert.NotContains(t, detail, unusable)
+			assert.NotContains(t, detail, "test-token")
+			assert.NotContains(t, detail, "did not carry the token value")
+			assert.NotContains(t, detail, signupTestSecret)
+		})
+	}
+}
+
+// A create answer that names the token with a usable ID but carries the API
+// key in another value is not used beyond the ID and the value: the token,
+// which may be valid, is deleted again and the deletion confirmed; when the
+// deletion cannot be confirmed, its ID stays in state (tainted) with nothing
+// from the answer but its value.
+func TestSignupTokenResource_CreateDeletesATokenWhoseAnswerCarriesTheKey(t *testing.T) {
+	body := fmt.Sprintf(`{"id":%q,"token":%q,"expiresAt":"2030-01-02T03:04:05Z test-token","usageLimit":3,"usageCount":0,"userGroups":[],"createdAt":"2026-10-02T10:00:00Z"}`, signupTestTokenID, signupTestSecret)
+	t.Run("deleted", func(t *testing.T) {
+		fake, c := newSignupFake(t)
+		fake.createBody = body
+		r, sch := signupResource(t, c)
+
+		resp := signupCreate(t, r, sch, signupPlan(signupSet(signupTestGroupA), 3))
+		require.True(t, resp.Diagnostics.HasError())
+		mutations := fake.mutations()
+		require.Len(t, mutations, 2, "one creation and one deletion")
+		assert.Equal(t, http.MethodDelete, mutations[1].Method)
+		assert.Equal(t, "/api/signup-tokens/"+signupTestTokenID, mutations[1].Path)
+		assert.True(t, resp.State.Raw.IsNull())
+		detail := signupDiagnosticText(resp)
+		assert.Contains(t, detail, "carried a value the provider cannot use")
+		assert.Contains(t, detail, "confirmed")
+		assert.NotContains(t, detail, "test-token")
+		assert.NotContains(t, detail, signupTestSecret)
+	})
+	t.Run("kept when the deletion fails", func(t *testing.T) {
+		fake, c := newSignupFake(t)
+		fake.createBody = body
+		fake.failDelete = &scimFailure{500, `{"error":"boom"}`}
+		r, sch := signupResource(t, c)
+
+		resp := signupCreate(t, r, sch, signupPlan(signupSet(signupTestGroupA), 3))
+		require.True(t, resp.Diagnostics.HasError())
+		require.False(t, resp.State.Raw.IsNull())
+		var id, token, expires types.String
+		signupAttr(t, resp.State, "id", &id)
+		signupAttr(t, resp.State, "token", &token)
+		signupAttr(t, resp.State, "expires_at", &expires)
+		assert.Equal(t, signupTestTokenID, id.ValueString())
+		assert.Equal(t, signupTestSecret, token.ValueString())
+		assert.True(t, expires.IsNull(), "nothing else of the answer is recorded")
+		assert.NotContains(t, signupDiagnosticText(resp), "test-token")
+	})
 }
 
 // A token listed under another spelling of its ID is the same token
