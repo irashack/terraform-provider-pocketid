@@ -3,6 +3,6 @@ contact_links:
   - name: Private security report
     url: https://github.com/irashack/terraform-provider-pocketid/security/advisories/new
     about: Report vulnerabilities privately without production credentials or state.
-  - name: Fork installation and documentation
+  - name: Installation and documentation
     url: https://github.com/irashack/terraform-provider-pocketid#readme
     about: Start here for installation, compatibility and resource documentation.

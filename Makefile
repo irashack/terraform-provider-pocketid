@@ -47,10 +47,10 @@ docs-check: docs ## Require generated docs to match the checkout
 # a client created by one package could otherwise crowd another's list reads.
 ACC_PACKAGES := ./internal/provider ./internal/datasources
 
-test-acc: ## Run client (resource and data sources), application-config and API-contract acceptance on one disposable official image
-	python3 scripts/disposable-pocketid.py $(POCKETID_VERSION) -- $(GO) test -v -count=1 -p 1 -timeout 15m $(ACC_PACKAGES) -tags=acc -run '^TestAcc(Resource(Client|ApplicationConfig)|ClientDataSources|API_)'
+test-acc: ## Run every acceptance test family (TestAcc*: resources, data sources and the API contract) on one disposable official image
+	python3 scripts/disposable-pocketid.py $(POCKETID_VERSION) -- $(GO) test -v -count=1 -p 1 -timeout 20m $(ACC_PACKAGES) -tags=acc -run '^TestAcc'
 
-test-acc-matrix: ## Run test-acc (client, application-config and API-contract acceptance) on every fixture version
+test-acc-matrix: ## Run test-acc (every acceptance test family) on every fixture version
 	@for version in 2.14.0 2.15.0 2.16.0 2.17.0; do $(MAKE) test-acc POCKETID_VERSION=$$version || exit $$?; done
 
 test-acc-provider: ## Run the full provider and data-source acceptance suites on one disposable official image

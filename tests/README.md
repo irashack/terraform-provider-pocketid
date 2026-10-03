@@ -14,7 +14,10 @@ what each covers and how to run it:
   fixture: `lifecycle.py` (install from a mirror, create, import, delete),
   `upgrade.py`, `client_upgrade.py` and `upgrade_users_groups.py` (state written by
   a published release upgrades with the new build), and `application_config.py`
-  (the application configuration, including the write-only password flow).
+  (the application configuration, including the write-only password flow). Each
+  runs with `terraform` and `tofu`; the upgrade proofs take the last release's
+  verified published archive (or the binary unpacked from it). TESTING.md has the
+  arguments, the commands and the Pocket ID versions each release runs them on.
 
 The Terraform configurations in the two directories below are manual
 demonstrations, not the automated suite. Use a disposable instance and the provider

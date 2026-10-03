@@ -151,8 +151,8 @@ or later.
 Pocket ID 2.14.0 or later, which every supported server is. A feature that needs
 a newer server than yours (`backchannel_logout_url`, `public_keys`,
 `auto_create_oidc_client_secret`) is refused. CI runs the full provider and data-source
-acceptance suites on 2.16.0 and 2.17.0 and the client, application-configuration and
-API-contract subset on 2.14.0 and 2.15.0; `make test-acc-supported` runs the full
+acceptance suites on 2.16.0 and 2.17.0 and every acceptance test family (`make test-acc`)
+on 2.14.0 and 2.15.0; `make test-acc-supported` runs the full
 suites on all four and is part of the [release checklist](RELEASE_CHECKLIST.md).
 
 ## Upgrading from 2.4.x
@@ -195,7 +195,7 @@ cleans up. It does not use your running Pocket ID instance.
 ```sh
 make check                  # formatting, vet, unit/race tests, script tests, build and lint
 make docs-check             # generated documentation matches the checkout
-make test-acc               # client, application-config and API-contract acceptance on Pocket ID 2.17.0
+make test-acc               # every acceptance test family (TestAcc*) on Pocket ID 2.17.0
 make test-acc-matrix        # the same on every fixture version (2.14.0 to 2.17.0)
 make test-acc-provider      # full provider and data-source suites on POCKETID_VERSION (default 2.17.0)
 make test-acc-supported     # the full suites on every supported version

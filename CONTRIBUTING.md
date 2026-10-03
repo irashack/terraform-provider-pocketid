@@ -63,8 +63,8 @@ make test-acc-supported # the full acceptance suites on Pocket ID 2.14.0 to 2.17
 
 `make test-acc-supported` is long; while working, run
 `make test-acc-provider POCKETID_VERSION=2.17.0` (both suites on one version) or
-`make test-acc` for the client, application-configuration and API-contract
-subset, and `make test-acc-matrix` for that subset on every version. CI runs the
+`make test-acc` for every acceptance test family (the `TestAcc` tests), and
+`make test-acc-matrix` for those on every version. CI runs the
 full suites on 2.16.0 and 2.17.0. TESTING.md has the details, including the native
 Terraform and OpenTofu scripts.
 

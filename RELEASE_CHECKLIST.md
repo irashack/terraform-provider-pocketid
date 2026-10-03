@@ -11,9 +11,8 @@
    `make test-acc-supported`. It runs `make test-acc-provider` (the provider and
    data-source suites on one fixture) on Pocket ID 2.14.0, 2.15.0, 2.16.0 and
    2.17.0 in turn. This is the local pre-tag gate for the full suites. The
-   release workflow does not repeat it: its gate is `make test-acc-matrix`, the
-   client, application-configuration and API-contract subset on all four versions,
-   and CI runs the full suites only on 2.16.0 and 2.17.0. Record the pass counts per
+   release workflow does not repeat it: its gate is `make test-acc-matrix`, every
+   acceptance test family (`make test-acc`) on all four versions, and CI runs the full suites only on 2.16.0 and 2.17.0. Record the pass counts per
    version and package.
 4. Run the native proofs from TESTING.md with Terraform **and** OpenTofu:
    - `tests/native/lifecycle.py` against a build stamped with the release version,
@@ -48,7 +47,7 @@
 The GoReleaser GitHub workflow is for an explicit manual release run from
 `main-maintenance` (the branch the workflow accepts), accepting only an existing
 stable tag on that branch. It validates the tagged source, runs `make check`,
-`make vuln` and the `make test-acc-matrix` subset (not the full
+`make vuln` and `make test-acc-matrix` (the `TestAcc` tests, not the full
 `make test-acc-supported` run of step 3), and creates a draft. Add the checksum-manifest
 digest from the run summary and the validation results to its notes before
 explicitly publishing. Existing released tags must never be moved or rebuilt in
@@ -67,7 +66,11 @@ maintained independently of upstream (UPSTREAM.md). The state-compatibility rule
 covers state written by 2.4.103 and 2.4.104; the upgrade proofs run from the
 published 2.4.104 archive on 2.17.0 with both tools, as in step 4, and
 `application_config.py` needs a target build with write-only attributes and
-Terraform or OpenTofu 1.11 or later. Publication, as for earlier releases, is
+Terraform or OpenTofu 1.11 or later. TESTING.md ("Which native proofs a release
+runs") lists the 3.0.0 matrix: every `tests/native/*.py` script on 2.17.0 with
+Terraform and OpenTofu, `lifecycle.py` also on 2.14.0, the old provider taken
+from the verified 2.4.104 archive (its unpacked binary for
+`upgrade_users_groups.py`). Publication, as for earlier releases, is
 owner-run: push the branch and tag, run the release workflow for `v3.0.0`, verify
 the draft's assets and the downloaded binary, then publish. Then follow INSTALL.md's
 upgrade section for 3.0.0.

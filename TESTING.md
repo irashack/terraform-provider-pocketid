@@ -14,8 +14,8 @@ make docs-check             # generated documentation matches the checkout
 make actionlint             # GitHub Actions syntax and expressions
 make vuln                   # reachable Go vulnerabilities
 go vet -tags=acc ./...      # the acceptance tests compile
-make test-acc               # client, application-config and API-contract acceptance on POCKETID_VERSION (default 2.17.0)
-make test-acc-matrix        # the same subset on 2.14.0, 2.15.0, 2.16.0 and 2.17.0
+make test-acc               # every acceptance test family (TestAcc*) on POCKETID_VERSION (default 2.17.0)
+make test-acc-matrix        # test-acc on 2.14.0, 2.15.0, 2.16.0 and 2.17.0
 make test-acc-provider      # full provider and data-source suites on POCKETID_VERSION, one fixture
 make test-acc-supported     # the full suites on every supported version, 2.14.0 to 2.17.0
 ```
@@ -87,6 +87,29 @@ unzip -q "$PWD/dist/terraform-provider-pocketid_2.4.104_darwin_arm64.zip" -d "$o
 python3 scripts/disposable-pocketid.py 2.17.0 -- python3 tests/native/upgrade_users_groups.py tofu \
   "$old/terraform-provider-pocketid_v2.4.104" "$PWD/bin/terraform-provider-pocketid"
 ```
+
+### Which native proofs a release runs
+
+Each script runs with `terraform` **and** `tofu` (1.11 or later, which
+`application_config.py`'s write-only step needs). The upgrade proofs start from
+the **last release's published archive**, verified against that release's
+SHA256SUMS; never from a build of its source alone. Keep that archive under its
+published file name in `dist/` (as in the commands above), and unpack its binary
+into a temporary directory for `upgrade_users_groups.py`, which takes binaries.
+The new build is `bin/terraform-provider-pocketid` from `make build`, or, for
+`lifecycle.py` and `application_config.py`, a binary stamped with the release
+version (`-ldflags '-X main.version=3.0.0'`) in a mirror. For 3.0.0:
+
+| Script | Pocket ID | Old provider |
+|---|---|---|
+| `lifecycle.py` | 2.17.0 and 2.14.0 | none (3.0.0 in the mirror) |
+| `upgrade.py` | 2.17.0 | 2.4.104 archive |
+| `client_upgrade.py` | 2.17.0 | 2.4.104 archive |
+| `upgrade_users_groups.py` | 2.17.0 | binary unpacked from the 2.4.104 archive |
+| `application_config.py` | 2.17.0 | 2.4.104 archive in the mirror, `OLD_VERSION` 2.4.104 |
+
+Add a supported version to a row when the release changes behavior that depends
+on it, and record in the release's evidence section what ran and what did not.
 
 ### The application-configuration script
 
