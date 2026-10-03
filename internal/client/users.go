@@ -26,6 +26,11 @@ type User struct {
 	UserGroups    []UserGroup   `json:"userGroups,omitempty"`
 	CustomClaims  []CustomClaim `json:"customClaims,omitempty"`
 	LdapID        *string       `json:"ldapId,omitempty"`
+
+	// GroupsUnknown is set by CreateUser when the create answer listed a
+	// group whose ID could not be used: UserGroups is then empty but says
+	// nothing about the user's groups, which are unknown, not none.
+	GroupsUnknown bool `json:"-"`
 }
 
 // UserCreateRequest represents a request to create or update a user
@@ -77,11 +82,13 @@ func (c *Client) CreateUser(ctx context.Context, user *UserCreateRequest) (*User
 	if err := c.checkCreatedID("user", "", result.ID); err != nil {
 		return nil, fmt.Errorf("user creation returned no usable ID, so no follow-up request uses it; the user may exist: inspect before recovery: %w", unreadResult(err))
 	}
-	// A new user's groups are set with a separate request. Groups the
-	// response lists that fail the ID check are dropped rather than failing a
-	// create whose own ID is usable.
+	// A create whose own ID is usable is not failed over its groups: when
+	// one the answer lists fails the ID check, none is returned and the
+	// groups are marked unknown (not empty), so the caller reads or writes
+	// them before relying on them.
 	if c.checkGroupIDs(result.UserGroups) != nil {
 		result.UserGroups = nil
+		result.GroupsUnknown = true
 	}
 
 	return &result, nil

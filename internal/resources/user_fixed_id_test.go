@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -114,6 +115,9 @@ func (s *fixedIDServer) start(t *testing.T) *client.Client {
 			}
 			w.WriteHeader(http.StatusCreated)
 			_, _ = fmt.Fprint(w, user(id))
+		case r.Method == "PUT" && strings.HasSuffix(r.URL.Path, "/user-groups"):
+			s.puts++
+			_, _ = fmt.Fprint(w, user(strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/users/"), "/user-groups")))
 		case r.Method == "PUT":
 			s.puts++
 			_, _ = fmt.Fprint(w, `[]`)

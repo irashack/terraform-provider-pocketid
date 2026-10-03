@@ -316,17 +316,28 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 	// default groups (unless groups were sent with the create) and default
 	// custom claims. The groups and claims attributes are authoritative, so
 	// the user must end up with exactly the planned ones, none included.
-	held := userResp.GroupIDs()
-	if len(groupIDs) > 0 {
-		if err := client.CheckUserGroups(userResp.ID, groupIDs, held); err != nil {
-			r.failedCreate(ctx, &plan, "groups", err, resp)
-			return
-		}
-	} else if len(held) > 0 {
-		tflog.Debug(ctx, "Removing the signup default groups from the new user", map[string]any{
+	//
+	// With no groups planned, the empty list is always written and verified:
+	// an answer that lists no groups (or groups whose IDs could not be used)
+	// is no proof that Pocket ID added no default groups. With groups
+	// planned, the answer is checked when it shows the user's groups, and
+	// the planned groups are written and verified when it does not.
+	switch {
+	case len(groupIDs) == 0:
+		tflog.Debug(ctx, "Setting the new user's groups to none, removing any signup default groups", map[string]any{
 			"id": userResp.ID,
 		})
 		if _, err := r.setGroups(ctx, userResp.ID, nil); err != nil {
+			r.failedCreate(ctx, &plan, "groups", err, resp)
+			return
+		}
+	case userResp.GroupsUnknown:
+		if _, err := r.setGroups(ctx, userResp.ID, groupIDs); err != nil {
+			r.failedCreate(ctx, &plan, "groups", err, resp)
+			return
+		}
+	default:
+		if err := client.CheckUserGroups(userResp.ID, groupIDs, userResp.GroupIDs()); err != nil {
 			r.failedCreate(ctx, &plan, "groups", err, resp)
 			return
 		}

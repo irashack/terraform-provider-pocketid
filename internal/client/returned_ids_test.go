@@ -430,3 +430,19 @@ func TestClient_ClientAnswerWithoutAllowedGroupsIsRefused(t *testing.T) {
 		})
 	}
 }
+
+// A create answer whose group list holds an unusable ID returns the user
+// with no groups and marks them unknown, never as none.
+func TestClient_CreateUserMarksUnusableGroupsUnknown(t *testing.T) {
+	ctx := context.Background()
+	c, _ := returnedIDsServer(t, userJSON(returnedIDsUser, "not-a-group-id"))
+	user, err := c.CreateUser(ctx, &client.UserCreateRequest{Username: "u"})
+	require.NoError(t, err)
+	assert.True(t, user.GroupsUnknown)
+	assert.Empty(t, user.UserGroups)
+
+	c, _ = returnedIDsServer(t, userJSON(returnedIDsUser))
+	user, err = c.CreateUser(ctx, &client.UserCreateRequest{Username: "u"})
+	require.NoError(t, err)
+	assert.False(t, user.GroupsUnknown, "an answer that lists no groups lists none")
+}

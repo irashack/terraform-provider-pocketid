@@ -95,6 +95,10 @@ func usersGroupsFailedCreateServer(t *testing.T, tc usersGroupsFailedCreateCase,
 		case "PUT " + stepPath:
 			w.WriteHeader(tc.stepStatus)
 			_, _ = fmt.Fprint(w, `{"error":"synthetic step failure"}`)
+		case "PUT " + objectPath + "/user-groups":
+			// A user created without groups gets an empty group list
+			// written and verified before its claims are set.
+			_, _ = fmt.Fprint(w, `{"id":"`+strings.TrimPrefix(objectPath, "/api/users/")+`","userGroups":[]}`)
 		case "DELETE " + objectPath:
 			w.WriteHeader(tc.deleteStatus)
 			_, _ = fmt.Fprint(w, tc.deleteBody)

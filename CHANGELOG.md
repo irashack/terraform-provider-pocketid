@@ -311,9 +311,10 @@ go-playground/validator and the URL-pattern libraries.
   were added to every user the provider created and stayed there, invisible to
   Terraform when `groups` or `custom_claims` was empty or omitted. The planned
   groups are now sent with the create request, which keeps Pocket ID from
-  adding its default groups; with no groups planned, and for the default
-  claims (which Pocket ID always adds), the provider replaces them right after
-  the create. If your instance has signup defaults and you relied on them for
+  adding its default groups; with no groups planned, the provider writes an
+  empty group list right after the create and checks it, whatever the create
+  answer showed, and it replaces the default claims (which Pocket ID always
+  adds) the same way. If your instance has signup defaults and you relied on them for
   users created by Terraform, list those groups and claims in the
   configuration.
 - `groups = []`, `custom_claims = {}` (on `pocketid_user` and

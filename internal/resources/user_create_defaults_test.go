@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
@@ -36,6 +37,9 @@ type usersGroupsDefaultsServer struct {
 	claims        []client.CustomClaim
 	groupPuts     int
 	createdGroups []string
+	// answerGroups, when not nil, replaces the groups the create answer
+	// lists (the server holds what it holds regardless).
+	answerGroups []map[string]string
 }
 
 func (s *usersGroupsDefaultsServer) user() map[string]any {
@@ -73,6 +77,9 @@ func (s *usersGroupsDefaultsServer) start(t *testing.T) *client.Client {
 			s.claims = []client.CustomClaim{{Key: "dept", Value: "default"}}
 			created := s.user()
 			created["customClaims"] = []any{} // as Pocket ID answers
+			if s.answerGroups != nil {
+				created["userGroups"] = s.answerGroups
+			}
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(created)
 		case "PUT /api/users/" + defaultsUserID + "/user-groups":
@@ -182,5 +189,41 @@ func TestUserReadKeepsNullAndEmpty(t *testing.T) {
 		var got userResourceModel
 		require.False(t, resp.State.Get(ctx, &got).HasError())
 		require.Equal(t, model, got, "explicit=%v", explicit)
+	}
+}
+
+// The create answer's groups are not taken as proof of what the new user is
+// in. With no groups planned, the empty list is always written and verified,
+// so default groups the answer leaves out, or lists under an unusable ID, are
+// removed. With groups planned and an answer whose groups cannot be used, the
+// planned groups are written and verified instead of the create being
+// rolled back.
+func TestUserCreateDoesNotTrustTheAnswersGroups(t *testing.T) {
+	ctx := context.Background()
+	other := types.SetValueMust(types.StringType, []attr.Value{types.StringValue(defaultsOtherGroup)})
+	for _, tc := range []struct {
+		name       string
+		answer     []map[string]string
+		groups     types.Set
+		wantGroups []string
+	}{
+		{"no groups planned, the answer lists none", []map[string]string{}, types.SetNull(types.StringType), nil},
+		{"no groups planned, the answer lists an unusable ID", []map[string]string{{"id": "not-a-group-id"}}, types.SetNull(types.StringType), nil},
+		{"groups planned, the answer lists an unusable ID", []map[string]string{{"id": "not-a-group-id"}}, other, []string{defaultsOtherGroup}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &usersGroupsDefaultsServer{answerGroups: tc.answer}
+			r := &userResource{client: s.start(t)}
+			sr := resource.SchemaResponse{}
+			r.Schema(ctx, resource.SchemaRequest{}, &sr)
+			model := defaultsPlanModel(tc.groups, types.MapNull(types.StringType))
+			plan := tfsdk.Plan{Schema: sr.Schema}
+			require.False(t, plan.Set(ctx, &model).HasError())
+			resp := resource.CreateResponse{State: tfsdk.State{Schema: sr.Schema}}
+			r.Create(ctx, resource.CreateRequest{Plan: plan}, &resp)
+			require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
+			assert.Equal(t, 1, s.groupPuts, "the groups are written and verified")
+			assert.Equal(t, tc.wantGroups, s.groups, "the server holds exactly the planned groups")
+		})
 	}
 }
