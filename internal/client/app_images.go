@@ -2,11 +2,15 @@ package client
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
 	"slices"
 	"sort"
+	"strconv"
+	"time"
 )
 
 // ApplicationImage names one of Pocket ID's application images
@@ -122,11 +126,28 @@ func (image ApplicationImage) endpoint(custom bool) (string, error) {
 			query += "&"
 		}
 		query += "default=false"
+		// Pocket ID lets caches keep an image for 15 minutes and serve it
+		// stale for a day (utils.SetCacheControlHeader). A URL no cache
+		// has seen gets the image as it is now, so an upload is never
+		// checked against, or a refresh compared with, an older copy.
+		// Pocket ID ignores the parameter.
+		query += "&nocache=" + applicationImageNonce()
 	}
 	if query != "" {
 		endpoint += "?" + query
 	}
 	return endpoint, nil
+}
+
+// applicationImageNonce returns a value no earlier request used.
+func applicationImageNonce() string {
+	var nonce [12]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		// crypto/rand does not fail on supported platforms; a time-based
+		// value still differs between requests.
+		return strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
+	return hex.EncodeToString(nonce[:])
 }
 
 // UploadApplicationImage replaces image with content, a file whose type is
@@ -150,7 +171,8 @@ func (c *Client) UploadApplicationImage(ctx context.Context, image ApplicationIm
 }
 
 // GetApplicationImage returns the image that was uploaded for image, as
-// Pocket ID serves it (it strips metadata from JPEG, PNG and WebP files on
+// Pocket ID serves it now (each request has a URL of its own, so no cache
+// answers it) (it strips metadata from JPEG, PNG and WebP files on
 // upload, so the bytes can differ from the file sent). When there is none, the
 // error satisfies IsNotFound(err, ResourceImage). Pocket ID copies its bundled
 // e-mail logo, favicon and background into place at startup unless an

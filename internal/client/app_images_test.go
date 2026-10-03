@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"sync/atomic"
 	"testing"
 
@@ -73,7 +74,12 @@ func TestApplicationImageRoutes(t *testing.T) {
 			body, err := c.GetApplicationImage(ctx, tc.image)
 			require.NoError(t, err)
 			assert.Equal(t, []byte("image-bytes"), body)
-			assert.Equal(t, request{http.MethodGet, tc.get}, got)
+			assert.Equal(t, http.MethodGet, got.method)
+			first := got.uri
+			require.Regexp(t, "^"+regexp.QuoteMeta(tc.get)+"&nocache=[0-9a-f]{24}$", first)
+			_, err = c.GetApplicationImage(ctx, tc.image)
+			require.NoError(t, err)
+			assert.NotEqual(t, first, got.uri, "every read has a URL of its own")
 
 			got = request{}
 			err = c.DeleteApplicationImage(ctx, tc.image)

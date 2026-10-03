@@ -36,6 +36,9 @@ type imageServer struct {
 	transform func([]byte) []byte
 	requests  []string
 	getStatus int
+	// cache, when set, stands for a shared cache in front of Pocket ID:
+	// a GET for a URL it has seen gets the bytes served then.
+	cache map[string][]byte
 }
 
 func (s *imageServer) client(t *testing.T) *client.Client {
@@ -65,6 +68,13 @@ func (s *imageServer) client(t *testing.T) *client.Client {
 			s.served = nil
 			w.WriteHeader(http.StatusNoContent)
 		default:
+			if cached, ok := s.cache[r.URL.RequestURI()]; ok {
+				_, _ = w.Write(cached)
+				return
+			}
+			if s.cache != nil && s.served != nil {
+				s.cache[r.URL.RequestURI()] = s.served
+			}
 			if s.getStatus != 0 {
 				w.WriteHeader(s.getStatus)
 				return
@@ -230,7 +240,9 @@ func TestApplicationImageUploadRecordsServedImage(t *testing.T) {
 	assert.Equal(t, sha256Hex([]byte("stripped:"+svgImage)), served)
 	assert.Equal(t, sha256Hex([]byte(svgImage)), plan.SHA256.ValueString())
 	assert.Equal(t, "logo_dark", plan.ID.ValueString())
-	assert.Equal(t, []string{"PUT /api/application-images/logo?light=false", "GET /api/application-images/logo?light=false&default=false"}, server.requests)
+	require.Len(t, server.requests, 2)
+	assert.Equal(t, "PUT /api/application-images/logo?light=false", server.requests[0])
+	assert.True(t, strings.HasPrefix(server.requests[1], "GET /api/application-images/logo?light=false&default=false&nocache="), server.requests[1])
 
 	// A file changed since the plan is not uploaded.
 	server.requests = nil
@@ -319,4 +331,43 @@ func TestApplicationImageDelete(t *testing.T) {
 	require.Len(t, diags.Warnings(), 1)
 	assert.True(t, strings.Contains(diags.Warnings()[0].Detail(), "stays in place"))
 	assert.Empty(t, server.requests)
+}
+
+// A cache in front of Pocket ID may serve an image it saw before an upload.
+// Every read uses a URL of its own, so the read-back after an upload and the
+// next refresh see the new image: the baseline is right and no drift shows.
+func TestApplicationImageReadsBypassCaches(t *testing.T) {
+	ctx := context.Background()
+	server := &imageServer{served: []byte("old image"), cache: map[string][]byte{}}
+	r := &applicationImageResource{client: server.client(t)}
+
+	// A refresh before the upload puts the old image into the cache.
+	before := &applicationImageModel{ID: types.StringValue("logo_light"), Kind: types.StringValue("logo_light"), Source: types.StringNull(), SHA256: types.StringNull()}
+	var diags diag.Diagnostics
+	_, record := r.refresh(ctx, before, "", &diags)
+	require.False(t, diags.HasError())
+	require.Equal(t, sha256Hex([]byte("old image")), record)
+
+	source := writeImageFile(t, "logo.svg", []byte(svgImage))
+	plan := &applicationImageModel{ID: types.StringUnknown(), Kind: types.StringValue("logo_light"), Source: types.StringValue(source), SHA256: types.StringValue(sha256Hex([]byte(svgImage)))}
+	uploaded, served := r.upload(ctx, plan, &diags)
+	require.False(t, diags.HasError(), "%v", diags)
+	require.True(t, uploaded)
+	assert.Equal(t, sha256Hex([]byte(svgImage)), served, "the read-back sees the uploaded image, not the cached one")
+
+	state := *plan
+	gone, record := r.refresh(ctx, &state, served, &diags)
+	require.False(t, diags.HasError())
+	assert.False(t, gone)
+	assert.Empty(t, record)
+	assert.Equal(t, sha256Hex([]byte(svgImage)), state.SHA256.ValueString(), "no drift: nothing to upload again")
+
+	gets := map[string]bool{}
+	for _, request := range server.requests {
+		if strings.HasPrefix(request, "GET ") {
+			assert.False(t, gets[request], "a read reused a URL: %s", request)
+			gets[request] = true
+		}
+	}
+	assert.Len(t, gets, 3)
 }
