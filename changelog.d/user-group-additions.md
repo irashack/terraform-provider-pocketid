@@ -26,3 +26,8 @@
 - New data source `pocketid_current_user`: the user the provider's API key
   belongs to, with the same attributes as `pocketid_user`. Pocket ID 2.14
   through 2.17 accept an API key on this route.
+- New data source `pocketid_user_passkeys`: the passkeys a user has registered
+  (identifier, name, registration time, whether each is backed up or synced,
+  transports and authenticator model), oldest first. It is read-only and reports
+  no credential material. Pocket ID records no time of last use, so none is
+  shown. There is deliberately no resource to create or delete passkeys.
