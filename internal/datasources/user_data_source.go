@@ -168,6 +168,9 @@ func (d *userDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 	}
 
 	// Validate that exactly one of ID, username, or email is provided
+	if !lookupValuesOK(d.client, &resp.Diagnostics, map[string]types.String{"id": config.ID, "username": config.Username, "email": config.Email}) {
+		return
+	}
 	hasID := !config.ID.IsNull() && !config.ID.IsUnknown()
 	hasUsername := !config.Username.IsNull() && !config.Username.IsUnknown()
 	hasEmail := !config.Email.IsNull() && !config.Email.IsUnknown()

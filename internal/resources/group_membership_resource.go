@@ -151,6 +151,9 @@ func (r *groupMembershipResource) Create(ctx context.Context, req resource.Creat
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "configuration", knownAs("user group", plan.GroupID), knownAs("user", plan.UserID)) {
+		return
+	}
 
 	groupID := plan.GroupID.ValueString()
 	userID := plan.UserID.ValueString()
@@ -215,6 +218,9 @@ func (r *groupMembershipResource) Read(ctx context.Context, req resource.ReadReq
 	var state groupMembershipResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("user group", state.GroupID), knownAs("user", state.UserID)) {
 		return
 	}
 
@@ -291,6 +297,9 @@ func (r *groupMembershipResource) Delete(ctx context.Context, req resource.Delet
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("user group", state.GroupID), knownAs("user", state.UserID)) {
+		return
+	}
 
 	groupID := state.GroupID.ValueString()
 	userID := state.UserID.ValueString()
@@ -340,10 +349,12 @@ func (r *groupMembershipResource) Delete(ctx context.Context, req resource.Delet
 // identifier is "<group_id>/<user_id>".
 func (r *groupMembershipResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	parts := strings.SplitN(req.ID, "/", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+	if len(parts) != 2 || r.client.ValidateIdentifier("user group", parts[0]) != nil || r.client.ValidateIdentifier("user", parts[1]) != nil ||
+		r.client.ContainsAPIKey(req.ID) {
+		// The import ID is not repeated: it may hold the API key by mistake.
 		resp.Diagnostics.AddError(
 			"Unexpected Import Identifier",
-			fmt.Sprintf("Expected import identifier in the form <group_id>/<user_id>, got: %q", req.ID),
+			"Expected an import identifier in the form <group_id>/<user_id>: two UUIDs separated by a slash, neither containing the API key this provider authenticates with.",
 		)
 		return
 	}

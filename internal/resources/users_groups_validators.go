@@ -7,7 +7,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/hashicorp/terraform-plugin-framework-validators/mapvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 )
@@ -62,15 +61,10 @@ var reservedClaimKeys = []string{
 
 // customClaimsValidators apply Pocket ID's rules for custom claims at plan
 // time: a key and a value are required (non-empty) and a key must not be
-// reserved.
+// reserved. Failures are reported on the map, naming no key (see
+// customClaimsValidator).
 func customClaimsValidators() []validator.Map {
-	return []validator.Map{
-		mapvalidator.KeysAre(
-			stringvalidator.LengthAtLeast(1),
-			stringvalidator.NoneOf(reservedClaimKeys...),
-		),
-		mapvalidator.ValueStringsAre(stringvalidator.LengthAtLeast(1)),
-	}
+	return []validator.Map{customClaimsValidator{}}
 }
 
 // oneTimeTokenTTLValidator checks a one-time access token ttl the way Pocket

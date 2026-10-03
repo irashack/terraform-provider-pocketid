@@ -10,8 +10,6 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
-	"github.com/hashicorp/terraform-plugin-framework-validators/setvalidator"
-	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -131,7 +129,7 @@ func (r *signupTokenResource) Schema(_ context.Context, _ resource.SchemaRequest
 					setplanmodifier.RequiresReplace(),
 				},
 				Validators: []validator.Set{
-					setvalidator.ValueStringsAre(stringvalidator.RegexMatches(signupTokenGroupIDPattern, "must be a UUID (8-4-4-4-12 hexadecimal digits)")),
+					uuidSetValidator{what: "user group IDs", pattern: signupTokenGroupIDPattern},
 				},
 			},
 			"token": schema.StringAttribute{

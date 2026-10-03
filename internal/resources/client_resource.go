@@ -1039,7 +1039,7 @@ func (r *clientResource) ImportState(ctx context.Context, req resource.ImportSta
 		resp.Diagnostics.AddError("Cannot import a Client ID Metadata Document client", errCIMDClient.Error()+". Its ID is the URL of that document.")
 		return
 	}
-	if err := client.ValidateClientID(req.ID); err != nil {
+	if err := r.client.ValidateIdentifier("OIDC client", req.ID); err != nil {
 		resp.Diagnostics.AddError("Invalid import ID", "Import a pocketid_client by its client ID. "+err.Error())
 		return
 	}

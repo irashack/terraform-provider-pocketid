@@ -58,6 +58,12 @@ type UpdateUserGroupsRequest struct {
 
 // CreateUser creates a new user
 func (c *Client) CreateUser(ctx context.Context, user *UserCreateRequest) (*User, error) {
+	if err := c.checkRequestIDs("user", user.ID); err != nil {
+		return nil, err
+	}
+	if err := c.checkRequestIDs("user group", user.UserGroupIDs...); err != nil {
+		return nil, err
+	}
 	body, err := c.doRequest(ctx, "POST", "/api/users", user)
 	if err != nil {
 		return nil, err
@@ -198,6 +204,9 @@ func (c *Client) ListAllUsers(ctx context.Context, search string) ([]User, error
 func (c *Client) UpdateUserGroups(ctx context.Context, userID string, groupIDs []string) ([]string, error) {
 	if groupIDs == nil {
 		groupIDs = []string{}
+	}
+	if err := c.checkRequestIDs("user group", groupIDs...); err != nil {
+		return nil, err
 	}
 	req := UpdateUserGroupsRequest{UserGroupIDs: groupIDs}
 	id, err := uuidSegment("user", userID)
@@ -417,6 +426,9 @@ func notAttempted(err error) error {
 // A failure of the first read, before anything is written, wraps
 // ErrWriteNotAttempted.
 func (c *Client) AddUserToGroup(ctx context.Context, userID, groupID string) error {
+	if err := c.checkRequestIDs("user group", groupID); err != nil {
+		return notAttempted(err)
+	}
 	// The write replaces the whole list, so it is built only from a response
 	// that shows the user's groups (an empty one would drop them all).
 	heldID, current, err := c.readUserGroupIDs(ctx, userID)
@@ -452,6 +464,9 @@ func (c *Client) AddUserToGroup(ctx context.Context, userID, groupID string) err
 // race window it leaves. A failure of the first read, before anything is
 // written, wraps ErrWriteNotAttempted.
 func (c *Client) RemoveUserFromGroup(ctx context.Context, userID, groupID string) error {
+	if err := c.checkRequestIDs("user group", groupID); err != nil {
+		return notAttempted(err)
+	}
 	heldID, current, err := c.readUserGroupIDs(ctx, userID)
 	if err != nil {
 		if IsUserNotFound(err) {
@@ -501,6 +516,9 @@ func (c *Client) RemoveUserFromGroup(ctx context.Context, userID, groupID string
 // confirmed-missing user from any other error (including a merely-generic
 // 404) and from the user simply not belonging to the group.
 func (c *Client) UserHasGroupMembership(ctx context.Context, userID, groupID string) (bool, error) {
+	if err := c.checkRequestIDs("user group", groupID); err != nil {
+		return false, err
+	}
 	_, current, err := c.readUserGroupIDs(ctx, userID)
 	if err != nil {
 		return false, err

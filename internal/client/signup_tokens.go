@@ -64,6 +64,9 @@ func (c *Client) CreateSignupToken(ctx context.Context, req *SignupTokenCreateRe
 			return nil, err
 		}
 	}
+	if err := c.checkRequestIDs("user group", body.UserGroupIDs...); err != nil {
+		return nil, err
+	}
 
 	raw, err := c.doRequest(ctx, "POST", "/api/signup-tokens", &body)
 	if err != nil {

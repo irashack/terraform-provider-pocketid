@@ -35,6 +35,9 @@ type ScimServiceProviderCreateRequest struct {
 
 // CreateScimServiceProvider creates a new SCIM service provider configuration.
 func (c *Client) CreateScimServiceProvider(ctx context.Context, req *ScimServiceProviderCreateRequest) (*ScimServiceProvider, error) {
+	if err := c.checkRequestIDs(kindOIDCClient, req.OidcClientID); err != nil {
+		return nil, err
+	}
 	body, err := c.doRequest(ctx, "POST", "/api/scim/service-provider", req)
 	if err != nil {
 		return nil, err
@@ -97,6 +100,9 @@ func (c *Client) GetClientScimServiceProvider(ctx context.Context, clientID stri
 func (c *Client) UpdateScimServiceProvider(ctx context.Context, id string, req *ScimServiceProviderCreateRequest) (*ScimServiceProvider, error) {
 	segment, err := uuidSegment("SCIM service provider", id)
 	if err != nil {
+		return nil, err
+	}
+	if err := c.checkRequestIDs(kindOIDCClient, req.OidcClientID); err != nil {
 		return nil, err
 	}
 	body, err := c.doRequest(ctx, "PUT", "/api/scim/service-provider/"+segment, req)

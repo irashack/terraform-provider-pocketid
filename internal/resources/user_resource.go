@@ -873,6 +873,10 @@ func (r *userResource) failedCreate(ctx context.Context, plan *userResourceModel
 
 // ImportState imports an existing resource into Terraform.
 func (r *userResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	if err := r.client.ValidateIdentifier("user", req.ID); err != nil {
+		resp.Diagnostics.AddError("Invalid import ID", "Import a pocketid_user by its ID (a UUID). "+err.Error())
+		return
+	}
 	// Retrieve import ID and set it as the resource ID
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }

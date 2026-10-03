@@ -121,6 +121,9 @@ func (r *OneTimeAccessTokenResource) Create(ctx context.Context, req resource.Cr
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "configuration", knownAs("user", data.UserID)) {
+		return
+	}
 
 	// The schema validates ttl at plan time; a value that was unknown then
 	// is checked here, before calling the API.
@@ -215,6 +218,10 @@ func (r *OneTimeAccessTokenResource) Delete(ctx context.Context, req resource.De
 
 func (r *OneTimeAccessTokenResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	// Import by user ID. The token value cannot be recovered from the API.
+	if err := r.client.ValidateIdentifier("user", req.ID); err != nil {
+		resp.Diagnostics.AddError("Invalid import ID", "Import a pocketid_one_time_access_token by the user's ID (a UUID). "+err.Error())
+		return
+	}
 	resource.ImportStatePassthroughID(ctx, path.Root("user_id"), req, resp)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), req.ID)...)
 }

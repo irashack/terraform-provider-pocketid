@@ -254,6 +254,9 @@ func (r *userProfilePictureResource) Create(ctx context.Context, req resource.Cr
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "configuration", knownAs("user", plan.UserID)) {
+		return
+	}
 	if !r.upload(ctx, &plan, &resp.Diagnostics) {
 		return
 	}
@@ -271,6 +274,9 @@ func (r *userProfilePictureResource) Read(ctx context.Context, req resource.Read
 	var state userProfilePictureResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("user", state.UserID)) {
 		return
 	}
 	userID := state.UserID.ValueString()
@@ -306,6 +312,9 @@ func (r *userProfilePictureResource) Update(ctx context.Context, req resource.Up
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "configuration", knownAs("user", plan.UserID)) {
+		return
+	}
 
 	unchanged := !state.SHA256.IsNull() && !plan.SHA256.IsUnknown() && !plan.SHA256.IsNull() &&
 		state.SHA256.ValueString() == plan.SHA256.ValueString()
@@ -335,6 +344,9 @@ func (r *userProfilePictureResource) Delete(ctx context.Context, req resource.De
 	var state userProfilePictureResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("user", state.UserID)) {
 		return
 	}
 	userID := state.UserID.ValueString()

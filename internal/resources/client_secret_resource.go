@@ -201,6 +201,9 @@ func (r *clientSecretResource) Create(ctx context.Context, req resource.CreateRe
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "configuration", knownAs("OIDC client", plan.ClientID)) {
+		return
+	}
 	clientID := plan.ClientID.ValueString()
 
 	supported, err := r.client.VersionAtLeast(ctx, client.ClientSecretsMinVersion)
@@ -462,6 +465,9 @@ func (r *clientSecretResource) Read(ctx context.Context, req resource.ReadReques
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("OIDC client", state.ClientID)) {
+		return
+	}
 	clientID, secretID := state.ClientID.ValueString(), state.ID.ValueString()
 
 	secrets, err := r.client.ListClientSecrets(ctx, clientID)
@@ -522,6 +528,9 @@ func (r *clientSecretResource) Delete(ctx context.Context, req resource.DeleteRe
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("OIDC client", state.ClientID)) {
+		return
+	}
 	clientID, secretID := state.ClientID.ValueString(), state.ID.ValueString()
 	unlock := lockClientSecrets(clientID)
 	defer unlock()
@@ -535,9 +544,10 @@ func (r *clientSecretResource) Delete(ctx context.Context, req resource.DeleteRe
 
 func (r *clientSecretResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	clientID, secretID, ok := strings.Cut(req.ID, "/")
-	if !ok || client.ValidateClientID(clientID) != nil || client.ValidateUUID("client secret", secretID) != nil {
+	if !ok || r.client.ValidateIdentifier("OIDC client", clientID) != nil || r.client.ValidateIdentifier("client secret", secretID) != nil ||
+		r.client.ContainsAPIKey(req.ID) {
 		resp.Diagnostics.AddError("Unexpected import identifier",
-			"Expected <client_id>/<secret_id>: an OIDC client ID, a slash, and the secret's ID (a UUID, as listed in Pocket ID).")
+			"Expected <client_id>/<secret_id>: an OIDC client ID, a slash, and the secret's ID (a UUID, as listed in Pocket ID), not containing the API key this provider authenticates with.")
 		return
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("client_id"), clientID)...)

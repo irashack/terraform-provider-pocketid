@@ -73,6 +73,21 @@ func (c *Client) checkOIDCClient(addressed string, oidcClient *OIDCClient) error
 	return nil
 }
 
+// checkRequestIDs refuses identifiers a request would carry in its body (the
+// path and query are checked by checkEndpoint) when one contains the API key
+// this client sends. Nothing is sent, and the error names no identifier. A
+// method that may later name these IDs in an error (a group the server did
+// not apply) relies on this check. Their form is left to the server, which
+// ignores an ID that names nothing.
+func (c *Client) checkRequestIDs(kind string, ids ...string) error {
+	for _, id := range ids {
+		if c.reflectsKey(id) {
+			return fmt.Errorf("%w: a %s ID in this request contains the API key this provider sends; the request was not sent", ErrInvalidIdentifier, kind)
+		}
+	}
+	return nil
+}
+
 // unreadResult marks err, found in the answer to a mutation the server
 // accepted (a 2xx), as an unread result: the change was made and only its
 // result is unknown.

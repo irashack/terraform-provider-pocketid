@@ -166,6 +166,9 @@ func (r *scimServiceProviderResource) Create(ctx context.Context, req resource.C
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "configuration", knownAs("OIDC client", plan.ClientID)) {
+		return
+	}
 
 	// A write-only value exists only in the configuration, never in the plan.
 	tokenWO, diags := r.configuredTokenWO(ctx, req.Config)
@@ -212,6 +215,9 @@ func (r *scimServiceProviderResource) Read(ctx context.Context, req resource.Rea
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("OIDC client", state.ClientID)) {
+		return
+	}
 
 	tflog.Debug(ctx, "Reading SCIM service provider", map[string]any{
 		"id":        state.ID.ValueString(),
@@ -253,6 +259,9 @@ func (r *scimServiceProviderResource) Update(ctx context.Context, req resource.U
 	diags := req.Plan.Get(ctx, &plan)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "configuration", knownAs("OIDC client", plan.ClientID)) {
 		return
 	}
 
@@ -332,6 +341,9 @@ func (r *scimServiceProviderResource) Delete(ctx context.Context, req resource.D
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("OIDC client", state.ClientID)) {
+		return
+	}
 
 	tflog.Debug(ctx, "Deleting SCIM service provider", map[string]any{
 		"id": state.ID.ValueString(),
@@ -386,6 +398,9 @@ func parseScimImportID(id string) (clientID string, version types.String, err er
 // configurations that use `token_wo`: set the same version there).
 func (r *scimServiceProviderResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	clientID, version, err := parseScimImportID(req.ID)
+	if err == nil {
+		err = r.client.ValidateIdentifier("OIDC client", clientID)
+	}
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Invalid import ID",

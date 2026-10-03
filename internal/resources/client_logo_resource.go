@@ -189,6 +189,9 @@ func (r *clientLogoResource) Create(ctx context.Context, req resource.CreateRequ
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "configuration", knownAs("OIDC client", plan.ClientID)) {
+		return
+	}
 	uploaded, served := r.upload(ctx, &plan, &resp.Diagnostics)
 	if !uploaded {
 		return
@@ -221,6 +224,9 @@ func (r *clientLogoResource) Update(ctx context.Context, req resource.UpdateRequ
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "configuration", knownAs("OIDC client", plan.ClientID)) {
 		return
 	}
 	if clientLogoNeedsUpload(&plan, &state) {
@@ -299,6 +305,9 @@ func (r *clientLogoResource) Read(ctx context.Context, req resource.ReadRequest,
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("OIDC client", state.ClientID)) {
+		return
+	}
 	recorded, diags := clientLogoServedHash(ctx, req.Private)
 	resp.Diagnostics.Append(diags...)
 	gone, record := r.refresh(ctx, &state, recorded, &resp.Diagnostics)
@@ -374,6 +383,9 @@ func (r *clientLogoResource) Delete(ctx context.Context, req resource.DeleteRequ
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("OIDC client", state.ClientID)) {
+		return
+	}
 	clientID, variant := state.ClientID.ValueString(), state.Variant.ValueString()
 	light := variant != clientLogoDark
 	err := r.client.DeleteClientLogo(ctx, clientID, light)
@@ -392,9 +404,10 @@ func (r *clientLogoResource) Delete(ctx context.Context, req resource.DeleteRequ
 
 func (r *clientLogoResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	clientID, variant, ok := strings.Cut(req.ID, "/")
-	if !ok || client.ValidateClientID(clientID) != nil || (variant != clientLogoLight && variant != clientLogoDark) {
+	if !ok || r.client.ValidateIdentifier("OIDC client", clientID) != nil || (variant != clientLogoLight && variant != clientLogoDark) ||
+		r.client.ContainsAPIKey(req.ID) {
 		resp.Diagnostics.AddError("Unexpected import identifier",
-			"Expected <client_id>/light or <client_id>/dark.")
+			"Expected <client_id>/light or <client_id>/dark, not containing the API key this provider authenticates with.")
 		return
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), req.ID)...)

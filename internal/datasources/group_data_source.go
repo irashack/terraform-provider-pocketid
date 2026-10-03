@@ -140,6 +140,9 @@ func (d *groupDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 		return
 	}
 
+	if !lookupValuesOK(d.client, &resp.Diagnostics, map[string]types.String{"id": data.ID, "name": data.Name}) {
+		return
+	}
 	foundGroup := d.lookup(ctx, data, &resp.Diagnostics)
 	if foundGroup == nil {
 		return

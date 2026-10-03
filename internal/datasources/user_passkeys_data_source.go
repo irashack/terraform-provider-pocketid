@@ -138,6 +138,9 @@ func (d *userPasskeysDataSource) Read(ctx context.Context, req datasource.ReadRe
 		return
 	}
 
+	if !lookupValuesOK(d.client, &resp.Diagnostics, map[string]types.String{"user_id": data.UserID}) {
+		return
+	}
 	passkeys, err := d.client.ListUserPasskeys(ctx, data.UserID.ValueString())
 	switch {
 	case err == nil:

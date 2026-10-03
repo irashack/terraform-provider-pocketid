@@ -125,6 +125,11 @@ type UpdateAllowedUserGroupsRequest struct {
 
 // CreateClient creates a new OIDC client
 func (c *Client) CreateClient(ctx context.Context, createReq *OIDCClientCreateRequest) (*OIDCClient, error) {
+	if createReq.ClientID != nil {
+		if err := c.checkRequestIDs(kindOIDCClient, *createReq.ClientID); err != nil {
+			return nil, err
+		}
+	}
 	body, err := c.doRequest(ctx, "POST", "/api/oidc/clients", createReq)
 	if err != nil {
 		return nil, err
@@ -243,6 +248,9 @@ func (c *Client) ListClients(ctx context.Context) ([]OIDCClient, error) {
 func (c *Client) UpdateClientAllowedUserGroups(ctx context.Context, clientID string, groupIDs []string) ([]string, error) {
 	if groupIDs == nil {
 		groupIDs = []string{}
+	}
+	if err := c.checkRequestIDs("user group", groupIDs...); err != nil {
+		return nil, err
 	}
 	req := UpdateAllowedUserGroupsRequest{UserGroupIDs: groupIDs}
 	id, err := clientIDSegment(clientID)

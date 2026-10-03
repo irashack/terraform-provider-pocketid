@@ -331,3 +331,68 @@ func TestClient_AreaDecodeErrorsAreTheFoundationsSentinels(t *testing.T) {
 		})
 	}
 }
+
+// An identifier that a request carries in its body is refused before
+// anything is sent when it contains the API key: a method that could name it
+// later (a group the server did not apply) never does. The key here is
+// UUID-shaped, so it passes every form check.
+func TestClient_BodyIdentifiersCarryingTheKeyAreNotSent(t *testing.T) {
+	ctx := context.Background()
+	calls := map[string]func(c *client.Client) error{
+		"CreateUser groups": func(c *client.Client) error {
+			_, err := c.CreateUser(ctx, &client.UserCreateRequest{Username: "u", UserGroupIDs: []string{returnedIDsKey}})
+			return err
+		},
+		"CreateUser chosen ID": func(c *client.Client) error {
+			_, err := c.CreateUser(ctx, &client.UserCreateRequest{Username: "u", ID: returnedIDsKey})
+			return err
+		},
+		"SetUserGroups": func(c *client.Client) error {
+			_, err := c.SetUserGroups(ctx, returnedIDsUser, []string{returnedIDsGroup, returnedIDsKey})
+			return err
+		},
+		"AddUserToGroup":      func(c *client.Client) error { return c.AddUserToGroup(ctx, returnedIDsUser, returnedIDsKey) },
+		"RemoveUserFromGroup": func(c *client.Client) error { return c.RemoveUserFromGroup(ctx, returnedIDsUser, returnedIDsKey) },
+		"UserHasGroupMembership": func(c *client.Client) error {
+			_, err := c.UserHasGroupMembership(ctx, returnedIDsUser, returnedIDsKey)
+			return err
+		},
+		"UpdateClientAllowedUserGroups": func(c *client.Client) error {
+			_, err := c.UpdateClientAllowedUserGroups(ctx, "app", []string{returnedIDsKey})
+			return err
+		},
+		"CreateClient chosen ID": func(c *client.Client) error {
+			id := "app-" + returnedIDsKey
+			_, err := c.CreateClient(ctx, &client.OIDCClientCreateRequest{Name: "n", ClientID: &id})
+			return err
+		},
+		"SetGroupMembers": func(c *client.Client) error {
+			_, err := c.SetGroupMembers(ctx, returnedIDsGroup, []string{returnedIDsKey})
+			return err
+		},
+		"CreateSignupToken": func(c *client.Client) error {
+			_, err := c.CreateSignupToken(ctx, &client.SignupTokenCreateRequest{UsageLimit: 1, UserGroupIDs: []string{returnedIDsKey}})
+			return err
+		},
+		"CreateScimServiceProvider": func(c *client.Client) error {
+			_, err := c.CreateScimServiceProvider(ctx, &client.ScimServiceProviderCreateRequest{Endpoint: "https://scim.example.com", OidcClientID: "app-" + returnedIDsKey})
+			return err
+		},
+		"UpdateScimServiceProvider": func(c *client.Client) error {
+			_, err := c.UpdateScimServiceProvider(ctx, returnedIDsSCIM, &client.ScimServiceProviderCreateRequest{Endpoint: "https://scim.example.com", OidcClientID: "app-" + returnedIDsKey})
+			return err
+		},
+	}
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			c, paths := returnedIDsServer(t, userJSON(returnedIDsUser))
+			err := call(c)
+			require.ErrorIs(t, err, client.ErrInvalidIdentifier)
+			assert.NotContains(t, err.Error(), returnedIDsKey)
+			for _, p := range *paths {
+				assert.NotContains(t, p, "PUT", "nothing is written")
+				assert.NotContains(t, p, "POST", "nothing is created")
+			}
+		})
+	}
+}

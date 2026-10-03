@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hashicorp/terraform-plugin-framework-validators/setvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -118,7 +117,7 @@ func (r *groupMembersResource) Schema(_ context.Context, _ resource.SchemaReques
 				Required:    true,
 				ElementType: types.StringType,
 				Validators: []validator.Set{
-					setvalidator.ValueStringsAre(stringvalidator.RegexMatches(groupMembersUUIDPattern, "must be a UUID")),
+					uuidSetValidator{what: "user IDs", pattern: groupMembersUUIDPattern},
 				},
 			},
 		},
@@ -480,6 +479,9 @@ func (r *groupMembersResource) Create(ctx context.Context, req resource.CreateRe
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "configuration", knownAs("user group", plan.GroupID)) {
+		return
+	}
 	groupID := plan.GroupID.ValueString()
 	want := groupMembersIDs(ctx, plan.UserIDs, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
@@ -551,6 +553,9 @@ func (r *groupMembersResource) Read(ctx context.Context, req resource.ReadReques
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("user group", state.GroupID)) {
+		return
+	}
 
 	group, err := r.client.GetUserGroupDetail(ctx, state.GroupID.ValueString())
 	if err != nil {
@@ -592,6 +597,9 @@ func (r *groupMembersResource) Update(ctx context.Context, req resource.UpdateRe
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "configuration", knownAs("user group", plan.GroupID)) {
 		return
 	}
 	groupID := plan.GroupID.ValueString()
@@ -644,6 +652,9 @@ func (r *groupMembersResource) Delete(ctx context.Context, req resource.DeleteRe
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("user group", state.GroupID)) {
+		return
+	}
 	groupID := state.GroupID.ValueString()
 	managed := groupMembersIDs(ctx, state.UserIDs, &resp.Diagnostics)
 	candidates, _ := groupMembersUnresolved(ctx, state.UnresolvedUserIDs, req.Private, &resp.Diagnostics)
@@ -691,8 +702,8 @@ func (r *groupMembersResource) Delete(ctx context.Context, req resource.DeleteRe
 // ImportState imports a group's membership. The import identifier is the
 // group's ID; Read then fills in user_ids with the group's actual members.
 func (r *groupMembersResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	if err := client.ValidateUUID("user group", req.ID); err != nil {
-		resp.Diagnostics.AddError("Unexpected Import Identifier", "Expected the ID of a group (a UUID).")
+	if err := r.client.ValidateIdentifier("user group", req.ID); err != nil {
+		resp.Diagnostics.AddError("Unexpected Import Identifier", "Expected the ID of a group (a UUID), not containing the API key this provider authenticates with.")
 		return
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), req.ID)...)

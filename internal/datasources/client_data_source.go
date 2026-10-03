@@ -6,6 +6,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
@@ -75,6 +76,9 @@ func (d *clientDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 		return
 	}
 
+	if !lookupValuesOK(d.client, &resp.Diagnostics, map[string]types.String{"id": config.ID}) {
+		return
+	}
 	tflog.Debug(ctx, "Reading OIDC client data source", map[string]any{
 		"id": config.ID.ValueString(),
 	})
