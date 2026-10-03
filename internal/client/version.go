@@ -14,6 +14,9 @@ type CurrentVersion struct {
 	Current string `json:"currentVersion"`
 }
 
+// errVersionReflectsKey is fixed text: it never includes the version string.
+var errVersionReflectsKey = errors.New("the Pocket ID version response contains the API key this provider sent; refusing to use it")
+
 func (c *Client) GetCurrentVersion(ctx context.Context) (string, error) {
 	body, err := c.doRequest(ctx, "GET", "/api/version/current", nil)
 	if err != nil {
@@ -29,6 +32,15 @@ func (c *Client) GetCurrentVersion(ctx context.Context) (string, error) {
 	var version CurrentVersion
 	if err := json.Unmarshal(body, &version); err != nil {
 		return "", fmt.Errorf("invalid Pocket ID version response")
+	}
+	// currentVersion is the only field of the answer (environment handler,
+	// v2.14.0 to v2.17.0), and callers keep it: the version data source
+	// stores it in non-sensitive state. A valid semantic version can carry
+	// arbitrary text in its pre-release or build metadata, so a server could
+	// return the API key it received inside one (a static key can be all
+	// digits); such an answer is refused before anything else looks at it.
+	if c.reflectsKey(version.Current) {
+		return "", errVersionReflectsKey
 	}
 
 	normalized := "v" + strings.TrimPrefix(version.Current, "v")
