@@ -7,8 +7,9 @@
 // validator in the provider's schemas is therefore wrapped (ResourceSchema,
 // DataSourceSchema): it still runs, but each diagnostic it reports becomes a
 // fixed sentence naming the attribute and the rule (the validator's own
-// description), at a path that names no map key or set element. The
-// configured value is never part of it.
+// description), at a path that names no map key or set element; the
+// attribute names below such a step stay in the sentence ("name in
+// permissions"). The configured value is never part of it.
 package valuefree
 
 import (
@@ -29,18 +30,33 @@ type describer interface {
 // SafePath returns p up to its first map key or set element: those steps
 // carry configured text. Attribute names and list indexes are kept.
 func SafePath(p path.Path) path.Path {
+	safe, _ := splitPath(p)
+	return safe
+}
+
+// splitPath returns SafePath(p) and the attribute names p continues with
+// after the step SafePath stops at, joined by "." ("" when there are none).
+// Those names are fixed by the schema, never configured.
+func splitPath(p path.Path) (path.Path, string) {
 	safe := path.Empty()
-	for _, step := range p.Steps() {
+	steps := p.Steps()
+	for i, step := range steps {
 		switch s := step.(type) {
 		case path.PathStepAttributeName:
 			safe = safe.AtName(string(s))
 		case path.PathStepElementKeyInt:
 			safe = safe.AtListIndex(int(s))
 		default:
-			return safe
+			var names []string
+			for _, rest := range steps[i+1:] {
+				if name, ok := rest.(path.PathStepAttributeName); ok {
+					names = append(names, string(name))
+				}
+			}
+			return safe, strings.Join(names, ".")
 		}
 	}
-	return safe
+	return safe, ""
 }
 
 // rewrite turns the diagnostics a validator reported into value-free ones:
@@ -50,14 +66,18 @@ func rewrite(ctx context.Context, p path.Path, rule describer, reported diag.Dia
 	if len(reported) == 0 {
 		return nil
 	}
-	safe := SafePath(p)
+	safe, child := splitPath(p)
+	subject := safe.String()
+	if child != "" {
+		subject = child + " in " + subject
+	}
 	description := strings.TrimSuffix(strings.TrimSpace(rule.Description(ctx)), ".")
 	format := "Attribute %s %s. The configured value is not shown."
 	if description != "" && strings.ToUpper(description[:1]) == description[:1] {
 		// A description that is a sentence of its own ("Ensure that ...").
 		format = "Attribute %s: %s. The configured value is not shown."
 	}
-	detail := fmt.Sprintf(format, safe, description)
+	detail := fmt.Sprintf(format, subject, description)
 	var out diag.Diagnostics
 	seen := map[string]bool{}
 	for _, d := range reported {

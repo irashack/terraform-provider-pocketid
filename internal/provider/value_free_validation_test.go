@@ -249,3 +249,37 @@ func TestValidationOfKeyedNestedObjectsNeverShowsTheKey(t *testing.T) {
 	}
 	assert.GreaterOrEqual(t, checked, 2, "pocketid_api.permissions: a missing name and a set id")
 }
+
+// A rule broken by a nested attribute under a configured key is reported on
+// the collection, naming the nested attribute ("name in permissions") but
+// never the key.
+func TestValidationNamesTheNestedAttributeButNotTheKey(t *testing.T) {
+	ctx := context.Background()
+	server, err := providerserver.NewProtocol6WithError(pocketidprovider.New("test")())()
+	require.NoError(t, err)
+	schemas, err := server.GetProviderSchema(ctx, &tfprotov6.GetProviderSchemaRequest{})
+	require.NoError(t, err)
+	objectType := schemas.ResourceSchemas["pocketid_api"].ValueType().(tftypes.Object)
+	mapType := objectType.AttributeTypes["permissions"].(tftypes.Map)
+	elementType := mapType.ElementType.(tftypes.Object)
+	for child, value := range map[string]string{"name": strings.Repeat("n", 51), "description": strings.Repeat("d", 201)} {
+		t.Run(child, func(t *testing.T) {
+			set := map[string]tftypes.Value{"name": tftypes.NewValue(tftypes.String, "Read")}
+			set[child] = tftypes.NewValue(tftypes.String, value)
+			permissions := tftypes.NewValue(mapType, map[string]tftypes.Value{valueFreeKey: valueFreeObject(elementType, set)})
+			config := valueFreeObject(objectType, map[string]tftypes.Value{
+				"name": tftypes.NewValue(tftypes.String, "API"), "resource": tftypes.NewValue(tftypes.String, "https://api.example.com"),
+				"permissions": permissions,
+			})
+			dynamic, err := tfprotov6.NewDynamicValue(objectType, config)
+			require.NoError(t, err)
+			resp, err := server.ValidateResourceConfig(ctx, &tfprotov6.ValidateResourceConfigRequest{TypeName: "pocketid_api", Config: &dynamic})
+			require.NoError(t, err)
+			require.Len(t, resp.Diagnostics, 1)
+			d := resp.Diagnostics[0]
+			assert.Contains(t, d.Detail, "Attribute "+child+" in permissions ")
+			assert.Equal(t, "AttributeName(\"permissions\")", d.Attribute.String())
+			assert.NotContains(t, d.Summary+d.Detail, valueFreeKey)
+		})
+	}
+}
