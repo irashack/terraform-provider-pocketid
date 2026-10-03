@@ -10,8 +10,8 @@ are welcome.
 - Open an [issue](https://github.com/irashack/terraform-provider-pocketid/issues)
   first for anything larger than a fix, so the approach is agreed before the work.
   Report vulnerabilities through [private reporting](SECURITY.md), not an issue.
-- Open pull requests against `main-maintenance`. The branch keeps the name it had
-  when this was a maintenance fork, and CI and the release workflow are tied to
+- Open pull requests against `main-maintenance`. The branch name is historical
+  (from when this was a maintenance fork); CI and the release workflow are tied to
   it. CI needs no production secrets and accepts pull requests with read-only
   permissions.
 - Keep a change small, reproducible and independently reviewable: one logical change
