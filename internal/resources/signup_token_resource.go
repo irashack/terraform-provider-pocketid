@@ -281,7 +281,7 @@ func (r *signupTokenResource) Create(ctx context.Context, req resource.CreateReq
 		// A rate limit is answered before the handler runs, so it, like any
 		// other 4xx and an identifier refused before sending, is a definite "no".
 		var rateLimited *client.RateLimitError
-		if !writeRefused(err) && !(errors.As(err, &rateLimited) && !errors.Is(err, client.ErrResultUnread)) {
+		if !writeRefused(err) && (!errors.As(err, &rateLimited) || errors.Is(err, client.ErrResultUnread)) {
 			detail += ". The request may have reached Pocket-ID, so a token may have been created that this provider " +
 				"cannot name; nothing is recorded, and it expires on its own after the ttl. List the tokens with the " +
 				"pocketid_signup_tokens data source (or in the Pocket-ID interface) before applying again."
