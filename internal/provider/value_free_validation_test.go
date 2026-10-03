@@ -196,7 +196,7 @@ func TestValidationOfKeyedNestedObjectsNeverShowsTheKey(t *testing.T) {
 	for typeName, s := range schemas.ResourceSchemas {
 		objectType := s.ValueType().(tftypes.Object)
 		for _, attribute := range s.Block.Attributes {
-			if attribute.NestedType == nil || attribute.NestedType.Nesting != tfprotov6.SchemaObjectNestingModeMap || !(attribute.Optional || attribute.Required) {
+			if attribute.NestedType == nil || attribute.NestedType.Nesting != tfprotov6.SchemaObjectNestingModeMap || (!attribute.Optional && !attribute.Required) {
 				continue
 			}
 			mapType := objectType.AttributeTypes[attribute.Name].(tftypes.Map)

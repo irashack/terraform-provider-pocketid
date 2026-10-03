@@ -37,6 +37,27 @@ type textBearing interface {
 	textsToSend() []string
 }
 
+// Every request body type the client sends.
+var (
+	_ textBearing = UserCreateRequest{}
+	_ textBearing = UpdateUserGroupsRequest{}
+	_ textBearing = UserGroupCreateRequest{}
+	_ textBearing = OIDCClientCreateRequest{}
+	_ textBearing = UpdateAllowedUserGroupsRequest{}
+	_ textBearing = secretCreateRequest{}
+	_ textBearing = OneTimeAccessTokenRequest{}
+	_ textBearing = ScimServiceProviderCreateRequest{}
+	_ textBearing = SignupTokenCreateRequest{}
+	_ textBearing = customClaimsRequest{}
+	_ textBearing = groupMembersRequest{}
+	_ textBearing = appConfigRequest{}
+	_ textBearing = APICreateRequest{}
+	_ textBearing = APIUpdateRequest{}
+	_ textBearing = apiPermissionsUpdateRequest{}
+	_ textBearing = apiCIMDAccessRequest{}
+	_ textBearing = APIClientGrant{}
+)
+
 // ErrKeyInResponse marks an answer that carries the API key in a value the
 // provider would store, log or show. Nothing from it is used; a create whose
 // own ID passed its check keeps only that ID, so the caller can recover the
