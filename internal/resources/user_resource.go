@@ -167,6 +167,22 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 
+	// Convert groups and claims before anything is created, so a conversion
+	// error cannot leave a new user behind.
+	var groupIDs []string
+	if !plan.Groups.IsNull() && !plan.Groups.IsUnknown() {
+		resp.Diagnostics.Append(plan.Groups.ElementsAs(ctx, &groupIDs, false)...)
+	}
+	var claims []client.CustomClaim
+	if !plan.CustomClaims.IsNull() && !plan.CustomClaims.IsUnknown() {
+		converted, claimDiags := customClaimsToAPI(ctx, plan.CustomClaims)
+		resp.Diagnostics.Append(claimDiags...)
+		claims = converted
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	// Build displayName from first and last names if not provided
 	displayName := plan.DisplayName.ValueString()
 	if displayName == "" {
@@ -241,58 +257,36 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 	}
 
 	// Handle user groups
-	if !plan.Groups.IsNull() && !plan.Groups.IsUnknown() {
-		var groupIDs []string
-		diags = plan.Groups.ElementsAs(ctx, &groupIDs, false)
-		resp.Diagnostics.Append(diags...)
-		if !resp.Diagnostics.HasError() && len(groupIDs) > 0 {
-			tflog.Debug(ctx, "Updating user groups", map[string]any{
-				"groups": groupIDs,
-			})
-			// TODO(association-check): the first result is the set of group IDs
-			// the server now holds; it drops IDs that name no group. Not
-			// compared yet, and an unreadable result is not an error here.
-			_, err = r.client.UpdateUserGroups(ctx, userResp.ID, groupIDs)
-			if err != nil && !errors.Is(err, client.ErrResultUnread) {
-				// Try to clean up the created user
-				_ = r.client.DeleteUser(ctx, userResp.ID)
-				resp.Diagnostics.AddError(
-					"Error updating user groups",
-					"Could not update user groups, the user was deleted. Error: "+err.Error(),
-				)
-				return
-			}
+	if len(groupIDs) > 0 {
+		tflog.Debug(ctx, "Updating user groups", map[string]any{
+			"groups": groupIDs,
+		})
+		// TODO(association-check): the first result is the set of group IDs
+		// the server now holds; it drops IDs that name no group. Not
+		// compared yet, and an unreadable result is not an error here.
+		_, err = r.client.UpdateUserGroups(ctx, userResp.ID, groupIDs)
+		if err != nil && !errors.Is(err, client.ErrResultUnread) {
+			r.failedCreate(ctx, &plan, "groups", err, resp)
+			return
 		}
 	}
 
 	// Handle custom claims
-	if !plan.CustomClaims.IsNull() && !plan.CustomClaims.IsUnknown() {
-		claims, claimDiags := customClaimsToAPI(ctx, plan.CustomClaims)
-		resp.Diagnostics.Append(claimDiags...)
-		if resp.Diagnostics.HasError() {
+	if len(claims) > 0 {
+		tflog.Debug(ctx, "Updating user custom claims", map[string]any{
+			"id": userResp.ID,
+		})
+		updatedClaims, err := r.client.UpdateUserCustomClaims(ctx, userResp.ID, claims)
+		if err != nil {
+			r.failedCreate(ctx, &plan, "custom claims", err, resp)
 			return
 		}
-		if len(claims) > 0 {
-			tflog.Debug(ctx, "Updating user custom claims", map[string]any{
-				"id": userResp.ID,
-			})
-			updatedClaims, err := r.client.UpdateUserCustomClaims(ctx, userResp.ID, claims)
-			if err != nil {
-				// Try to clean up the created user
-				_ = r.client.DeleteUser(ctx, userResp.ID)
-				resp.Diagnostics.AddError(
-					"Error updating user custom claims",
-					"Could not update user custom claims, the user was deleted. Error: "+err.Error(),
-				)
-				return
-			}
-			claimsMap, claimDiags := customClaimsToState(ctx, updatedClaims)
-			resp.Diagnostics.Append(claimDiags...)
-			if resp.Diagnostics.HasError() {
-				return
-			}
-			plan.CustomClaims = claimsMap
+		claimsMap, claimDiags := customClaimsToState(ctx, updatedClaims)
+		if claimDiags.HasError() {
+			r.failedCreate(ctx, &plan, "custom claims", errors.New("the server's custom claims could not be stored"), resp)
+			return
 		}
+		plan.CustomClaims = claimsMap
 	}
 
 	// Set the state
@@ -574,6 +568,26 @@ func (r *userResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 	tflog.Debug(ctx, "Deleted user", map[string]any{
 		"id": state.ID.ValueString(),
 	})
+}
+
+// failedCreate handles a step that failed after Pocket ID created the user
+// (plan.ID is set): the new user is deleted, and only a confirmed deletion
+// lets Create end without state. Otherwise the user's ID stays in state, so
+// Terraform keeps track of it (marked for replacement), and the diagnostic
+// says what is known.
+func (r *userResource) failedCreate(ctx context.Context, plan *userResourceModel, step string, cause error, resp *resource.CreateResponse) {
+	outcome := rollBackAccountObject(ctx, createdAccountObject{
+		kind: "user", id: plan.ID.ValueString(), missing: client.ResourceUser,
+		remove: r.client.DeleteUser,
+		read: func(ctx context.Context, id string) error {
+			_, err := r.client.GetUser(ctx, id)
+			return err
+		},
+	}, step, cause)
+	if !outcome.gone {
+		resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
+	}
+	resp.Diagnostics.AddError(outcome.summary, outcome.detail)
 }
 
 // ImportState imports an existing resource into Terraform.

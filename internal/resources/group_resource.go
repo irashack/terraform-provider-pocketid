@@ -2,6 +2,7 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
@@ -115,6 +116,18 @@ func (r *groupResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
+	// Convert the claims before anything is created, so a conversion error
+	// cannot leave a new group behind.
+	var claims []client.CustomClaim
+	if !plan.CustomClaims.IsNull() && !plan.CustomClaims.IsUnknown() {
+		converted, claimDiags := customClaimsToAPI(ctx, plan.CustomClaims)
+		resp.Diagnostics.Append(claimDiags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		claims = converted
+	}
+
 	// Create the group
 	createReq := &client.UserGroupCreateRequest{
 		Name:         plan.Name.ValueString(),
@@ -143,33 +156,21 @@ func (r *groupResource) Create(ctx context.Context, req resource.CreateRequest, 
 	plan.ID = types.StringValue(groupResp.ID)
 
 	// Handle custom claims
-	if !plan.CustomClaims.IsNull() && !plan.CustomClaims.IsUnknown() {
-		claims, claimDiags := customClaimsToAPI(ctx, plan.CustomClaims)
-		resp.Diagnostics.Append(claimDiags...)
-		if resp.Diagnostics.HasError() {
+	if len(claims) > 0 {
+		tflog.Debug(ctx, "Updating user group custom claims", map[string]any{
+			"id": groupResp.ID,
+		})
+		updatedClaims, err := r.client.UpdateGroupCustomClaims(ctx, groupResp.ID, claims)
+		if err != nil {
+			r.failedCreate(ctx, &plan, "custom claims", err, resp)
 			return
 		}
-		if len(claims) > 0 {
-			tflog.Debug(ctx, "Updating user group custom claims", map[string]any{
-				"id": groupResp.ID,
-			})
-			updatedClaims, err := r.client.UpdateGroupCustomClaims(ctx, groupResp.ID, claims)
-			if err != nil {
-				// Try to clean up the created group
-				_ = r.client.DeleteUserGroup(ctx, groupResp.ID)
-				resp.Diagnostics.AddError(
-					"Error updating user group custom claims",
-					"Could not update user group custom claims, the group was deleted. Error: "+err.Error(),
-				)
-				return
-			}
-			claimsMap, claimDiags := customClaimsToState(ctx, updatedClaims)
-			resp.Diagnostics.Append(claimDiags...)
-			if resp.Diagnostics.HasError() {
-				return
-			}
-			plan.CustomClaims = claimsMap
+		claimsMap, claimDiags := customClaimsToState(ctx, updatedClaims)
+		if claimDiags.HasError() {
+			r.failedCreate(ctx, &plan, "custom claims", errors.New("the server's custom claims could not be stored"), resp)
+			return
 		}
+		plan.CustomClaims = claimsMap
 	}
 
 	// Set the state
@@ -332,6 +333,26 @@ func (r *groupResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	tflog.Debug(ctx, "Deleted user group", map[string]any{
 		"id": state.ID.ValueString(),
 	})
+}
+
+// failedCreate handles a step that failed after Pocket ID created the group
+// (plan.ID is set): the new group is deleted, and only a confirmed deletion
+// lets Create end without state. Otherwise the group's ID stays in state, so
+// Terraform keeps track of it (marked for replacement), and the diagnostic
+// says what is known.
+func (r *groupResource) failedCreate(ctx context.Context, plan *groupResourceModel, step string, cause error, resp *resource.CreateResponse) {
+	outcome := rollBackAccountObject(ctx, createdAccountObject{
+		kind: "user group", id: plan.ID.ValueString(), missing: client.ResourceUserGroup,
+		remove: r.client.DeleteUserGroup,
+		read: func(ctx context.Context, id string) error {
+			_, err := r.client.GetUserGroup(ctx, id)
+			return err
+		},
+	}, step, cause)
+	if !outcome.gone {
+		resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
+	}
+	resp.Diagnostics.AddError(outcome.summary, outcome.detail)
 }
 
 // ImportState imports an existing resource into Terraform.
