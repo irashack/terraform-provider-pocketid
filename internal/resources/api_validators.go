@@ -99,3 +99,26 @@ func (apiPermissionKeyValidator) ValidateString(_ context.Context, req validator
 		resp.Diagnostics.AddAttributeError(req.Path, "Invalid permission key", fmt.Sprintf("Permission key at %s %s.", req.Path, problem))
 	}
 }
+
+// apiIdentifierValidator checks an ID with one of the client package's
+// identifier rules (client.ValidateUUID, client.ValidateClientID), so a
+// value that could never be addressed is refused at plan time.
+type apiIdentifierValidator struct {
+	description string
+	check       func(string) error
+}
+
+func (v apiIdentifierValidator) Description(context.Context) string { return v.description }
+
+func (v apiIdentifierValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (v apiIdentifierValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	if err := v.check(req.ConfigValue.ValueString()); err != nil {
+		resp.Diagnostics.AddAttributeError(req.Path, "Invalid identifier", err.Error())
+	}
+}

@@ -428,7 +428,7 @@ resource "pocketid_api" "test" {
   resource = %q
 }
 `, uri),
-				ExpectError: regexp.MustCompile(`already exists`),
+				ExpectError: regexp.MustCompile(`already\s+exists`),
 			},
 		},
 	})
@@ -458,7 +458,7 @@ resource "pocketid_api" "test" {
 }
 `, tc.resource, tc.key),
 						PlanOnly:    true,
-						ExpectError: regexp.MustCompile(tc.want),
+						ExpectError: regexp.MustCompile(strings.ReplaceAll(tc.want, " ", `\s+`)),
 					},
 				},
 			})
