@@ -107,7 +107,9 @@ resource keeps depends on what the provider could confirm:
   is removed, a signup token is deleted, and a client is kept by its ID.
 - `pocketid_user` created with a chosen `id`: computed `unresolved_creation`
   is true, and changing, deleting or replacing the user is refused, because a
-  user found under that ID may be someone else's. Check the user, then
+  user found under that ID may be someone else's. The same holds when
+  Pocket ID's answer names another user than the chosen ID: that user is
+  never changed or deleted. Check the user, then
   `terraform state rm` the resource and either `terraform import` it with that
   ID (if it is the intended user; the import clears the condition) or choose
   another `id`.
@@ -145,26 +147,30 @@ The provider now refuses an answer it cannot rely on instead of reading it as
 empty or partial: a body that is not the JSON expected, a list or object
 without the fields that say what the server holds (a client's or a user's
 groups, a group's members, a grant's access), an ID that is not the object
-asked for, or a value the provider takes from the answer that contains the
-API key, in plain or escaped JSON (a name, an e-mail address, a claim's key
-or value, a URL, a setting, a time, a count). The check applies to the
-decoded values the provider stores, logs or shows, never to JSON field names
-or to fields it does not read, so an answer is not refused because a field
-name happens to contain the key. You see a fixed message that quotes nothing
-from the response, such as "error unmarshaling response: the response is not
-the JSON this provider expects", or, after a change Pocket ID accepted, "the
-server accepted the change, but its result could not be read", with a note
-to inspect the object before trying again. Nothing from such an answer
-reaches state, a log line or a diagnostic. The one exception is the
-validated ID of an object the answer shows was created (with a signup
-token's secret value, which may be valid), kept so that the object can be
-recovered ("When a result is uncertain"). Only secret values,
-in their own fields, are not checked for the key: a client secret, a SCIM,
-signup or one-time token, and the SMTP and LDAP passwords of the application
+asked for, a JSON document (a federated identity's public key) that repeats a
+member name, or a value the provider takes from the answer that contains the
+API key, in plain or escaped JSON (a name, an e-mail address, a claim's key or
+value, a URL, a setting or a JSON document inside one, a client secret's
+prefix, a time in the form the provider stores or prints it, a count). A
+create answer for another object than the one asked for (another chosen user
+ID, another API resource identifier) is never used for a follow-up request.
+The check applies to the decoded values the provider stores, logs or shows,
+never to JSON field names or to fields it does not read, so an answer is not
+refused because a field name happens to contain the key. You see a fixed
+message that quotes nothing from the response, such as "error unmarshaling
+response: the response is not the JSON this provider expects", or, after a
+change Pocket ID accepted, "the server accepted the change, but its result
+could not be read", with a note to inspect the object before trying again.
+Nothing from such an answer reaches state, a log line or a diagnostic. The one
+exception is the validated ID of an object the answer shows was created (with
+a signup token's secret value, which may be valid), kept so that the object
+can be recovered ("When a result is uncertain"). Only secret values, in their
+own fields, are not checked for the key: a client secret, a SCIM, signup or
+one-time token, and the SMTP and LDAP passwords of the application
 configuration go only to sensitive state and are never shown. A custom claim
-named like one of them is ordinary text and is checked. A server or proxy
-that rewrites Pocket ID's answers can therefore make applies fail that used
-to pass; that is deliberate.
+named like one of them is ordinary text and is checked. A server or proxy that
+rewrites Pocket ID's answers can therefore make applies fail that used to
+pass; that is deliberate.
 
 Your configuration is held to the same rule where the provider handles it:
 
@@ -173,12 +179,20 @@ Your configuration is held to the same rule where the provider handles it:
 - a request whose configured text would carry the key outside a secret
   value is not sent;
 - no configured text is written to the provider's log, which records only
-  IDs that passed their check, kinds and counts;
+  IDs that passed their check, kinds and counts; requests are logged by
+  method, route (without its query) and status, and the base URL is never
+  logged, since it can carry credentials;
+- a base URL that contains the API key is refused when the provider is
+  configured, and an image or logo file that cannot be used is reported
+  without its path or name;
+- a JSON document sent as it is (a federated identity's public key) that
+  repeats a member name is refused at plan time and never sent;
 - plan-time validation messages name the attribute and its rule (and, inside
   a map or set, the nested attribute), never the configured value or a map
   key. The rules of `pocketid_api`'s permissions that the framework would
-  check per entry (a name is required, the ID cannot be set) are checked on
-  `permissions` as a whole for that reason.
+  check per entry (a name is required, also for a permission set to null;
+  the ID cannot be set) are checked on `permissions` as a whole for that
+  reason, and an entry that cannot be read is reported on the collection.
 
 Terraform and OpenTofu themselves still show configured values in plans and
 in their own messages; that is outside the provider.
