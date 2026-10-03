@@ -244,7 +244,7 @@ func TestAppConfigSchemaValidators(t *testing.T) {
 	assert.False(t, resp.Diagnostics.HasError(), "an unknown value is checked once it is known")
 }
 
-func versionServer(t *testing.T, version string, requests *int) *client.Client {
+func appConfigVersionServer(t *testing.T, version string, requests *int) *client.Client {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		*requests++
@@ -273,7 +273,7 @@ func TestApplicationConfigModifyPlanRefusesNewerSettings(t *testing.T) {
 		{"2.16.0", map[string]string{"app_name": "Fixture"}, false, 0},
 	} {
 		requests := 0
-		r := &applicationConfigResource{client: versionServer(t, tc.version, &requests)}
+		r := &applicationConfigResource{client: appConfigVersionServer(t, tc.version, &requests)}
 		raw := appConfigTestRaw(t, s, tc.configured)
 		resp := resource.ModifyPlanResponse{Plan: tfsdk.Plan{Schema: s, Raw: raw}}
 		r.ModifyPlan(context.Background(), resource.ModifyPlanRequest{

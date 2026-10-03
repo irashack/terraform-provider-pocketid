@@ -12,14 +12,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type appConfigVariable struct {
+type testAccAppConfigVariable struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
 }
 
 func testAccAppConfig(t *testing.T) map[string]string {
 	t.Helper()
-	var vars []appConfigVariable
+	var vars []testAccAppConfigVariable
 	status, err := testAccAPI(http.MethodGet, "/api/application-configuration/all", nil, &vars)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, status)

@@ -271,9 +271,9 @@ func appConfigModelValue(m *applicationConfigModel, attribute string) types.Stri
 	return types.StringNull()
 }
 
-// unsupportedAppConfigSettings names the version-dependent settings that plan
+// appConfigUnsupportedSettings names the version-dependent settings that plan
 // sets (known, not null) although the server did not report their keys.
-func unsupportedAppConfigSettings(plan *applicationConfigModel, current *client.ApplicationConfig) []appConfigSetting {
+func appConfigUnsupportedSettings(plan *applicationConfigModel, current *client.ApplicationConfig) []appConfigSetting {
 	var unsupported []appConfigSetting
 	for _, setting := range appConfigSettings {
 		if setting.minVersion == "" {
@@ -428,7 +428,7 @@ func (r *applicationConfigResource) applyConfig(ctx context.Context, config, pla
 		return
 	}
 
-	for _, setting := range unsupportedAppConfigSettings(config, current) {
+	for _, setting := range appConfigUnsupportedSettings(config, current) {
 		diags.AddAttributeError(
 			path.Root(setting.attribute),
 			"Setting not supported by this Pocket ID",
@@ -439,7 +439,7 @@ func (r *applicationConfigResource) applyConfig(ctx context.Context, config, pla
 		return
 	}
 
-	if unread := unreportedCarriedSettings(config, current, writeOnly); len(unread) > 0 {
+	if unread := appConfigUnreportedCarried(config, current, writeOnly); len(unread) > 0 {
 		diags.AddError(
 			"Incomplete application configuration",
 			"Pocket ID's current configuration did not include a value for: "+strings.Join(unread, ", ")+
@@ -466,7 +466,7 @@ func (r *applicationConfigResource) applyConfig(ctx context.Context, config, pla
 		return
 	}
 
-	if missing := unreportedSentSettings(payload, updated); len(missing) > 0 {
+	if missing := appConfigUnreportedSent(payload, updated); len(missing) > 0 {
 		diags.AddError(
 			"Incomplete application configuration",
 			"Pocket ID accepted the update, but its response did not include a value for: "+strings.Join(missing, ", ")+
@@ -474,7 +474,7 @@ func (r *applicationConfigResource) applyConfig(ctx context.Context, config, pla
 		)
 		return
 	}
-	if unstored := unstoredAppConfigSettings(current, payload, updated); len(unstored) > 0 {
+	if unstored := appConfigUnstoredSettings(current, payload, updated); len(unstored) > 0 {
 		diags.AddError(
 			"Pocket ID stored different application settings",
 			"Pocket ID accepted the update but did not store the value the provider sent for: "+strings.Join(unstored, ", ")+
@@ -489,7 +489,7 @@ func (r *applicationConfigResource) applyConfig(ctx context.Context, config, pla
 	for i, secret := range appConfigSecrets {
 		planned[i] = *secret.plain(plan)
 	}
-	fillUnplannedFromServer(plan, &stored)
+	appConfigFillUnplanned(plan, &stored)
 	for i, secret := range appConfigSecrets {
 		// A planned secret is what was sent and stored (or, unconfigured,
 		// the value from state). One planned unknown was never configured
@@ -502,11 +502,11 @@ func (r *applicationConfigResource) applyConfig(ctx context.Context, config, pla
 	}
 }
 
-// unstoredAppConfigSettings names the settings whose value the update changed
+// appConfigUnstoredSettings names the settings whose value the update changed
 // but the server did not store as sent (by attribute, or by key for a setting
 // this provider has no attribute for). No value is included: some are
 // secrets.
-func unstoredAppConfigSettings(current, sent, updated *client.ApplicationConfig) []string {
+func appConfigUnstoredSettings(current, sent, updated *client.ApplicationConfig) []string {
 	before, request, after := current.Values(), sent.Values(), updated.Values()
 	var unstored []string
 	for key, value := range request {
@@ -530,12 +530,12 @@ func appConfigSettingName(key string) string {
 	return key
 }
 
-// unreportedCarriedSettings names the settings an update would send back
+// appConfigUnreportedCarried names the settings an update would send back
 // with the server's current value although the server did not report one:
 // not configured, not a write-only value being sent, and not reported as a
 // string. Sending "" for them would reset them (a password would be cleared).
 // A version-dependent setting the server did not report is not sent at all.
-func unreportedCarriedSettings(config *applicationConfigModel, current *client.ApplicationConfig, writeOnly map[string]string) []string {
+func appConfigUnreportedCarried(config *applicationConfigModel, current *client.ApplicationConfig, writeOnly map[string]string) []string {
 	var unread []string
 	for _, setting := range appConfigSettings {
 		if setting.minVersion != "" || current.Reported(setting.key) {
@@ -553,9 +553,9 @@ func unreportedCarriedSettings(config *applicationConfigModel, current *client.A
 	return unread
 }
 
-// unreportedSentSettings names the settings the update sent that the
+// appConfigUnreportedSent names the settings the update sent that the
 // server's response did not report.
-func unreportedSentSettings(sent, updated *client.ApplicationConfig) []string {
+func appConfigUnreportedSent(sent, updated *client.ApplicationConfig) []string {
 	var missing []string
 	for key := range sent.Values() {
 		if !updated.Reported(key) {
@@ -566,11 +566,11 @@ func unreportedSentSettings(sent, updated *client.ApplicationConfig) []string {
 	return missing
 }
 
-// fillUnplannedFromServer sets every planned value that is unknown (or null)
+// appConfigFillUnplanned sets every planned value that is unknown (or null)
 // to the server's. A known planned value stays: for a configured attribute it
 // is what was sent and stored, otherwise it is the value from state the plan
 // showed.
-func fillUnplannedFromServer(plan, stored *applicationConfigModel) {
+func appConfigFillUnplanned(plan, stored *applicationConfigModel) {
 	planValue := reflect.ValueOf(plan).Elem()
 	storedValue := reflect.ValueOf(stored).Elem()
 	for i := 0; i < planValue.NumField(); i++ {

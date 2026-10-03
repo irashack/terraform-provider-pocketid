@@ -205,10 +205,10 @@ func readApplicationImageSource(kind client.ApplicationImage, source string) ([]
 			return nil, "", fmt.Errorf("the image is %dx%d pixels; this provider uploads JPEG and PNG images of at most %d pixels (Pocket ID 2.15.0 and later refuse larger ones)", config.Width, config.Height, applicationImageMaxPixels)
 		}
 	}
-	return content, sha256Hex(content), nil
+	return content, appImageSHA256Hex(content), nil
 }
 
-func sha256Hex(content []byte) string {
+func appImageSHA256Hex(content []byte) string {
 	sum := sha256.Sum256(content)
 	return hex.EncodeToString(sum[:])
 }
@@ -251,9 +251,9 @@ func (r *applicationImageResource) ModifyPlan(ctx context.Context, req resource.
 	}
 }
 
-// servedHash returns the recorded SHA-256 of what Pocket ID served after the
+// appImageServedHash returns the recorded SHA-256 of what Pocket ID served after the
 // last upload; "" when none is recorded.
-func servedHash(ctx context.Context, private interface {
+func appImageServedHash(ctx context.Context, private interface {
 	GetKey(context.Context, string) ([]byte, diag.Diagnostics)
 }) (string, diag.Diagnostics) {
 	raw, diags := private.GetKey(ctx, applicationImageStoredKey)
@@ -267,8 +267,8 @@ func servedHash(ctx context.Context, private interface {
 	return hash, diags
 }
 
-// setServedHash records hash; "" removes the record.
-func setServedHash(ctx context.Context, private interface {
+// setAppImageServedHash records hash; "" removes the record.
+func setAppImageServedHash(ctx context.Context, private interface {
 	SetKey(context.Context, string, []byte) diag.Diagnostics
 }, hash string) diag.Diagnostics {
 	if hash == "" {
@@ -307,7 +307,7 @@ func (r *applicationImageResource) upload(ctx context.Context, plan *application
 			fmt.Sprintf("The %s was uploaded, but reading it back failed (%s). The next refresh records what Pocket ID serves.", kind, err))
 		return true, ""
 	}
-	return true, sha256Hex(served)
+	return true, appImageSHA256Hex(served)
 }
 
 // refresh reads the image for state. It returns whether Pocket ID confirmed
@@ -324,7 +324,7 @@ func (r *applicationImageResource) refresh(ctx context.Context, state *applicati
 		return false, ""
 	}
 	state.ID = types.StringValue(string(kind))
-	current := sha256Hex(served)
+	current := appImageSHA256Hex(served)
 	switch {
 	case recorded == "":
 		// Imported, or the read-back after the upload failed: what is
@@ -350,7 +350,7 @@ func (r *applicationImageResource) Create(ctx context.Context, req resource.Crea
 	if !uploaded {
 		return
 	}
-	resp.Diagnostics.Append(setServedHash(ctx, resp.Private, served)...)
+	resp.Diagnostics.Append(setAppImageServedHash(ctx, resp.Private, served)...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -360,7 +360,7 @@ func (r *applicationImageResource) Read(ctx context.Context, req resource.ReadRe
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	recorded, diags := servedHash(ctx, req.Private)
+	recorded, diags := appImageServedHash(ctx, req.Private)
 	resp.Diagnostics.Append(diags...)
 	gone, record := r.refresh(ctx, &state, recorded, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
@@ -372,7 +372,7 @@ func (r *applicationImageResource) Read(ctx context.Context, req resource.ReadRe
 		return
 	}
 	if record != "" {
-		resp.Diagnostics.Append(setServedHash(ctx, resp.Private, record)...)
+		resp.Diagnostics.Append(setAppImageServedHash(ctx, resp.Private, record)...)
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -400,7 +400,7 @@ func (r *applicationImageResource) Update(ctx context.Context, req resource.Upda
 		if !uploaded {
 			return
 		}
-		resp.Diagnostics.Append(setServedHash(ctx, resp.Private, served)...)
+		resp.Diagnostics.Append(setAppImageServedHash(ctx, resp.Private, served)...)
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }

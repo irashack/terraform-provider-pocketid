@@ -46,10 +46,10 @@ func appConfigStateModel(t *testing.T, state tfsdk.State) applicationConfigModel
 	return m
 }
 
-// knownAppConfigModel is a model as Read would leave it, with every setting
+// appConfigKnownModel is a model as Read would leave it, with every setting
 // known.
-func knownAppConfigModel() *applicationConfigModel {
-	m := nullAppConfigModel()
+func appConfigKnownModel() *applicationConfigModel {
+	m := appConfigNullModel()
 	applicationConfigToModel(&client.ApplicationConfig{AppName: "Fixture"}, m)
 	m.SmtpPassword, m.LdapBindPassword = types.StringNull(), types.StringNull()
 	return m
@@ -78,13 +78,13 @@ func TestApplicationConfigReadSecrets(t *testing.T) {
 		wantSMTP types.String
 	}{
 		"plain attribute tracks the server's value": {func() *applicationConfigModel {
-			m := knownAppConfigModel()
+			m := appConfigKnownModel()
 			m.SmtpPassword = types.StringValue("stale")
 			return m
 		}(), types.StringValue(appConfigServerSMTPPassword)},
-		"never configured or imported stays null": {knownAppConfigModel(), types.StringNull()},
+		"never configured or imported stays null": {appConfigKnownModel(), types.StringNull()},
 		"write-only mode stays null": {func() *applicationConfigModel {
-			m := knownAppConfigModel()
+			m := appConfigKnownModel()
 			m.SmtpPassword = types.StringValue("left over")
 			m.SmtpPasswordWOVersion = types.StringValue("1")
 			return m
@@ -110,7 +110,7 @@ func TestApplicationConfigModifyPlanWriteOnly(t *testing.T) {
 	s := appConfigTestSchema(t)
 	r := &applicationConfigResource{}
 	config := appConfigTestRaw(t, s, map[string]string{"smtp_password_wo": appConfigWOSMTPPassword, "smtp_password_wo_version": "1"})
-	planned := knownAppConfigModel()
+	planned := appConfigKnownModel()
 	planned.SmtpPassword = types.StringValue("from state")
 	planned.LdapBindPassword = types.StringValue("ldap from state")
 	planned.SmtpPasswordWOVersion = types.StringValue("1")
@@ -164,7 +164,7 @@ func runAppConfigSecretsApply(t *testing.T, tc appConfigSecretsCase) (sent map[s
 }
 
 func appConfigWriteOnlyPlan(smtpVersion, ldapVersion string) *applicationConfigModel {
-	m := knownAppConfigModel()
+	m := appConfigKnownModel()
 	m.ID = types.StringValue(applicationConfigID)
 	if smtpVersion != "" {
 		m.SmtpPasswordWOVersion = types.StringValue(smtpVersion)

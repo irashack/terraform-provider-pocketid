@@ -27,10 +27,10 @@ import (
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
 )
 
-// imageServer is a fake Pocket ID for one application image. served is what
+// appImageFakeServer is a fake Pocket ID for one application image. served is what
 // a GET returns (nil: no uploaded image), and an upload replaces it with
 // the uploaded bytes passed through transform (Pocket ID strips metadata).
-type imageServer struct {
+type appImageFakeServer struct {
 	mu        sync.Mutex
 	served    []byte
 	transform func([]byte) []byte
@@ -41,7 +41,7 @@ type imageServer struct {
 	cache map[string][]byte
 }
 
-func (s *imageServer) client(t *testing.T) *client.Client {
+func (s *appImageFakeServer) client(t *testing.T) *client.Client {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
@@ -93,14 +93,14 @@ func (s *imageServer) client(t *testing.T) *client.Client {
 	return c
 }
 
-func writeImageFile(t *testing.T, name string, content []byte) string {
+func appImageWriteFile(t *testing.T, name string, content []byte) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name)
 	require.NoError(t, os.WriteFile(path, content, 0o600))
 	return path
 }
 
-const svgImage = `<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>`
+const appImageSVG = `<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>`
 
 func TestApplicationImageExtensionRules(t *testing.T) {
 	for _, tc := range []struct {
@@ -125,9 +125,9 @@ func TestApplicationImageExtensionRules(t *testing.T) {
 	}
 }
 
-// pngHeader returns a PNG whose header claims width x height; DecodeConfig
+// appImagePNGHeader returns a PNG whose header claims width x height; DecodeConfig
 // reads only the header.
-func pngHeader(t *testing.T, width, height uint32) []byte {
+func appImagePNGHeader(t *testing.T, width, height uint32) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	require.NoError(t, png.Encode(&buf, image.NewGray(image.Rect(0, 0, 1, 1))))
@@ -140,26 +140,26 @@ func pngHeader(t *testing.T, width, height uint32) []byte {
 }
 
 func TestReadApplicationImageSourceLimits(t *testing.T) {
-	small := writeImageFile(t, "logo.png", pngHeader(t, 4000, 4000))
+	small := appImageWriteFile(t, "logo.png", appImagePNGHeader(t, 4000, 4000))
 	content, hash, err := readApplicationImageSource(client.ApplicationImageLogoLight, small)
 	require.NoError(t, err)
-	assert.Equal(t, sha256Hex(content), hash)
+	assert.Equal(t, appImageSHA256Hex(content), hash)
 
-	tooManyPixels := writeImageFile(t, "logo.png", pngHeader(t, 4001, 4000))
+	tooManyPixels := appImageWriteFile(t, "logo.png", appImagePNGHeader(t, 4001, 4000))
 	_, _, err = readApplicationImageSource(client.ApplicationImageLogoLight, tooManyPixels)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "4001x4000 pixels; this provider uploads JPEG and PNG images of at most 16000000 pixels")
 
 	// Not decodable: Pocket ID accepts it as it is, so it is not refused.
-	_, _, err = readApplicationImageSource(client.ApplicationImageLogoLight, writeImageFile(t, "logo.png", []byte("not a png")))
+	_, _, err = readApplicationImageSource(client.ApplicationImageLogoLight, appImageWriteFile(t, "logo.png", []byte("not a png")))
 	assert.NoError(t, err)
 
-	tooLarge := writeImageFile(t, "background.webp", make([]byte, client.MaxApplicationImageBytes+1))
+	tooLarge := appImageWriteFile(t, "background.webp", make([]byte, client.MaxApplicationImageBytes+1))
 	_, _, err = readApplicationImageSource(client.ApplicationImageBackground, tooLarge)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "larger than")
 
-	_, _, err = readApplicationImageSource(client.ApplicationImageFavicon, writeImageFile(t, "favicon.gif", []byte("GIF89a")))
+	_, _, err = readApplicationImageSource(client.ApplicationImageFavicon, appImageWriteFile(t, "favicon.gif", []byte("GIF89a")))
 	assert.Error(t, err)
 }
 
@@ -210,10 +210,10 @@ func TestApplicationImageModifyPlan(t *testing.T) {
 		require.False(t, resp.Plan.Get(context.Background(), &got).HasError())
 		return got.SHA256, resp.Diagnostics
 	}
-	source := writeImageFile(t, "logo.svg", []byte(svgImage))
+	source := appImageWriteFile(t, "logo.svg", []byte(appImageSVG))
 	sha, diags := plan(source)
 	require.False(t, diags.HasError(), "%v", diags)
-	assert.Equal(t, sha256Hex([]byte(svgImage)), sha.ValueString())
+	assert.Equal(t, appImageSHA256Hex([]byte(appImageSVG)), sha.ValueString())
 
 	sha, diags = plan(filepath.Join(t.TempDir(), "later.svg"))
 	assert.False(t, diags.HasError())
@@ -229,16 +229,16 @@ func TestApplicationImageModifyPlan(t *testing.T) {
 }
 
 func TestApplicationImageUploadRecordsServedImage(t *testing.T) {
-	server := &imageServer{transform: func(b []byte) []byte { return append([]byte("stripped:"), b...) }}
+	server := &appImageFakeServer{transform: func(b []byte) []byte { return append([]byte("stripped:"), b...) }}
 	r := &applicationImageResource{client: server.client(t)}
-	source := writeImageFile(t, "logo.svg", []byte(svgImage))
-	plan := &applicationImageModel{ID: types.StringUnknown(), Kind: types.StringValue("logo_dark"), Source: types.StringValue(source), SHA256: types.StringValue(sha256Hex([]byte(svgImage)))}
+	source := appImageWriteFile(t, "logo.svg", []byte(appImageSVG))
+	plan := &applicationImageModel{ID: types.StringUnknown(), Kind: types.StringValue("logo_dark"), Source: types.StringValue(source), SHA256: types.StringValue(appImageSHA256Hex([]byte(appImageSVG)))}
 	var diags diag.Diagnostics
 	uploaded, served := r.upload(context.Background(), plan, &diags)
 	require.False(t, diags.HasError(), "%v", diags)
 	require.True(t, uploaded)
-	assert.Equal(t, sha256Hex([]byte("stripped:"+svgImage)), served)
-	assert.Equal(t, sha256Hex([]byte(svgImage)), plan.SHA256.ValueString())
+	assert.Equal(t, appImageSHA256Hex([]byte("stripped:"+appImageSVG)), served)
+	assert.Equal(t, appImageSHA256Hex([]byte(appImageSVG)), plan.SHA256.ValueString())
 	assert.Equal(t, "logo_dark", plan.ID.ValueString())
 	require.Len(t, server.requests, 2)
 	assert.Equal(t, "PUT /api/application-images/logo?light=false", server.requests[0])
@@ -258,38 +258,38 @@ func TestApplicationImageRefresh(t *testing.T) {
 	stateFor := func(sha types.String) *applicationImageModel {
 		return &applicationImageModel{ID: types.StringValue("background"), Kind: types.StringValue("background"), Source: types.StringValue("bg.webp"), SHA256: sha}
 	}
-	uploadedHash := sha256Hex([]byte("source"))
+	uploadedHash := appImageSHA256Hex([]byte("source"))
 
 	t.Run("unchanged", func(t *testing.T) {
-		server := &imageServer{served: []byte("served")}
+		server := &appImageFakeServer{served: []byte("served")}
 		r := &applicationImageResource{client: server.client(t)}
 		state := stateFor(types.StringValue(uploadedHash))
 		var diags diag.Diagnostics
-		gone, record := r.refresh(ctx, state, sha256Hex([]byte("served")), &diags)
+		gone, record := r.refresh(ctx, state, appImageSHA256Hex([]byte("served")), &diags)
 		require.False(t, diags.HasError())
 		assert.False(t, gone)
 		assert.Empty(t, record)
 		assert.Equal(t, uploadedHash, state.SHA256.ValueString())
 	})
 	t.Run("replaced outside Terraform", func(t *testing.T) {
-		server := &imageServer{served: []byte("someone else's")}
+		server := &appImageFakeServer{served: []byte("someone else's")}
 		r := &applicationImageResource{client: server.client(t)}
 		state := stateFor(types.StringValue(uploadedHash))
 		var diags diag.Diagnostics
-		gone, _ := r.refresh(ctx, state, sha256Hex([]byte("served")), &diags)
+		gone, _ := r.refresh(ctx, state, appImageSHA256Hex([]byte("served")), &diags)
 		assert.False(t, gone)
-		assert.Equal(t, sha256Hex([]byte("someone else's")), state.SHA256.ValueString(), "the plan uploads source again")
+		assert.Equal(t, appImageSHA256Hex([]byte("someone else's")), state.SHA256.ValueString(), "the plan uploads source again")
 	})
 	t.Run("removed outside Terraform", func(t *testing.T) {
-		server := &imageServer{}
+		server := &appImageFakeServer{}
 		r := &applicationImageResource{client: server.client(t)}
 		var diags diag.Diagnostics
-		gone, _ := r.refresh(ctx, stateFor(types.StringValue(uploadedHash)), sha256Hex([]byte("served")), &diags)
+		gone, _ := r.refresh(ctx, stateFor(types.StringValue(uploadedHash)), appImageSHA256Hex([]byte("served")), &diags)
 		assert.False(t, diags.HasError())
 		assert.True(t, gone)
 	})
 	t.Run("a 404 that is not Pocket ID's is an error", func(t *testing.T) {
-		server := &imageServer{served: []byte("served"), getStatus: http.StatusNotFound}
+		server := &appImageFakeServer{served: []byte("served"), getStatus: http.StatusNotFound}
 		r := &applicationImageResource{client: server.client(t)}
 		var diags diag.Diagnostics
 		gone, _ := r.refresh(ctx, stateFor(types.StringValue(uploadedHash)), "", &diags)
@@ -297,35 +297,35 @@ func TestApplicationImageRefresh(t *testing.T) {
 		assert.True(t, diags.HasError())
 	})
 	t.Run("imported", func(t *testing.T) {
-		server := &imageServer{served: []byte("served")}
+		server := &appImageFakeServer{served: []byte("served")}
 		r := &applicationImageResource{client: server.client(t)}
 		state := &applicationImageModel{ID: types.StringValue("background"), Kind: types.StringValue("background"), Source: types.StringNull(), SHA256: types.StringNull()}
 		var diags diag.Diagnostics
 		gone, record := r.refresh(ctx, state, "", &diags)
 		assert.False(t, gone)
-		assert.Equal(t, sha256Hex([]byte("served")), record)
-		assert.Equal(t, sha256Hex([]byte("served")), state.SHA256.ValueString())
+		assert.Equal(t, appImageSHA256Hex([]byte("served")), record)
+		assert.Equal(t, appImageSHA256Hex([]byte("served")), state.SHA256.ValueString())
 	})
 }
 
 func TestApplicationImageDelete(t *testing.T) {
 	s := applicationImageTestSchema(t)
-	del := func(t *testing.T, server *imageServer, kind string) diag.Diagnostics {
+	del := func(t *testing.T, server *appImageFakeServer, kind string) diag.Diagnostics {
 		r := &applicationImageResource{client: server.client(t)}
 		state := applicationImageRaw(t, s, &applicationImageModel{ID: types.StringValue(kind), Kind: types.StringValue(kind), Source: types.StringValue("x.png"), SHA256: types.StringValue("x")})
 		var resp resource.DeleteResponse
 		r.Delete(context.Background(), resource.DeleteRequest{State: tfsdk.State{Schema: s, Raw: state}}, &resp)
 		return resp.Diagnostics
 	}
-	server := &imageServer{served: []byte("x")}
+	server := &appImageFakeServer{served: []byte("x")}
 	diags := del(t, server, "default_profile_picture")
 	assert.False(t, diags.HasError())
 	assert.Equal(t, []string{"DELETE /api/application-images/default-profile-picture"}, server.requests)
 
-	server = &imageServer{}
+	server = &appImageFakeServer{}
 	assert.False(t, del(t, server, "logo_light").HasError(), "an image that is already gone is deleted")
 
-	server = &imageServer{served: []byte("x")}
+	server = &appImageFakeServer{served: []byte("x")}
 	diags = del(t, server, "email_logo")
 	assert.False(t, diags.HasError())
 	require.Len(t, diags.Warnings(), 1)
@@ -338,7 +338,7 @@ func TestApplicationImageDelete(t *testing.T) {
 // next refresh see the new image: the baseline is right and no drift shows.
 func TestApplicationImageReadsBypassCaches(t *testing.T) {
 	ctx := context.Background()
-	server := &imageServer{served: []byte("old image"), cache: map[string][]byte{}}
+	server := &appImageFakeServer{served: []byte("old image"), cache: map[string][]byte{}}
 	r := &applicationImageResource{client: server.client(t)}
 
 	// A refresh before the upload puts the old image into the cache.
@@ -346,21 +346,21 @@ func TestApplicationImageReadsBypassCaches(t *testing.T) {
 	var diags diag.Diagnostics
 	_, record := r.refresh(ctx, before, "", &diags)
 	require.False(t, diags.HasError())
-	require.Equal(t, sha256Hex([]byte("old image")), record)
+	require.Equal(t, appImageSHA256Hex([]byte("old image")), record)
 
-	source := writeImageFile(t, "logo.svg", []byte(svgImage))
-	plan := &applicationImageModel{ID: types.StringUnknown(), Kind: types.StringValue("logo_light"), Source: types.StringValue(source), SHA256: types.StringValue(sha256Hex([]byte(svgImage)))}
+	source := appImageWriteFile(t, "logo.svg", []byte(appImageSVG))
+	plan := &applicationImageModel{ID: types.StringUnknown(), Kind: types.StringValue("logo_light"), Source: types.StringValue(source), SHA256: types.StringValue(appImageSHA256Hex([]byte(appImageSVG)))}
 	uploaded, served := r.upload(ctx, plan, &diags)
 	require.False(t, diags.HasError(), "%v", diags)
 	require.True(t, uploaded)
-	assert.Equal(t, sha256Hex([]byte(svgImage)), served, "the read-back sees the uploaded image, not the cached one")
+	assert.Equal(t, appImageSHA256Hex([]byte(appImageSVG)), served, "the read-back sees the uploaded image, not the cached one")
 
 	state := *plan
 	gone, record := r.refresh(ctx, &state, served, &diags)
 	require.False(t, diags.HasError())
 	assert.False(t, gone)
 	assert.Empty(t, record)
-	assert.Equal(t, sha256Hex([]byte(svgImage)), state.SHA256.ValueString(), "no drift: nothing to upload again")
+	assert.Equal(t, appImageSHA256Hex([]byte(appImageSVG)), state.SHA256.ValueString(), "no drift: nothing to upload again")
 
 	gets := map[string]bool{}
 	for _, request := range server.requests {
@@ -376,7 +376,7 @@ func TestApplicationImageReadsBypassCaches(t *testing.T) {
 // serves the type of the uploaded file name); another path or letter case
 // with the same content and type is not.
 func TestApplicationImageNeedsUpload(t *testing.T) {
-	hash := types.StringValue(sha256Hex([]byte("bytes")))
+	hash := types.StringValue(appImageSHA256Hex([]byte("bytes")))
 	model := func(source string, sha types.String) *applicationImageModel {
 		return &applicationImageModel{Kind: types.StringValue("background"), Source: types.StringValue(source), SHA256: sha}
 	}

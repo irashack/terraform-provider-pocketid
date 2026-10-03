@@ -25,11 +25,11 @@ import (
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
 )
 
-func testAccSVG(label string) []byte {
+func testAccAppImageSVG(label string) []byte {
 	return []byte(fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><title>%s</title></svg>`, label))
 }
 
-func testAccPNG(t *testing.T, shade uint8) []byte {
+func testAccAppImagePNG(t *testing.T, shade uint8) []byte {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, 4, 4))
 	for x := 0; x < 4; x++ {
@@ -44,21 +44,21 @@ func testAccPNG(t *testing.T, shade uint8) []byte {
 	return buf.Bytes()
 }
 
-func testAccWriteFile(t *testing.T, path string, content []byte) {
+func testAccAppImageWriteFile(t *testing.T, path string, content []byte) {
 	t.Helper()
 	if err := os.WriteFile(path, content, 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func testAccHash(content []byte) string {
+func testAccAppImageHash(content []byte) string {
 	sum := sha256.Sum256(content)
 	return hex.EncodeToString(sum[:])
 }
 
-// testAccImageServed checks what Pocket ID serves for an uploaded image:
+// testAccAppImageServed checks what Pocket ID serves for an uploaded image:
 // want nil means no uploaded image (image_not_found).
-func testAccImageServed(kind client.ApplicationImage, want []byte) resource.TestCheckFunc {
+func testAccAppImageServed(kind client.ApplicationImage, want []byte) resource.TestCheckFunc {
 	return func(*terraform.State) error {
 		c, err := testClient()
 		if err != nil {
@@ -81,8 +81,8 @@ func testAccImageServed(kind client.ApplicationImage, want []byte) resource.Test
 	}
 }
 
-// testAccImageContentType checks the media type Pocket ID serves at path.
-func testAccImageContentType(path, want string) resource.TestCheckFunc {
+// testAccAppImageContentType checks the media type Pocket ID serves at path.
+func testAccAppImageContentType(path, want string) resource.TestCheckFunc {
 	return func(*terraform.State) error {
 		req, err := http.NewRequest(http.MethodGet, os.Getenv("POCKETID_BASE_URL")+path, nil)
 		if err != nil {
@@ -102,7 +102,7 @@ func testAccImageContentType(path, want string) resource.TestCheckFunc {
 	}
 }
 
-func testAccImageConfig(kind, source string) string {
+func testAccAppImageConfig(kind, source string) string {
 	return fmt.Sprintf(`
 resource "pocketid_application_image" "test" {
   kind   = %q
@@ -117,8 +117,8 @@ func TestAccResourceApplicationImage_logo(t *testing.T) {
 	resourceName := "pocketid_application_image.test"
 	source := filepath.Join(t.TempDir(), "logo.svg")
 	renamed := filepath.Join(filepath.Dir(source), "logo.png")
-	first, second, outside := testAccSVG("first-"+acctest.RandString(6)), testAccSVG("second-"+acctest.RandString(6)), testAccSVG("outside")
-	testAccWriteFile(t, source, first)
+	first, second, outside := testAccAppImageSVG("first-"+acctest.RandString(6)), testAccAppImageSVG("second-"+acctest.RandString(6)), testAccAppImageSVG("outside")
+	testAccAppImageWriteFile(t, source, first)
 	ctx := context.Background()
 	c, err := testClient()
 	if err != nil {
@@ -128,23 +128,23 @@ func TestAccResourceApplicationImage_logo(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		CheckDestroy:             testAccImageServed(client.ApplicationImageLogoDark, nil),
+		CheckDestroy:             testAccAppImageServed(client.ApplicationImageLogoDark, nil),
 		Steps: []resource.TestStep{
 			{
-				Config: testAccImageConfig("logo_dark", source),
+				Config: testAccAppImageConfig("logo_dark", source),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr(resourceName, "id", "logo_dark"),
-					resource.TestCheckResourceAttr(resourceName, "sha256", testAccHash(first)),
-					testAccImageServed(client.ApplicationImageLogoDark, first),
+					resource.TestCheckResourceAttr(resourceName, "sha256", testAccAppImageHash(first)),
+					testAccAppImageServed(client.ApplicationImageLogoDark, first),
 				),
 			},
 			{
 				// The file's content changes: uploaded again.
-				PreConfig: func() { testAccWriteFile(t, source, second) },
-				Config:    testAccImageConfig("logo_dark", source),
+				PreConfig: func() { testAccAppImageWriteFile(t, source, second) },
+				Config:    testAccAppImageConfig("logo_dark", source),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr(resourceName, "sha256", testAccHash(second)),
-					testAccImageServed(client.ApplicationImageLogoDark, second),
+					resource.TestCheckResourceAttr(resourceName, "sha256", testAccAppImageHash(second)),
+					testAccAppImageServed(client.ApplicationImageLogoDark, second),
 				),
 			},
 			{
@@ -155,8 +155,8 @@ func TestAccResourceApplicationImage_logo(t *testing.T) {
 						t.Fatal(err)
 					}
 				},
-				Config: testAccImageConfig("logo_dark", source),
-				Check:  testAccImageServed(client.ApplicationImageLogoDark, second),
+				Config: testAccAppImageConfig("logo_dark", source),
+				Check:  testAccAppImageServed(client.ApplicationImageLogoDark, second),
 			},
 			{
 				// Replaced outside Terraform: uploaded again.
@@ -165,21 +165,21 @@ func TestAccResourceApplicationImage_logo(t *testing.T) {
 						t.Fatal(err)
 					}
 				},
-				Config: testAccImageConfig("logo_dark", source),
+				Config: testAccAppImageConfig("logo_dark", source),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr(resourceName, "sha256", testAccHash(second)),
-					testAccImageServed(client.ApplicationImageLogoDark, second),
+					resource.TestCheckResourceAttr(resourceName, "sha256", testAccAppImageHash(second)),
+					testAccAppImageServed(client.ApplicationImageLogoDark, second),
 				),
 			},
 			{
 				// The same bytes under another extension: uploaded again,
 				// and served with the new type.
-				PreConfig: func() { testAccWriteFile(t, renamed, second) },
-				Config:    testAccImageConfig("logo_dark", renamed),
+				PreConfig: func() { testAccAppImageWriteFile(t, renamed, second) },
+				Config:    testAccAppImageConfig("logo_dark", renamed),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr(resourceName, "sha256", testAccHash(second)),
-					testAccImageServed(client.ApplicationImageLogoDark, second),
-					testAccImageContentType("/api/application-images/logo?light=false&default=false", "image/png"),
+					resource.TestCheckResourceAttr(resourceName, "sha256", testAccAppImageHash(second)),
+					testAccAppImageServed(client.ApplicationImageLogoDark, second),
+					testAccAppImageContentType("/api/application-images/logo?light=false&default=false", "image/png"),
 				),
 			},
 			{
@@ -199,8 +199,8 @@ func TestAccResourceApplicationImage_logo(t *testing.T) {
 func TestAccResourceApplicationImage_notRemovable(t *testing.T) {
 	dir := t.TempDir()
 	favicon, email := filepath.Join(dir, "favicon.png"), filepath.Join(dir, "email.png")
-	testAccWriteFile(t, favicon, testAccPNG(t, byte(acctest.RandIntRange(0, 255))))
-	testAccWriteFile(t, email, testAccPNG(t, byte(acctest.RandIntRange(0, 255))))
+	testAccAppImageWriteFile(t, favicon, testAccAppImagePNG(t, byte(acctest.RandIntRange(0, 255))))
+	testAccAppImageWriteFile(t, email, testAccAppImagePNG(t, byte(acctest.RandIntRange(0, 255))))
 	c, err := testClient()
 	if err != nil {
 		t.Fatal(err)
@@ -230,14 +230,14 @@ resource "pocketid_application_image" "email" {
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		CheckDestroy: func(s *terraform.State) error {
-			if err := testAccImageServed(client.ApplicationImageFavicon, faviconServed)(s); err != nil {
+			if err := testAccAppImageServed(client.ApplicationImageFavicon, faviconServed)(s); err != nil {
 				return err
 			}
-			return testAccImageServed(client.ApplicationImageEmailLogo, emailServed)(s)
+			return testAccAppImageServed(client.ApplicationImageEmailLogo, emailServed)(s)
 		},
 		Steps: []resource.TestStep{
 			{
-				Config:      testAccImageConfig("favicon", filepath.Join(dir, "favicon.jpg")),
+				Config:      testAccAppImageConfig("favicon", filepath.Join(dir, "favicon.jpg")),
 				ExpectError: regexp.MustCompile(`Unsupported image file type(?s:.*)accepts only ico,\s+png,\s+svg\s+for\s+the\s+favicon`),
 				PlanOnly:    true,
 			},
@@ -256,16 +256,16 @@ resource "pocketid_application_image" "email" {
 // background back.
 func TestAccResourceApplicationImage_background(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "background.svg")
-	content := testAccSVG("background-" + acctest.RandString(6))
-	testAccWriteFile(t, source, content)
+	content := testAccAppImageSVG("background-" + acctest.RandString(6))
+	testAccAppImageWriteFile(t, source, content)
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		CheckDestroy:             testAccImageServed(client.ApplicationImageBackground, nil),
+		CheckDestroy:             testAccAppImageServed(client.ApplicationImageBackground, nil),
 		Steps: []resource.TestStep{
 			{
-				Config: testAccImageConfig("background", source),
-				Check:  testAccImageServed(client.ApplicationImageBackground, content),
+				Config: testAccAppImageConfig("background", source),
+				Check:  testAccAppImageServed(client.ApplicationImageBackground, content),
 			},
 		},
 	})

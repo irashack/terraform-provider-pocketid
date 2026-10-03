@@ -56,11 +56,11 @@ func appConfigOneOf(values ...string) appConfigRule {
 				return ""
 			}
 		}
-		return "must be one of " + quotedList(values) + " (case-sensitive)"
+		return "must be one of " + appConfigQuotedList(values) + " (case-sensitive)"
 	}
 }
 
-func quotedList(values []string) string {
+func appConfigQuotedList(values []string) string {
 	quoted := make([]string, len(values))
 	for i, value := range values {
 		quoted[i] = strconv.Quote(value)
@@ -74,11 +74,11 @@ func quotedList(values []string) string {
 // appConfigBoolean is Pocket ID's boolean_string: exactly "true" or "false".
 var appConfigBoolean = appConfigOneOf("true", "false")
 
-// maxSessionDurationMinutes is the largest whole number of minutes a Go
+// appConfigMaxSessionMinutes is the largest whole number of minutes a Go
 // time.Duration holds. Pocket ID turns the value into minutes with
 // time.Duration(value) * time.Minute (AsDurationMinutes), which wraps around to
 // a negative duration above this.
-const maxSessionDurationMinutes = int64(1<<63-1) / int64(60e9)
+const appConfigMaxSessionMinutes = int64(1<<63-1) / int64(60e9)
 
 // appConfigSessionDuration accepts what Pocket ID's integer_string accepts
 // (strconv.Atoi on its 64-bit builds: an optional sign and decimal digits)
@@ -90,8 +90,8 @@ func appConfigSessionDuration(value string) string {
 	if err != nil {
 		return "must be a whole number of minutes"
 	}
-	if minutes < 1 || minutes > maxSessionDurationMinutes {
-		return fmt.Sprintf("must be between 1 and %d minutes", maxSessionDurationMinutes)
+	if minutes < 1 || minutes > appConfigMaxSessionMinutes {
+		return fmt.Sprintf("must be between 1 and %d minutes", appConfigMaxSessionMinutes)
 	}
 	return ""
 }
@@ -319,8 +319,8 @@ func appConfigEmail(value string) string {
 }
 
 const (
-	booleanFormat = `"true" or "false"`
-	autoCreateKey = "autoCreateOidcClientSecret"
+	appConfigBooleanFormat = `"true" or "false"`
+	appConfigAutoCreateKey = "autoCreateOidcClientSecret"
 )
 
 // appConfigSettings lists every attribute of pocketid_application_config
@@ -331,17 +331,17 @@ var appConfigSettings = []appConfigSetting{
 	{attribute: "app_name", key: "appName", about: "The name of the application.", format: "1 to 30 characters", rule: appConfigLength(1, 30), defaultValue: "Pocket ID", required: true},
 	{attribute: "session_duration", key: "sessionDuration", about: "How long a sign-in session lasts, in minutes.", format: "a whole number of minutes, at least 1", rule: appConfigSessionDuration, defaultValue: "60", required: true},
 	{attribute: "home_page_url", key: "homePageUrl", about: "Where Pocket ID sends users after they sign in to it directly.", format: "a URL or path", defaultValue: "/settings/account", required: true},
-	{attribute: "emails_verified", key: "emailsVerified", about: "Whether user e-mail addresses are considered verified.", format: booleanFormat, rule: appConfigBoolean, defaultValue: "false", required: true},
-	{attribute: "disable_animations", key: "disableAnimations", about: "Whether to disable UI animations.", format: booleanFormat, rule: appConfigBoolean, defaultValue: "false", required: true},
-	{attribute: "allow_own_account_edit", key: "allowOwnAccountEdit", about: "Whether users can edit their own account details.", format: booleanFormat, rule: appConfigBoolean, defaultValue: "true", required: true},
+	{attribute: "emails_verified", key: "emailsVerified", about: "Whether user e-mail addresses are considered verified.", format: appConfigBooleanFormat, rule: appConfigBoolean, defaultValue: "false", required: true},
+	{attribute: "disable_animations", key: "disableAnimations", about: "Whether to disable UI animations.", format: appConfigBooleanFormat, rule: appConfigBoolean, defaultValue: "false", required: true},
+	{attribute: "allow_own_account_edit", key: "allowOwnAccountEdit", about: "Whether users can edit their own account details.", format: appConfigBooleanFormat, rule: appConfigBoolean, defaultValue: "true", required: true},
 	{attribute: "allow_user_signups", key: "allowUserSignups", about: "Who can create an account.", format: `"disabled", "withToken" (with a signup token only) or "open"`, rule: appConfigOneOf("disabled", "withToken", "open"), defaultValue: "disabled", required: true},
 	{attribute: "signup_default_user_group_ids", key: "signupDefaultUserGroupIDs", about: "The user groups every new user is added to.", format: `a JSON array of user group IDs, such as ["<group-id>"]; "[]" for none`, rule: appConfigJSONStringArray, defaultValue: "[]"},
 	{attribute: "signup_default_custom_claims", key: "signupDefaultCustomClaims", about: "The custom claims every new user gets.", format: `a JSON array of objects with string "key" and "value" properties, such as [{"key":"department","value":"it"}]; "[]" for none`, rule: appConfigJSONCustomClaims, defaultValue: "[]"},
 	{attribute: "accent_color", key: "accentColor", about: "The accent color of the UI.", format: `"default" or a CSS color`, defaultValue: "default"},
-	{attribute: "require_user_email", key: "requireUserEmail", about: "Whether every user must have an e-mail address.", format: booleanFormat, rule: appConfigBoolean, defaultValue: "true", required: true},
+	{attribute: "require_user_email", key: "requireUserEmail", about: "Whether every user must have an e-mail address.", format: appConfigBooleanFormat, rule: appConfigBoolean, defaultValue: "true", required: true},
 
 	{attribute: "webauthn_user_verification", key: "webauthnUserVerification", about: "Whether passkey sign-in requires user verification.", format: `"required" or "preferred"`, rule: appConfigOneOf("required", "preferred"), defaultValue: "required", required: true},
-	{attribute: "webauthn_allow_synced_passkeys", key: "webauthnAllowSyncedPasskeys", about: "Whether passkeys synced between devices are allowed.", format: booleanFormat, rule: appConfigBoolean, defaultValue: "true", required: true},
+	{attribute: "webauthn_allow_synced_passkeys", key: "webauthnAllowSyncedPasskeys", about: "Whether passkeys synced between devices are allowed.", format: appConfigBooleanFormat, rule: appConfigBoolean, defaultValue: "true", required: true},
 	{attribute: "webauthn_authenticator_attachment", key: "webauthnAuthenticatorAttachment", about: "Which authenticators can hold a new passkey.", format: `"any", "platform" or "cross-platform"`, rule: appConfigOneOf("any", "platform", "cross-platform"), defaultValue: "any", required: true},
 	{attribute: "cimd_url_allowlist", key: "cimdUrlAllowlist", about: "The Client ID Metadata Document URLs Pocket ID accepts.", format: `a JSON array of URL patterns (the syntax of callback URLs, wildcards allowed), such as ["https://*.example.com/*"]; "[]" for none. Each pattern is checked as Pocket ID checks it`, rule: appConfigCIMDAllowlist, defaultValue: "[]"},
 
@@ -351,22 +351,22 @@ var appConfigSettings = []appConfigSetting{
 	{attribute: "smtp_user", key: "smtpUser", about: "The SMTP user name."},
 	{attribute: "smtp_password", key: "smtpPassword", about: "The SMTP password.", sensitive: true},
 	{attribute: "smtp_tls", key: "smtpTls", about: "How the SMTP connection is secured.", format: `"none", "starttls" or "tls"`, rule: appConfigOneOf("none", "starttls", "tls"), defaultValue: "none", required: true},
-	{attribute: "smtp_skip_cert_verify", key: "smtpSkipCertVerify", about: "Whether to skip verifying the SMTP server's certificate.", format: booleanFormat, rule: appConfigBoolean, defaultValue: "false", required: true},
+	{attribute: "smtp_skip_cert_verify", key: "smtpSkipCertVerify", about: "Whether to skip verifying the SMTP server's certificate.", format: appConfigBooleanFormat, rule: appConfigBoolean, defaultValue: "false", required: true},
 
-	{attribute: "email_one_time_access_as_admin_enabled", key: "emailOneTimeAccessAsAdminEnabled", about: "Whether administrators can e-mail users a one-time sign-in link.", format: booleanFormat, rule: appConfigBoolean, defaultValue: "false", required: true},
-	{attribute: "email_one_time_access_as_unauthenticated_enabled", key: "emailOneTimeAccessAsUnauthenticatedEnabled", about: "Whether users can request a one-time sign-in link by e-mail without signing in.", format: booleanFormat, rule: appConfigBoolean, defaultValue: "false", required: true},
-	{attribute: "email_login_notification_enabled", key: "emailLoginNotificationEnabled", about: "Whether users are e-mailed when they sign in from a new device.", format: booleanFormat, rule: appConfigBoolean, defaultValue: "false", required: true},
-	{attribute: "email_api_key_expiration_enabled", key: "emailApiKeyExpirationEnabled", about: "Whether users are e-mailed before an API key expires.", format: booleanFormat, rule: appConfigBoolean, defaultValue: "false", required: true},
-	{attribute: "email_verification_enabled", key: "emailVerificationEnabled", about: "Whether users must verify their e-mail address.", format: booleanFormat, rule: appConfigBoolean, defaultValue: "false", required: true},
+	{attribute: "email_one_time_access_as_admin_enabled", key: "emailOneTimeAccessAsAdminEnabled", about: "Whether administrators can e-mail users a one-time sign-in link.", format: appConfigBooleanFormat, rule: appConfigBoolean, defaultValue: "false", required: true},
+	{attribute: "email_one_time_access_as_unauthenticated_enabled", key: "emailOneTimeAccessAsUnauthenticatedEnabled", about: "Whether users can request a one-time sign-in link by e-mail without signing in.", format: appConfigBooleanFormat, rule: appConfigBoolean, defaultValue: "false", required: true},
+	{attribute: "email_login_notification_enabled", key: "emailLoginNotificationEnabled", about: "Whether users are e-mailed when they sign in from a new device.", format: appConfigBooleanFormat, rule: appConfigBoolean, defaultValue: "false", required: true},
+	{attribute: "email_api_key_expiration_enabled", key: "emailApiKeyExpirationEnabled", about: "Whether users are e-mailed before an API key expires.", format: appConfigBooleanFormat, rule: appConfigBoolean, defaultValue: "false", required: true},
+	{attribute: "email_verification_enabled", key: "emailVerificationEnabled", about: "Whether users must verify their e-mail address.", format: appConfigBooleanFormat, rule: appConfigBoolean, defaultValue: "false", required: true},
 
-	{attribute: "ldap_enabled", key: "ldapEnabled", about: "Whether LDAP synchronization is enabled.", format: booleanFormat, rule: appConfigBoolean, defaultValue: "false", required: true},
+	{attribute: "ldap_enabled", key: "ldapEnabled", about: "Whether LDAP synchronization is enabled.", format: appConfigBooleanFormat, rule: appConfigBoolean, defaultValue: "false", required: true},
 	{attribute: "ldap_url", key: "ldapUrl", about: "The LDAP server's URL."},
 	{attribute: "ldap_bind_dn", key: "ldapBindDn", about: "The DN Pocket ID binds to the LDAP server as."},
 	{attribute: "ldap_bind_password", key: "ldapBindPassword", about: "The LDAP bind password.", sensitive: true},
 	{attribute: "ldap_base", key: "ldapBase", about: "The LDAP search base."},
 	{attribute: "ldap_user_search_filter", key: "ldapUserSearchFilter", about: "The LDAP filter that selects users.", defaultValue: "(objectClass=person)"},
 	{attribute: "ldap_user_group_search_filter", key: "ldapUserGroupSearchFilter", about: "The LDAP filter that selects groups.", defaultValue: "(objectClass=groupOfNames)"},
-	{attribute: "ldap_skip_cert_verify", key: "ldapSkipCertVerify", about: "Whether to skip verifying the LDAP server's certificate.", format: booleanFormat, rule: appConfigBoolean, defaultValue: "false", required: true},
+	{attribute: "ldap_skip_cert_verify", key: "ldapSkipCertVerify", about: "Whether to skip verifying the LDAP server's certificate.", format: appConfigBooleanFormat, rule: appConfigBoolean, defaultValue: "false", required: true},
 	{attribute: "ldap_attribute_user_unique_identifier", key: "ldapAttributeUserUniqueIdentifier", about: "The LDAP attribute that uniquely identifies a user."},
 	{attribute: "ldap_attribute_user_username", key: "ldapAttributeUserUsername", about: "The LDAP attribute holding a user's username."},
 	{attribute: "ldap_attribute_user_email", key: "ldapAttributeUserEmail", about: "The LDAP attribute holding a user's e-mail address."},
@@ -378,9 +378,9 @@ var appConfigSettings = []appConfigSetting{
 	{attribute: "ldap_attribute_group_unique_identifier", key: "ldapAttributeGroupUniqueIdentifier", about: "The LDAP attribute that uniquely identifies a group."},
 	{attribute: "ldap_attribute_group_name", key: "ldapAttributeGroupName", about: "The LDAP attribute holding a group's name."},
 	{attribute: "ldap_admin_group_name", key: "ldapAdminGroupName", about: "The LDAP group whose members are Pocket ID administrators."},
-	{attribute: "ldap_soft_delete_users", key: "ldapSoftDeleteUsers", about: "Whether users removed from LDAP are disabled instead of deleted.", format: booleanFormat, rule: appConfigBoolean, defaultValue: "true", required: true},
+	{attribute: "ldap_soft_delete_users", key: "ldapSoftDeleteUsers", about: "Whether users removed from LDAP are disabled instead of deleted.", format: appConfigBooleanFormat, rule: appConfigBoolean, defaultValue: "true", required: true},
 
-	{attribute: "auto_create_oidc_client_secret", key: autoCreateKey, about: "Whether Pocket ID creates a client secret of its own when a confidential OIDC client is created.", format: booleanFormat, rule: appConfigBoolean, defaultValue: "true", required: true, minVersion: "2.17.0"},
+	{attribute: "auto_create_oidc_client_secret", key: appConfigAutoCreateKey, about: "Whether Pocket ID creates a client secret of its own when a confidential OIDC client is created.", format: appConfigBooleanFormat, rule: appConfigBoolean, defaultValue: "true", required: true, minVersion: "2.17.0"},
 }
 
 // description is the attribute's documentation: what it does, the accepted

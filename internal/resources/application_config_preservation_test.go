@@ -275,7 +275,7 @@ func appConfigFakeServer(t *testing.T, overrides map[string]string, store func(m
 	return c, &lastPut
 }
 
-func nullAppConfigModel() *applicationConfigModel {
+func appConfigNullModel() *applicationConfigModel {
 	m := &applicationConfigModel{}
 	value := reflect.ValueOf(m).Elem()
 	for i := 0; i < value.NumField(); i++ {
@@ -292,9 +292,9 @@ func nullAppConfigModel() *applicationConfigModel {
 func TestApplicationConfigUnconfiguredKeepsServerValue(t *testing.T) {
 	c, sent := appConfigFakeServer(t, map[string]string{"appName": "Fixture", "accentColor": "#changed-outside"}, nil)
 	r := &applicationConfigResource{client: c}
-	config := nullAppConfigModel()
+	config := appConfigNullModel()
 	config.AppName = types.StringValue("Renamed")
-	plan := nullAppConfigModel()
+	plan := appConfigNullModel()
 	plan.AppName = types.StringValue("Renamed")
 	plan.AccentColor = types.StringValue("#from-state")
 	plan.ID = types.StringUnknown()
@@ -321,7 +321,7 @@ func TestApplicationConfigUnstoredValueFails(t *testing.T) {
 		payload["smtpPassword"] = ""
 	})
 	r := &applicationConfigResource{client: c}
-	config := nullAppConfigModel()
+	config := appConfigNullModel()
 	config.AppName = types.StringValue("Renamed")
 	config.SmtpPassword = types.StringValue(secret)
 	config.AccentColor = types.StringValue("default")
