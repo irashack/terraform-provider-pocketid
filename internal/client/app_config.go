@@ -1,7 +1,11 @@
 package client
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 )
@@ -81,7 +85,23 @@ type ApplicationConfig struct {
 	// its value through an update by a provider that does not know it. A
 	// named field always takes precedence over an entry here.
 	Additional map[string]string `json:"-"`
+
+	// reported holds every key the server's response gave a string value,
+	// so a key it left out stays distinguishable from one it reported as "".
+	reported map[string]bool
 }
+
+// Reported reports whether the response cfg was decoded from gave key a
+// string value (possibly ""). It is false for a configuration built in code,
+// and for a key the server left out.
+func (cfg *ApplicationConfig) Reported(key string) bool {
+	return cfg.reported[key]
+}
+
+// ErrIncompleteApplicationConfig is returned when a response lists a setting
+// without a string value (the value missing, null, or another JSON type).
+// Reading it as "" could make an update clear that setting.
+var ErrIncompleteApplicationConfig = errors.New("the application configuration response lists a setting without a string value")
 
 // Values returns cfg as the key/value map an update sends: every key in
 // Additional, then every named field over them. A pointer field that is nil
@@ -120,19 +140,40 @@ type AppConfigVariable struct {
 	Value string `json:"value"`
 }
 
-// appConfigVariablesToConfig converts the key/value variable slice returned by
-// the application configuration endpoints into an ApplicationConfig struct.
-// JSON tags also map WebAuthn and CIMD fields; absent older-server keys remain
-// empty instead of inventing security defaults. A *string field stays nil when
-// its key is absent, so it is omitted from an update to that server. Keys
-// with no field go to Additional.
-func appConfigVariablesToConfig(vars []AppConfigVariable) *ApplicationConfig {
+// appConfigWireVariable is one entry of an application configuration
+// response, with its value kept raw so a missing or null value is not taken
+// for "".
+type appConfigWireVariable struct {
+	Key   string          `json:"key"`
+	Value json.RawMessage `json:"value"`
+}
+
+// decodeApplicationConfig decodes the key/value list returned by the
+// application configuration endpoints. Every listed value must be a JSON
+// string; otherwise it returns ErrIncompleteApplicationConfig. JSON tags also
+// map WebAuthn and CIMD fields; absent older-server keys remain empty instead
+// of inventing security defaults (Reported tells them apart from ""). A
+// *string field stays nil when its key is absent, so it is omitted from an
+// update to that server. Keys with no field go to Additional.
+func decodeApplicationConfig(body []byte) (*ApplicationConfig, error) {
+	var vars []appConfigWireVariable
+	if err := json.Unmarshal(body, &vars); err != nil {
+		return nil, fmt.Errorf("error unmarshaling response: %w", err)
+	}
 	values := make(map[string]string, len(vars))
 	for _, v := range vars {
-		values[v.Key] = v.Value
+		raw := bytes.TrimSpace(v.Value)
+		var value string
+		if len(raw) == 0 || raw[0] != '"' || json.Unmarshal(raw, &value) != nil {
+			return nil, ErrIncompleteApplicationConfig
+		}
+		values[v.Key] = value
 	}
 
-	cfg := &ApplicationConfig{}
+	cfg := &ApplicationConfig{reported: make(map[string]bool, len(values))}
+	for key := range values {
+		cfg.reported[key] = true
+	}
 	cfgValue := reflect.ValueOf(cfg).Elem()
 	cfgType := cfgValue.Type()
 	for i := 0; i < cfgType.NumField(); i++ {
@@ -156,7 +197,7 @@ func appConfigVariablesToConfig(vars []AppConfigVariable) *ApplicationConfig {
 		cfg.Additional = values
 	}
 
-	return cfg
+	return cfg, nil
 }
 
 // GetApplicationConfig retrieves the full application configuration, including
@@ -167,12 +208,7 @@ func (c *Client) GetApplicationConfig(ctx context.Context) (*ApplicationConfig, 
 		return nil, err
 	}
 
-	var vars []AppConfigVariable
-	if err := decodeResponse(body, &vars); err != nil {
-		return nil, err
-	}
-
-	return appConfigVariablesToConfig(vars), nil
+	return decodeApplicationConfig(body)
 }
 
 // UpdateApplicationConfig updates the application configuration via
@@ -186,12 +222,11 @@ func (c *Client) UpdateApplicationConfig(ctx context.Context, cfg *ApplicationCo
 		return nil, err
 	}
 
-	var vars []AppConfigVariable
-	if err := decodeResult(body, &vars); err != nil {
-		return nil, err
+	updated, err := decodeApplicationConfig(body)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrResultUnread, err)
 	}
-
-	return appConfigVariablesToConfig(vars), nil
+	return updated, nil
 }
 
 // SyncLdap triggers an LDAP synchronization. It returns an error if LDAP is not

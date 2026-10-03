@@ -171,3 +171,40 @@ func TestApplicationConfigAutoCreateOIDCClientSecret(t *testing.T) {
 		})
 	}
 }
+
+// A listed setting whose value is missing, null or not a string is not read
+// as "": the response is refused. A key left out is not reported; one
+// reported as "" is.
+func TestApplicationConfigIncompleteResponses(t *testing.T) {
+	var body string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	defer server.Close()
+	c, err := client.NewClient(server.URL, "test-token", false, 30)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	for name, entry := range map[string]string{
+		"value missing": `{"key":"smtpPassword","type":"string"}`,
+		"value null":    `{"key":"smtpPassword","value":null}`,
+		"value number":  `{"key":"smtpPassword","value":5}`,
+		"value object":  `{"key":"ldapBindPassword","value":{}}`,
+	} {
+		body = `[{"key":"appName","value":"Fixture"},` + entry + `]`
+		_, err := c.GetApplicationConfig(ctx)
+		assert.ErrorIs(t, err, client.ErrIncompleteApplicationConfig, name)
+		_, err = c.UpdateApplicationConfig(ctx, &client.ApplicationConfig{AppName: "Fixture"})
+		assert.ErrorIs(t, err, client.ErrIncompleteApplicationConfig, name)
+		assert.ErrorIs(t, err, client.ErrResultUnread, "%s: the update was made", name)
+	}
+
+	body = `[{"key":"appName","value":"Fixture"},{"key":"ldapBindPassword","value":""}]`
+	cfg, err := c.GetApplicationConfig(ctx)
+	require.NoError(t, err)
+	assert.True(t, cfg.Reported("ldapBindPassword"), "an explicit empty value is reported")
+	assert.Equal(t, "", cfg.LdapBindPassword)
+	assert.False(t, cfg.Reported("smtpPassword"), "a key left out is not")
+	assert.False(t, (&client.ApplicationConfig{}).Reported("appName"))
+}

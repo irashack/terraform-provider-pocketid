@@ -439,6 +439,15 @@ func (r *applicationConfigResource) applyConfig(ctx context.Context, config, pla
 		return
 	}
 
+	if unread := unreportedCarriedSettings(config, current, writeOnly); len(unread) > 0 {
+		diags.AddError(
+			"Incomplete application configuration",
+			"Pocket ID's current configuration did not include a value for: "+strings.Join(unread, ", ")+
+				". The update replaces the whole configuration, so it would have reset those settings; nothing was changed. Set them in the configuration, or check the server.",
+		)
+		return
+	}
+
 	payload := modelToApplicationConfig(config, current)
 	for _, secret := range appConfigSecrets {
 		if value, ok := writeOnly[secret.attribute]; ok {
@@ -457,6 +466,14 @@ func (r *applicationConfigResource) applyConfig(ctx context.Context, config, pla
 		return
 	}
 
+	if missing := unreportedSentSettings(payload, updated); len(missing) > 0 {
+		diags.AddError(
+			"Incomplete application configuration",
+			"Pocket ID accepted the update, but its response did not include a value for: "+strings.Join(missing, ", ")+
+				". Its configuration has changed; refresh to see what it holds.",
+		)
+		return
+	}
 	if unstored := unstoredAppConfigSettings(current, payload, updated); len(unstored) > 0 {
 		diags.AddError(
 			"Pocket ID stored different application settings",
@@ -491,23 +508,62 @@ func (r *applicationConfigResource) applyConfig(ctx context.Context, config, pla
 // secrets.
 func unstoredAppConfigSettings(current, sent, updated *client.ApplicationConfig) []string {
 	before, request, after := current.Values(), sent.Values(), updated.Values()
-	attributes := make(map[string]string, len(appConfigSettings))
-	for _, setting := range appConfigSettings {
-		attributes[setting.key] = setting.attribute
-	}
 	var unstored []string
 	for key, value := range request {
-		if value == before[key] || value == after[key] {
+		if (current.Reported(key) && value == before[key]) || value == after[key] {
 			continue
 		}
-		name, ok := attributes[key]
-		if !ok {
-			name = key
-		}
-		unstored = append(unstored, name)
+		unstored = append(unstored, appConfigSettingName(key))
 	}
 	sort.Strings(unstored)
 	return unstored
+}
+
+// appConfigSettingName is the attribute for key, or key itself for a setting
+// this provider has no attribute for.
+func appConfigSettingName(key string) string {
+	for _, setting := range appConfigSettings {
+		if setting.key == key {
+			return setting.attribute
+		}
+	}
+	return key
+}
+
+// unreportedCarriedSettings names the settings an update would send back
+// with the server's current value although the server did not report one:
+// not configured, not a write-only value being sent, and not reported as a
+// string. Sending "" for them would reset them (a password would be cleared).
+// A version-dependent setting the server did not report is not sent at all.
+func unreportedCarriedSettings(config *applicationConfigModel, current *client.ApplicationConfig, writeOnly map[string]string) []string {
+	var unread []string
+	for _, setting := range appConfigSettings {
+		if setting.minVersion != "" || current.Reported(setting.key) {
+			continue
+		}
+		if _, sent := writeOnly[setting.attribute]; sent {
+			continue
+		}
+		if value := appConfigModelValue(config, setting.attribute); !value.IsNull() && !value.IsUnknown() {
+			continue
+		}
+		unread = append(unread, setting.attribute)
+	}
+	sort.Strings(unread)
+	return unread
+}
+
+// unreportedSentSettings names the settings the update sent that the
+// server's response did not report.
+func unreportedSentSettings(sent, updated *client.ApplicationConfig) []string {
+	var missing []string
+	for key := range sent.Values() {
+		if !updated.Reported(key) {
+			missing = append(missing, appConfigSettingName(key))
+		}
+	}
+	sort.Strings(missing)
+	return missing
 }
 
 // fillUnplannedFromServer sets every planned value that is unknown (or null)

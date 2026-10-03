@@ -62,3 +62,9 @@
   profile picture removes them; Pocket ID cannot remove the e-mail logo or the
   favicon, so destroying those leaves the image in place, with a warning.
   Uploads are sent once, never retried, and limited to 10 MiB.
+- `pocketid_application_config` refuses an update, before sending anything,
+  when Pocket ID's current configuration leaves out a setting the update would
+  have to send back unchanged (a password among them), or lists one without a
+  string value. Sending an empty value would have reset that setting, clearing
+  a password. A response that leaves out a setting the update sent is reported
+  as an error.

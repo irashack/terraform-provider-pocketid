@@ -281,7 +281,11 @@ func TestApplicationConfigApplyRefusesUnreportedSetting(t *testing.T) {
 		if r.Method != http.MethodGet {
 			puts++
 		}
-		_ = json.NewEncoder(w).Encode([]client.AppConfigVariable{{Key: "appName", Value: "Fixture"}})
+		var vars []client.AppConfigVariable
+		for key, value := range appConfigServerDefaults(nil) {
+			vars = append(vars, client.AppConfigVariable{Key: key, Value: value})
+		}
+		_ = json.NewEncoder(w).Encode(vars)
 	}))
 	defer server.Close()
 	c, err := client.NewClient(server.URL, "synthetic-token", false, 30)

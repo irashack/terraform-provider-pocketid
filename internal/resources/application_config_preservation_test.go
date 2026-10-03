@@ -129,13 +129,13 @@ func TestApplicationConfigExplicitValues(t *testing.T) {
 // key universe is its own, not derived from the provider's model.
 func TestApplicationConfigUpdateKeepsUnknownServerKeys(t *testing.T) {
 	const unknownKey, unknownValue = "aSettingNoProviderKnows", "custom-value"
-	reported := map[string]string{
+	reported := appConfigServerDefaults(map[string]string{
 		"appName":                         "Fixture",
 		"webauthnUserVerification":        "preferred",
 		"webauthnAllowSyncedPasskeys":     "true",
 		"webauthnAuthenticatorAttachment": "any",
 		unknownKey:                        unknownValue,
-	}
+	})
 	vars := func(config map[string]string) []client.AppConfigVariable {
 		result := make([]client.AppConfigVariable, 0, len(config))
 		for key, value := range config {
@@ -183,11 +183,9 @@ func TestApplicationConfigUpdateKeepsUnknownServerKeys(t *testing.T) {
 // A server before 2.17.0 does not report autoCreateOidcClientSecret, and the
 // update must not invent it.
 func TestApplicationConfigOmitsUnreportedSettings(t *testing.T) {
-	reported := []client.AppConfigVariable{
-		{Key: "appName", Value: "Fixture"},
-		{Key: "webauthnUserVerification", Value: "preferred"},
-		{Key: "webauthnAllowSyncedPasskeys", Value: "true"},
-		{Key: "webauthnAuthenticatorAttachment", Value: "any"},
+	var reported []client.AppConfigVariable
+	for key, value := range appConfigServerDefaults(map[string]string{"appName": "Fixture", "webauthnUserVerification": "preferred"}) {
+		reported = append(reported, client.AppConfigVariable{Key: key, Value: value})
 	}
 	puts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -223,11 +221,28 @@ func TestApplicationConfigOmitsUnreportedSettings(t *testing.T) {
 	require.Equal(t, 1, puts)
 }
 
-// appConfigFakeServer serves GET /all from config and stores each PUT body,
+// appConfigServerDefaults is a complete configuration as a 2.14 to 2.16
+// server reports it (every key at its default), with overrides applied.
+func appConfigServerDefaults(overrides map[string]string) map[string]string {
+	config := map[string]string{}
+	for _, setting := range appConfigSettings {
+		if setting.minVersion == "" {
+			config[setting.key] = setting.defaultValue
+		}
+	}
+	for key, value := range overrides {
+		config[key] = value
+	}
+	return config
+}
+
+// appConfigFakeServer serves GET /all from a complete configuration with
+// overrides and stores each PUT body,
 // passed through store first, as the new configuration. It returns the
 // client and a pointer to the last PUT body.
-func appConfigFakeServer(t *testing.T, config map[string]string, store func(map[string]string)) (*client.Client, *map[string]string) {
+func appConfigFakeServer(t *testing.T, overrides map[string]string, store func(map[string]string)) (*client.Client, *map[string]string) {
 	t.Helper()
+	config := appConfigServerDefaults(overrides)
 	var lastPut map[string]string
 	toVars := func(values map[string]string) []client.AppConfigVariable {
 		vars := make([]client.AppConfigVariable, 0, len(values))
