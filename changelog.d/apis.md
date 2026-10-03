@@ -26,3 +26,10 @@
   time. Import with `<api_id>/<client_id>`. Clients registered through a
   Client ID Metadata Document cannot be addressed; give them access on the
   API with `allow_cimd_clients`.
+- New data sources `pocketid_api` (look up one API by `id` or by its exact
+  `resource` identifier) and `pocketid_apis` (every API, oldest first, read
+  across all pages), each with the API's permissions keyed by permission key
+  and its CIMD access.
+- Deleting an API in Pocket ID removes every client's access to it, including
+  access granted without permissions; a `pocketid_api_client_access` for it
+  disappears from state on the next refresh.
