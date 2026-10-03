@@ -814,6 +814,14 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 			return
 		}
 	}
+	// A generation after one whose result was lost goes ahead only when the
+	// client has no secret this resource cannot account for.
+	if marker, uncertain := readUncertainGeneration(ctx, req.Private); uncertain && secretAction == secretGenerate {
+		if err := r.checkUncertainGeneration(ctx, plan.ID.ValueString(), marker); err != nil {
+			resp.Diagnostics.AddError("Cannot create the client secret yet", err.Error()+". No change was made.")
+			return
+		}
+	}
 	var revokeID string
 	revokeGone := false
 	if secretAction == secretRevoke {
@@ -910,11 +918,14 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
-	pending, err := r.applySecretAction(ctx, secretAction, revokeID, revokeGone, state, &plan)
+	outcome, err := r.applySecretAction(ctx, secretAction, revokeID, revokeGone, state, &plan)
 	if err != nil {
 		resp.Diagnostics.AddError("Error updating the client secret", "The client itself was updated. "+err.Error())
 	}
-	recordPending(pending)
+	recordPending(outcome.pendingRevocation)
+	if secretAction == secretGenerate && resp.Private != nil {
+		resp.Diagnostics.Append(writeUncertainGeneration(ctx, resp.Private, outcome)...)
+	}
 
 	// Set the state
 	diags = resp.State.Set(ctx, &plan)
@@ -946,6 +957,12 @@ func (r *clientResource) ModifyPlan(ctx context.Context, req resource.ModifyPlan
 		return
 	}
 	planSecretAttributes(state, &plan, privateFlag(ctx, req.Private, pendingRevocationKey))
+	if _, uncertain := readUncertainGeneration(ctx, req.Private); uncertain && state != nil {
+		if action, known := planSecretAction(*state, plan, privateFlag(ctx, req.Private, pendingRevocationKey)); known && action == secretGenerate {
+			resp.Diagnostics.AddAttributeWarning(path.Root("client_secret"), "An earlier client secret generation is unresolved",
+				"An earlier apply could not confirm whether it created a client secret. Before creating one, this apply checks the client's secrets and stops if there is one this resource cannot account for.")
+		}
+	}
 	planGroupRestriction(state, config, &plan)
 	planPkceSupported(state, &plan)
 	warnOnOpening(state, plan, &resp.Diagnostics)

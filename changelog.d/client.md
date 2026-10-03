@@ -7,7 +7,10 @@
   cannot be told apart from the client's other secrets, the apply stops before
   changing anything and lists the client's secrets (IDs and prefixes, never
   values). A client imported, or created before this attribute existed,
-  without a secret in state does not get one generated.
+  without a secret in state does not get one generated. If creating a secret
+  may have succeeded but its answer was lost, the next apply does not create
+  another while the client has a secret the provider cannot account for; it
+  lists such secrets (IDs and prefixes) so that you can revoke them.
 - `pocketid_client` has a new computed `client_secret_id`: the ID of the
   secret stored in `client_secret` (Pocket ID 2.14.0 and later). For existing
   state it is filled in on the next refresh when the secret can be identified

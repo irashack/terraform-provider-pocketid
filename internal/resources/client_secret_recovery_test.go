@@ -131,3 +131,76 @@ func TestClientReversedRevocationSecretStillExists(t *testing.T) {
 	again := h.plan(done.model, config, done.private)
 	assert.True(t, h.emptyPlan(*done.model, again))
 }
+
+// A generation whose POST Pocket ID carried out but whose answer was lost
+// leaves a valid secret nobody knows the value of. The next apply must not
+// create another while that secret exists: it stops before any change and
+// lists the secret by ID and prefix. Once the operator revokes it, the
+// generation goes ahead.
+func TestClientUncertainGenerationNotRepeated(t *testing.T) {
+	fake := managedFake(t, "2.17.0")
+	fake.client.IsPublic, fake.secrets = true, nil
+	fake.lostResponse = map[string]bool{generateSecret: true}
+	h := newProtoHarness(t, fake.start())
+	prior := managedModel()
+	prior.IsPublic = types.BoolValue(true)
+	prior.ClientSecret, prior.ClientSecretID = types.StringNull(), types.StringNull()
+	config := homelabConfig() // confidential, generate_secret default true
+
+	result := h.apply(&prior, config, h.plan(&prior, config, nil))
+	require.Contains(t, result.errors, "may have been created")
+	require.Len(t, fake.secrets, 1, "Pocket ID created it")
+	assert.Equal(t, 1, fake.called(generateSecret))
+	fake.lostResponse = nil
+
+	refreshed := h.read(*result.model, result.private)
+	require.Empty(t, refreshed.errors)
+	p := h.plan(refreshed.model, config, refreshed.private)
+	require.Empty(t, p.errors)
+	assert.True(t, p.model.ClientSecret.IsUnknown())
+	assert.Equal(t, 1, p.warnings, "the plan says the apply checks first")
+	writes := len(fake.mutations())
+	refused := h.apply(refreshed.model, config, p)
+	assert.Contains(t, refused.errors, fake.secrets[0].ID, "the unaccounted secret is listed")
+	assert.Contains(t, refused.errors, fake.secrets[0].Prefix)
+	assert.NotContains(t, refused.errors, "synthetic-generated-secret-value")
+	assert.Len(t, fake.mutations(), writes, "no change was made")
+	assert.Equal(t, 1, fake.called(generateSecret), "no second POST")
+
+	// Still refused on the next attempt, until the operator revokes it.
+	p = h.plan(refused.model, config, refused.private)
+	refused = h.apply(refused.model, config, p)
+	require.NotEmpty(t, refused.errors)
+	fake.secrets = nil
+	p = h.plan(refused.model, config, refused.private)
+	done := h.apply(refused.model, config, p)
+	require.Empty(t, done.errors)
+	assert.Equal(t, 2, fake.called(generateSecret))
+	require.Len(t, fake.secrets, 1)
+	assert.Equal(t, fake.secrets[0].ID, done.model.ClientSecretID.ValueString())
+	again := h.plan(done.model, config, done.private)
+	assert.True(t, h.emptyPlan(*done.model, again))
+	assert.Zero(t, again.warnings)
+}
+
+// A generation that certainly created nothing (the POST failed before Pocket
+// ID acted, so no unknown secret appears) is simply tried again.
+func TestClientUncertainGenerationThatCreatedNothing(t *testing.T) {
+	fake := managedFake(t, "2.17.0")
+	fake.client.IsPublic, fake.secrets = true, nil
+	fake.fail[generateSecret] = 503
+	h := newProtoHarness(t, fake.start())
+	prior := managedModel()
+	prior.IsPublic = types.BoolValue(true)
+	prior.ClientSecret, prior.ClientSecretID = types.StringNull(), types.StringNull()
+	config := homelabConfig()
+	result := h.apply(&prior, config, h.plan(&prior, config, nil))
+	require.NotEmpty(t, result.errors)
+	delete(fake.fail, generateSecret)
+
+	refreshed := h.read(*result.model, result.private)
+	done := h.apply(refreshed.model, config, h.plan(refreshed.model, config, refreshed.private))
+	require.Empty(t, done.errors)
+	assert.Equal(t, 2, fake.called(generateSecret))
+	assert.Len(t, fake.secrets, 1)
+}

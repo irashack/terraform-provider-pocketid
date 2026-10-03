@@ -2,12 +2,15 @@ package resources
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
@@ -251,20 +254,33 @@ func (r *clientResource) generateHeldSecret(ctx context.Context, model *clientRe
 		if definitelyRejected(err) {
 			return fmt.Errorf("the server refused to create a client secret, so none was created: %w", err)
 		}
-		return fmt.Errorf("the result of creating a client secret is uncertain: one may have been created. It was not retried. List the client's secrets in Pocket ID and revoke any you do not recognize before applying again: %w", err)
+		return fmt.Errorf("the result of creating a client secret is uncertain: one may have been created, and its value is lost. It was not retried. The next apply will not create another while the client has a secret this resource cannot account for: %w", err)
 	}
 	model.ClientSecret = types.StringValue(secret.Value)
 	model.ClientSecretID = optionalString(secret.ID)
 	return nil
 }
 
+// secretOutcome is what an update's secret step leaves for later applies.
+type secretOutcome struct {
+	// pendingRevocation: a revocation is still due.
+	pendingRevocation bool
+	// uncertainGeneration is set when a generation's POST may have created
+	// a secret whose value was lost; knownSecrets are the IDs the client had
+	// just before it.
+	uncertainGeneration bool
+	knownSecrets        []string
+}
+
 // applySecretAction carries out an update's secret action after the client
 // itself was written, and records the outcome in model. prior is the state
 // before the update. When it fails, model holds what is confirmed: a secret
-// whose revocation was not confirmed stays in state and pending reports that
-// its revocation is still due; after a failed generation generate_secret is
-// recorded as false so that the next plan shows the generation again.
-func (r *clientResource) applySecretAction(ctx context.Context, action secretAction, revokeID string, gone bool, prior clientResourceModel, model *clientResourceModel) (pending bool, err error) {
+// whose revocation was not confirmed stays in state and the outcome marks its
+// revocation as still due; after a failed generation generate_secret is
+// recorded as false so that the next plan shows the generation again, and a
+// generation that may have created a secret is marked uncertain, with the
+// secrets the client had before, so that it is not simply repeated.
+func (r *clientResource) applySecretAction(ctx context.Context, action secretAction, revokeID string, gone bool, prior clientResourceModel, model *clientResourceModel) (secretOutcome, error) {
 	switch action {
 	case secretKeep:
 		model.ClientSecret, model.ClientSecretID = prior.ClientSecret, prior.ClientSecretID
@@ -274,20 +290,115 @@ func (r *clientResource) applySecretAction(ctx context.Context, action secretAct
 			if err := r.revokeClientSecret(ctx, model.ID.ValueString(), revokeID); err != nil {
 				model.ClientSecret = prior.ClientSecret
 				model.ClientSecretID = types.StringValue(revokeID)
-				return true, err
+				return secretOutcome{pendingRevocation: true}, err
 			}
 		}
 		model.ClientSecret, model.ClientSecretID = types.StringNull(), types.StringNull()
 	case secretGenerate:
 		tflog.Debug(ctx, "Generating the client secret this resource holds", map[string]any{"id": model.ID.ValueString()})
+		known, listed, err := r.secretIDsBeforeGeneration(ctx, model.ID.ValueString())
+		if err != nil {
+			model.ClientSecret, model.ClientSecretID = types.StringNull(), types.StringNull()
+			model.GenerateSecret = types.BoolValue(false)
+			return secretOutcome{}, err
+		}
 		if err := r.generateHeldSecret(ctx, model); err != nil {
 			model.GenerateSecret = types.BoolValue(false)
-			return false, err
+			return secretOutcome{uncertainGeneration: listed && !definitelyRejected(err), knownSecrets: known}, err
 		}
 	default:
 		model.ClientSecret, model.ClientSecretID = types.StringNull(), types.StringNull()
 	}
-	return false, nil
+	return secretOutcome{}, nil
+}
+
+// secretIDsBeforeGeneration lists the client's secret IDs just before a
+// generation, so that a generation whose result is lost can be reconciled
+// later. listed is false on a server before 2.14.0, where a generation
+// replaces the client's only secret and repeating it is harmless.
+func (r *clientResource) secretIDsBeforeGeneration(ctx context.Context, clientID string) (ids []string, listed bool, err error) {
+	supported, err := r.client.VersionAtLeast(ctx, clientSecretsMinVersion)
+	if err != nil {
+		return nil, false, fmt.Errorf("could not determine the server version before creating a client secret, so none was created: %w", err)
+	}
+	if !supported {
+		return nil, false, nil
+	}
+	secrets, err := r.client.ListClientSecrets(ctx, clientID)
+	if err != nil {
+		return nil, false, fmt.Errorf("could not list the client's secrets before creating one, so none was created: %w", err)
+	}
+	ids = make([]string, 0, len(secrets))
+	for _, secret := range secrets {
+		ids = append(ids, secret.ID)
+	}
+	return ids, true, nil
+}
+
+// uncertainGenerationKey is the private-state key of a generation that may
+// have created a secret whose value was lost. Its value lists the secret IDs
+// the client had just before that POST.
+const uncertainGenerationKey = "uncertain_secret_generation"
+
+// uncertainGeneration is the value stored under uncertainGenerationKey.
+type uncertainGeneration struct {
+	KnownSecrets []string `json:"known_secrets"`
+}
+
+// readUncertainGeneration returns the recorded uncertain generation, if any.
+func readUncertainGeneration(ctx context.Context, private privateGetter) (*uncertainGeneration, bool) {
+	if private == nil {
+		return nil, false
+	}
+	raw, _ := private.GetKey(ctx, uncertainGenerationKey)
+	if len(raw) == 0 {
+		return nil, false
+	}
+	var marker uncertainGeneration
+	if json.Unmarshal(raw, &marker) != nil {
+		// Unreadable, but present: treat every secret as unaccounted.
+		return &uncertainGeneration{}, true
+	}
+	return &marker, true
+}
+
+// writeUncertainGeneration records or removes the marker.
+func writeUncertainGeneration(ctx context.Context, private privateSetter, outcome secretOutcome) diag.Diagnostics {
+	if !outcome.uncertainGeneration {
+		return private.SetKey(ctx, uncertainGenerationKey, nil)
+	}
+	known := outcome.knownSecrets
+	if known == nil {
+		known = []string{}
+	}
+	raw, err := json.Marshal(uncertainGeneration{KnownSecrets: known})
+	if err != nil {
+		var diags diag.Diagnostics
+		diags.AddError("Could not record an uncertain secret generation", err.Error())
+		return diags
+	}
+	return private.SetKey(ctx, uncertainGenerationKey, raw)
+}
+
+// checkUncertainGeneration decides whether a generation may follow one whose
+// result was lost: only when the client has no secret this resource cannot
+// account for (none created since, or the operator revoked it). Otherwise it
+// returns an error listing those secrets by ID and prefix. It makes no change.
+func (r *clientResource) checkUncertainGeneration(ctx context.Context, clientID string, marker *uncertainGeneration) error {
+	secrets, err := r.client.ListClientSecrets(ctx, clientID)
+	if err != nil {
+		return fmt.Errorf("an earlier apply may have created a client secret whose value was lost, and the client's secrets could not be listed to check: %w", err)
+	}
+	var unaccounted []client.ClientSecretMetadata
+	for _, secret := range secrets {
+		if !slices.Contains(marker.KnownSecrets, secret.ID) {
+			unaccounted = append(unaccounted, secret)
+		}
+	}
+	if len(unaccounted) == 0 {
+		return nil
+	}
+	return fmt.Errorf("an earlier apply may have created a client secret whose value was lost. These secrets were created since and this resource cannot account for them. %s Revoke the ones that are not in use (in the Pocket ID admin UI), then apply again", describeSecrets(unaccounted))
 }
 
 // planSecretAttributes plans client_secret and client_secret_id. state is nil
