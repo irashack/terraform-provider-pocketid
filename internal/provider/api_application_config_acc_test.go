@@ -123,6 +123,22 @@ func TestAccAPI_applicationConfigRules(t *testing.T) {
 		assert.Equal(t, defaultValue, testAccAppConfig(t)[key], "an empty %s is stored as its default", key)
 	}
 
+	// An omitted or empty password clears it: an update that does not send
+	// the current password back loses it. This is why the provider sends the
+	// server's current password when a write-only input's version did not
+	// change.
+	for _, key := range []string{"smtpPassword", "ldapBindPassword"} {
+		require.Equal(t, http.StatusOK, testAccPutAppConfig(t, with(key, "tf-acc-synthetic-"+key)), key)
+		require.Equal(t, "tf-acc-synthetic-"+key, testAccAppConfig(t)[key])
+		omitted := with(key, "")
+		delete(omitted, key)
+		require.Equal(t, http.StatusOK, testAccPutAppConfig(t, omitted), key)
+		assert.Equal(t, "", testAccAppConfig(t)[key], "an omitted %s is cleared", key)
+		require.Equal(t, http.StatusOK, testAccPutAppConfig(t, with(key, "tf-acc-synthetic-"+key)), key)
+		require.Equal(t, http.StatusOK, testAccPutAppConfig(t, with(key, "")), key)
+		assert.Equal(t, "", testAccAppConfig(t)[key], "an empty %s is cleared", key)
+	}
+
 	// Pocket ID 2.17.0 added autoCreateOidcClientSecret; older servers do
 	// not report it.
 	_, reported := original["autoCreateOidcClientSecret"]

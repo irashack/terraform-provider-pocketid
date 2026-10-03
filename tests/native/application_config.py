@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
-"""SMTP-only native lifecycle against disposable-pocketid.py; synthetic data only."""
+"""SMTP-only native lifecycle against disposable-pocketid.py; synthetic data only.
+
+Usage: application_config.py TOOL MIRROR TARGET_VERSION [OLD_VERSION]
+
+With OLD_VERSION, the older provider imports the configuration and manages the
+SMTP settings with the plain smtp_password, as a configuration written for it
+would; the target version then takes over that state and must plan nothing for
+the unchanged configuration. Either way the target version then moves the
+password to smtp_password_wo, which must keep it out of state and plan without
+blanking it on the server, and keep it through an update without a refresh.
+"""
 import json
 import os
 from pathlib import Path
@@ -105,11 +115,13 @@ data "pocketid_application_config" "test" {
  depends_on = [pocketid_application_config.test]
 }
 ''')
-    def run(*args):
+    def run(*args, ok=(0,)):
         result = subprocess.run([tool, *args], cwd=root, env=env, capture_output=True)
-        assert result.returncode == 0, "native command failed: " + args[0]
+        assert result.returncode in ok, "native command failed: " + args[0]
         return result.stdout
-    def verify(expected):
+    def verify(expected, secrets):
+        """secrets maps smtp_password and ldap_bind_password to the value the
+        resource must hold in state: None when it is not tracked."""
         assert api("GET")[1] == expected, "unrelated server setting changed"
         state = json.loads(run("show", "-json"))
         rows = state["values"]["root_module"]["resources"]
@@ -119,47 +131,94 @@ data "pocketid_application_config" "test" {
             for attr, key in (("webauthn_user_verification", "webauthnUserVerification"),
                               ("webauthn_allow_synced_passkeys", "webauthnAllowSyncedPasskeys"),
                               ("webauthn_authenticator_attachment", "webauthnAuthenticatorAttachment"),
-                              ("cimd_url_allowlist", "cimdUrlAllowlist"),
-                              ("smtp_password", "smtpPassword"), ("ldap_bind_password", "ldapBindPassword")):
+                              ("cimd_url_allowlist", "cimdUrlAllowlist")):
                 assert values[attr] == expected.get(key, ""), "resource/data-source mapping mismatch: " + attr
+            for attr in ("smtp_password", "ldap_bind_password"):
+                if row["mode"] == "data":
+                    assert attr not in values, "the data source exposes " + attr
+                else:
+                    assert values.get(attr) == secrets[attr], "state holds the wrong " + attr
+                    assert values.get(attr + "_wo") is None, "state holds a write-only value"
+        if tool == "terraform":
+            # The current state only: a backup holds the state before the
+            # last change, which may still have had the plain password.
+            body = (root / "terraform.tfstate").read_bytes()
+            for value in secrets.get("absent", ()):
+                assert value.encode() not in body, "a password that must be out of state is in it"
         if tool == "tofu":
             for path in root.glob("terraform.tfstate*"):
                 body = json.loads(path.read_bytes())
                 assert "encrypted_data" in body and "resources" not in body, "plaintext state/backup"
-    config({})
-    run("init", "-input=false")
-    run("import", "-input=false", "pocketid_application_config.test", "application-configuration")
-    if provider_version != target_version:
-        provider_version = target_version
-        config({})
-        run("init", "-upgrade", "-input=false")
-    run("apply", "-refresh-only", "-auto-approve", "-input=false")
-    run("plan", "-detailed-exitcode", "-input=false")
-    verify(original)
     smtp = {"smtp_host": "smtp.fastmail.com", "smtp_port": "587", "smtp_tls": "starttls",
             "smtp_skip_cert_verify": "false", "smtp_from": "fixture@example.invalid",
             "smtp_user": "fixture@example.invalid", "smtp_password": secrets.token_urlsafe(24)}
-    config(smtp)
-    run("apply", "-auto-approve", "-input=false")
     expected = dict(original)
     expected.update(dict(zip(("smtpHost", "smtpPort", "smtpTls", "smtpSkipCertVerify", "smtpFrom", "smtpUser", "smtpPassword"), smtp.values())))
-    verify(expected)
+    config({})
+    run("init", "-input=false")
+    run("import", "-input=false", "pocketid_application_config.test", "application-configuration")
+    if upgrading:
+        # The older provider writes the state: it stored every password it
+        # read, the LDAP one included, and manages SMTP with the plain input.
+        config(smtp)
+        run("apply", "-auto-approve", "-input=false")
+        provider_version = target_version
+        config(smtp)
+        run("init", "-upgrade", "-input=false")
+        run("plan", "-detailed-exitcode", "-input=false")  # unchanged configuration: no change
+        # The data source's stored result still has the removed password
+        # attributes, which "show" cannot decode until a refresh rewrites it.
+        run("show", "-json", ok=(1,))
+        run("apply", "-refresh-only", "-auto-approve", "-input=false")
+        ldap_in_state = original["ldapBindPassword"]
+    else:
+        run("apply", "-refresh-only", "-auto-approve", "-input=false")
+        run("plan", "-detailed-exitcode", "-input=false")
+        # An import tracks no password: none is copied into state.
+        verify(original, {"smtp_password": None, "ldap_bind_password": None})
+        config(smtp)
+        run("apply", "-auto-approve", "-input=false")
+        ldap_in_state = None
+    verify(expected, {"smtp_password": smtp["smtp_password"], "ldap_bind_password": ldap_in_state})
     run("apply", "-refresh-only", "-auto-approve", "-input=false")
     run("plan", "-detailed-exitcode", "-input=false")
-    verify(expected)
-    # Removing managed attributes inherits the existing server configuration.
-    config({})
+    verify(expected, {"smtp_password": smtp["smtp_password"], "ldap_bind_password": ldap_in_state})
+
+    # Move the password to the write-only input: the server gets the new
+    # value, state and plan never hold it, and the plain value leaves state.
+    write_only = {key: value for key, value in smtp.items() if key != "smtp_password"}
+    write_only.update(smtp_password_wo=secrets.token_urlsafe(24), smtp_password_wo_version="1")
+    config(write_only)
+    run("apply", "-auto-approve", "-input=false")
+    expected["smtpPassword"] = write_only["smtp_password_wo"]
+    hidden = (smtp["smtp_password"], write_only["smtp_password_wo"])
+    verify(expected, {"smtp_password": None, "ldap_bind_password": ldap_in_state, "absent": hidden})
     run("plan", "-detailed-exitcode", "-input=false")
+    # An unrelated update applied without a refresh keeps the password.
+    write_only["smtp_host"] = "smtp.example.invalid"
+    config(write_only)
+    run("apply", "-refresh=false", "-auto-approve", "-input=false")
+    expected["smtpHost"] = write_only["smtp_host"]
+    verify(expected, {"smtp_password": None, "ldap_bind_password": ldap_in_state, "absent": hidden})
+    run("plan", "-detailed-exitcode", "-input=false")
+
+    # Removing managed attributes inherits the existing server configuration
+    # (dropping the write-only version is the one change to apply).
+    config({})
+    run("apply", "-auto-approve", "-input=false")
+    run("plan", "-detailed-exitcode", "-input=false")
+    verify(expected, {"smtp_password": None, "ldap_bind_password": ldap_in_state, "absent": hidden})
     run("state", "rm", "pocketid_application_config.test")
     run("import", "-input=false", "pocketid_application_config.test", "application-configuration")
     run("apply", "-refresh-only", "-auto-approve", "-input=false")
     run("plan", "-detailed-exitcode", "-input=false", "-out=fixture.tfplan")
     if tool == "tofu":
         body = (root / "fixture.tfplan").read_bytes()
-        assert not body.startswith(b"PK") and smtp["smtp_password"].encode() not in body
+        assert not body.startswith(b"PK") and all(value.encode() not in body for value in hidden)
         run("show", "-json", "fixture.tfplan")
-    verify(expected)
+    verify(expected, {"smtp_password": None, "ldap_bind_password": None, "absent": hidden + (original["ldapBindPassword"],)})
     run("destroy", "-auto-approve", "-input=false")
     assert api("GET")[1] == expected, "destroy changed live singleton"
-    print("PASS native " + tool + " Pocket ID " + version + ": old-payload validation/import/SMTP preservation/data-source/refresh/empty-plan/removal" +
-          ("/encrypted-state-backups-plan" if tool == "tofu" else "") + ("/upgrade" if upgrading else ""))
+    print("PASS native " + tool + " Pocket ID " + version + ": old-payload validation/import/SMTP preservation/data-source/refresh/empty-plan/" +
+          "write-only password (kept on the server, out of state, kept by an unrefreshed update)/removal" +
+          ("/encrypted-state-backups-plan" if tool == "tofu" else "") + ("/upgrade from " + sys.argv[4] + " with an empty plan" if upgrading else ""))

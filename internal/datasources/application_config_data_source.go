@@ -57,7 +57,6 @@ type applicationConfigDataSourceModel struct {
 	SmtpPort           types.String `tfsdk:"smtp_port"`
 	SmtpFrom           types.String `tfsdk:"smtp_from"`
 	SmtpUser           types.String `tfsdk:"smtp_user"`
-	SmtpPassword       types.String `tfsdk:"smtp_password"`
 	SmtpTls            types.String `tfsdk:"smtp_tls"`
 	SmtpSkipCertVerify types.String `tfsdk:"smtp_skip_cert_verify"`
 
@@ -70,7 +69,6 @@ type applicationConfigDataSourceModel struct {
 	LdapEnabled                        types.String `tfsdk:"ldap_enabled"`
 	LdapUrl                            types.String `tfsdk:"ldap_url"`
 	LdapBindDn                         types.String `tfsdk:"ldap_bind_dn"`
-	LdapBindPassword                   types.String `tfsdk:"ldap_bind_password"`
 	LdapBase                           types.String `tfsdk:"ldap_base"`
 	LdapUserSearchFilter               types.String `tfsdk:"ldap_user_search_filter"`
 	LdapUserGroupSearchFilter          types.String `tfsdk:"ldap_user_group_search_filter"`
@@ -107,7 +105,7 @@ func (d *applicationConfigDataSource) Metadata(_ context.Context, req datasource
 // Schema defines the schema for the data source.
 func (d *applicationConfigDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Retrieves the global application configuration of a Pocket-ID instance.",
+		Description: "Retrieves the global application configuration of a Pocket-ID instance. The SMTP password and the LDAP bind password are not exposed.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "Fixed identifier of the application configuration singleton.",
@@ -135,7 +133,6 @@ func (d *applicationConfigDataSource) Schema(_ context.Context, _ datasource.Sch
 			"smtp_port":             computedString("SMTP server port.", false),
 			"smtp_from":             computedString("Email address used as the sender.", false),
 			"smtp_user":             computedString("SMTP authentication user.", false),
-			"smtp_password":         computedString("SMTP authentication password.", true),
 			"smtp_tls":              computedString("SMTP TLS mode.", false),
 			"smtp_skip_cert_verify": computedString("Whether SMTP certificate verification is skipped.", false),
 
@@ -148,7 +145,6 @@ func (d *applicationConfigDataSource) Schema(_ context.Context, _ datasource.Sch
 			"ldap_enabled":                           computedString("Whether LDAP integration is enabled.", false),
 			"ldap_url":                               computedString("LDAP server URL.", false),
 			"ldap_bind_dn":                           computedString("LDAP bind DN.", false),
-			"ldap_bind_password":                     computedString("LDAP bind password.", true),
 			"ldap_base":                              computedString("LDAP search base.", false),
 			"ldap_user_search_filter":                computedString("LDAP user search filter.", false),
 			"ldap_user_group_search_filter":          computedString("LDAP user group search filter.", false),
@@ -226,7 +222,6 @@ func (d *applicationConfigDataSource) Read(ctx context.Context, _ datasource.Rea
 		SmtpPort:           types.StringValue(cfg.SmtpPort),
 		SmtpFrom:           types.StringValue(cfg.SmtpFrom),
 		SmtpUser:           types.StringValue(cfg.SmtpUser),
-		SmtpPassword:       types.StringValue(cfg.SmtpPassword),
 		SmtpTls:            types.StringValue(cfg.SmtpTls),
 		SmtpSkipCertVerify: types.StringValue(cfg.SmtpSkipCertVerify),
 
@@ -239,7 +234,6 @@ func (d *applicationConfigDataSource) Read(ctx context.Context, _ datasource.Rea
 		LdapEnabled:                        types.StringValue(cfg.LdapEnabled),
 		LdapUrl:                            types.StringValue(cfg.LdapUrl),
 		LdapBindDn:                         types.StringValue(cfg.LdapBindDn),
-		LdapBindPassword:                   types.StringValue(cfg.LdapBindPassword),
 		LdapBase:                           types.StringValue(cfg.LdapBase),
 		LdapUserSearchFilter:               types.StringValue(cfg.LdapUserSearchFilter),
 		LdapUserGroupSearchFilter:          types.StringValue(cfg.LdapUserGroupSearchFilter),

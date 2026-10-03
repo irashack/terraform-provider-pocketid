@@ -33,3 +33,22 @@
   holds at apply time, so a change made outside Terraform since the plan is
   kept. After an update, the provider checks that Pocket ID stored each value
   it changed, and fails naming the setting if it did not.
+- New write-only inputs `smtp_password_wo` / `smtp_password_wo_version` and
+  `ldap_bind_password_wo` / `ldap_bind_password_wo_version` on
+  `pocketid_application_config` (Terraform 1.11+ or OpenTofu 1.11+). The
+  password never enters plan or state and can come from an ephemeral value. It
+  is sent when the resource is created and whenever the `_wo_version` string
+  changes; every other update sends the password Pocket ID holds back
+  unchanged. Moving from `smtp_password` to `smtp_password_wo` sends the new
+  value in the same update and removes the password from state. Out-of-band
+  changes to a password managed this way are not detected.
+- `pocketid_application_config` no longer copies a password you did not
+  configure into state: `smtp_password` and `ldap_bind_password` are null
+  unless you set them (or state from an earlier version already holds them),
+  also after `terraform import`. A configured password is still refreshed and
+  shown as a change when it differs from the server's.
+- **Breaking:** the `pocketid_application_config` data source no longer has
+  `smtp_password` or `ldap_bind_password`. Remove references to them. After
+  upgrading, `terraform show` cannot read a stored result of this data source
+  until the next apply (or `apply -refresh-only`) rewrites it; plans and
+  applies are unaffected.

@@ -95,13 +95,17 @@ func TestApplicationConfigSMTPPreservesSettings(t *testing.T) {
 			}
 			plan.SmtpHost = types.StringValue("smtp.example.invalid")
 			var diags diag.Diagnostics
-			r.applyConfig(context.Background(), plan, plan, &diags)
+			r.applyConfig(context.Background(), plan, plan, nil, &diags)
 			require.False(t, diags.HasError(), "%v", diags)
 			require.Equal(t, 1, puts)
 			want := *current
 			want.SmtpHost = "smtp.example.invalid"
 			var wantModel applicationConfigModel
 			applicationConfigToModel(&want, &wantModel)
+			// Secrets that were not configured stay out of state; they are
+			// still sent back unchanged (checked above).
+			wantModel.SmtpPassword = types.StringNull()
+			wantModel.LdapBindPassword = types.StringNull()
 			require.Equal(t, wantModel, *plan)
 		})
 	}
@@ -170,7 +174,7 @@ func TestApplicationConfigUpdateKeepsUnknownServerKeys(t *testing.T) {
 	}
 	plan.AppName = types.StringValue("Renamed")
 	var diags diag.Diagnostics
-	r.applyConfig(context.Background(), plan, plan, &diags)
+	r.applyConfig(context.Background(), plan, plan, nil, &diags)
 	require.False(t, diags.HasError(), "%v", diags)
 	require.Equal(t, 1, puts)
 	require.Equal(t, "Renamed", plan.AppName.ValueString())
@@ -214,7 +218,7 @@ func TestApplicationConfigOmitsUnreportedSettings(t *testing.T) {
 	}
 	plan.SmtpHost = types.StringValue("smtp.example.invalid")
 	var diags diag.Diagnostics
-	r.applyConfig(context.Background(), plan, plan, &diags)
+	r.applyConfig(context.Background(), plan, plan, nil, &diags)
 	require.False(t, diags.HasError(), "%v", diags)
 	require.Equal(t, 1, puts)
 }
@@ -282,7 +286,7 @@ func TestApplicationConfigUnconfiguredKeepsServerValue(t *testing.T) {
 	plan.SmtpHost = types.StringUnknown()
 
 	var diags diag.Diagnostics
-	r.applyConfig(context.Background(), config, plan, &diags)
+	r.applyConfig(context.Background(), config, plan, nil, &diags)
 	require.False(t, diags.HasError(), "%v", diags)
 	assert.Equal(t, "#changed-outside", (*sent)["accentColor"], "the server's value is sent, not the planned one")
 	assert.Equal(t, "Renamed", (*sent)["appName"])
@@ -309,7 +313,7 @@ func TestApplicationConfigUnstoredValueFails(t *testing.T) {
 	plan := *config
 
 	var diags diag.Diagnostics
-	r.applyConfig(context.Background(), config, &plan, &diags)
+	r.applyConfig(context.Background(), config, &plan, nil, &diags)
 	require.True(t, diags.HasError())
 	detail := diags.Errors()[0].Detail()
 	assert.Contains(t, detail, "app_name, smtp_password.")

@@ -3,12 +3,12 @@
 page_title: "pocketid_application_config Data Source - terraform-provider-pocketid"
 subcategory: ""
 description: |-
-  Retrieves the global application configuration of a Pocket-ID instance.
+  Retrieves the global application configuration of a Pocket-ID instance. The SMTP password and the LDAP bind password are not exposed.
 ---
 
 # pocketid_application_config (Data Source)
 
-Retrieves the global application configuration of a Pocket-ID instance.
+Retrieves the global application configuration of a Pocket-ID instance. The SMTP password and the LDAP bind password are not exposed.
 
 ## Example Usage
 
@@ -59,7 +59,6 @@ output "ldap_enabled" {
 - `ldap_attribute_user_username` (String) LDAP attribute for the username.
 - `ldap_base` (String) LDAP search base.
 - `ldap_bind_dn` (String) LDAP bind DN.
-- `ldap_bind_password` (String, Sensitive) LDAP bind password.
 - `ldap_enabled` (String) Whether LDAP integration is enabled.
 - `ldap_skip_cert_verify` (String) Whether LDAP certificate verification is skipped.
 - `ldap_soft_delete_users` (String) Whether users removed from LDAP are soft-deleted.
@@ -72,7 +71,6 @@ output "ldap_enabled" {
 - `signup_default_user_group_ids` (String) JSON array of the user group IDs every new user is added to.
 - `smtp_from` (String) Email address used as the sender.
 - `smtp_host` (String) SMTP server host.
-- `smtp_password` (String, Sensitive) SMTP authentication password.
 - `smtp_port` (String) SMTP server port.
 - `smtp_skip_cert_verify` (String) Whether SMTP certificate verification is skipped.
 - `smtp_tls` (String) SMTP TLS mode.

@@ -22,10 +22,19 @@ resource "pocketid_application_config" "with_smtp" {
   smtp_port             = "587"
   smtp_from             = "no-reply@example.com"
   smtp_user             = "smtp-user"
-  smtp_password         = var.smtp_password # mark sensitive in your variables
   smtp_tls              = "starttls"
   smtp_skip_cert_verify = "false"
+
+  # The password stays out of plan and state (Terraform 1.11+ or OpenTofu
+  # 1.11+). It is sent when this resource is created and whenever the
+  # version changes; other updates keep the password Pocket ID holds.
+  smtp_password_wo         = var.smtp_password # can be an ephemeral value
+  smtp_password_wo_version = "1"
 
   email_login_notification_enabled = "true"
   email_verification_enabled       = "true"
 }
+
+# On older Terraform and OpenTofu versions, the plain attribute works too;
+# the password is then stored in state (marked sensitive).
+# smtp_password = var.smtp_password

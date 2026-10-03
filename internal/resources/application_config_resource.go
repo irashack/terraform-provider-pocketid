@@ -69,13 +69,16 @@ type applicationConfigModel struct {
 	CIMDURLAllowlist                types.String `tfsdk:"cimd_url_allowlist"`
 
 	// Email / SMTP
-	SmtpHost           types.String `tfsdk:"smtp_host"`
-	SmtpPort           types.String `tfsdk:"smtp_port"`
-	SmtpFrom           types.String `tfsdk:"smtp_from"`
-	SmtpUser           types.String `tfsdk:"smtp_user"`
-	SmtpPassword       types.String `tfsdk:"smtp_password"`
-	SmtpTls            types.String `tfsdk:"smtp_tls"`
-	SmtpSkipCertVerify types.String `tfsdk:"smtp_skip_cert_verify"`
+	SmtpHost     types.String `tfsdk:"smtp_host"`
+	SmtpPort     types.String `tfsdk:"smtp_port"`
+	SmtpFrom     types.String `tfsdk:"smtp_from"`
+	SmtpUser     types.String `tfsdk:"smtp_user"`
+	SmtpPassword types.String `tfsdk:"smtp_password"`
+	// Write-only alternative to SmtpPassword; always null in plan and state.
+	SmtpPasswordWO        types.String `tfsdk:"smtp_password_wo"`
+	SmtpPasswordWOVersion types.String `tfsdk:"smtp_password_wo_version"`
+	SmtpTls               types.String `tfsdk:"smtp_tls"`
+	SmtpSkipCertVerify    types.String `tfsdk:"smtp_skip_cert_verify"`
 
 	EmailOneTimeAccessAsAdminEnabled           types.String `tfsdk:"email_one_time_access_as_admin_enabled"`
 	EmailOneTimeAccessAsUnauthenticatedEnabled types.String `tfsdk:"email_one_time_access_as_unauthenticated_enabled"`
@@ -84,10 +87,13 @@ type applicationConfigModel struct {
 	EmailVerificationEnabled                   types.String `tfsdk:"email_verification_enabled"`
 
 	// LDAP
-	LdapEnabled                        types.String `tfsdk:"ldap_enabled"`
-	LdapUrl                            types.String `tfsdk:"ldap_url"`
-	LdapBindDn                         types.String `tfsdk:"ldap_bind_dn"`
-	LdapBindPassword                   types.String `tfsdk:"ldap_bind_password"`
+	LdapEnabled      types.String `tfsdk:"ldap_enabled"`
+	LdapUrl          types.String `tfsdk:"ldap_url"`
+	LdapBindDn       types.String `tfsdk:"ldap_bind_dn"`
+	LdapBindPassword types.String `tfsdk:"ldap_bind_password"`
+	// Write-only alternative to LdapBindPassword; always null in plan and state.
+	LdapBindPasswordWO                 types.String `tfsdk:"ldap_bind_password_wo"`
+	LdapBindPasswordWOVersion          types.String `tfsdk:"ldap_bind_password_wo_version"`
 	LdapBase                           types.String `tfsdk:"ldap_base"`
 	LdapUserSearchFilter               types.String `tfsdk:"ldap_user_search_filter"`
 	LdapUserGroupSearchFilter          types.String `tfsdk:"ldap_user_group_search_filter"`
@@ -299,15 +305,28 @@ func (r *applicationConfigResource) Schema(_ context.Context, _ resource.SchemaR
 		},
 	}
 	for _, setting := range appConfigSettings {
+		description := setting.description()
+		validators := []validator.String{appConfigValueValidator{setting: setting}}
+		for _, secret := range appConfigSecrets {
+			if secret.attribute == setting.attribute {
+				description += secret.plainDescription()
+				validators = append(validators, secret.plainValidator())
+			}
+		}
 		attributes[setting.attribute] = schema.StringAttribute{
-			Description: setting.description(),
+			Description: description,
 			Optional:    true,
 			Computed:    true,
 			Sensitive:   setting.sensitive,
-			Validators:  []validator.String{appConfigValueValidator{setting: setting}},
+			Validators:  validators,
 			// Unset means "keep the server's value": an update of other
 			// settings plans it unchanged instead of unknown.
 			PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+		}
+	}
+	for _, secret := range appConfigSecrets {
+		for name, attribute := range secret.schemaAttributes() {
+			attributes[name] = attribute
 		}
 	}
 	resp.Schema = schema.Schema{
@@ -335,11 +354,18 @@ func (r *applicationConfigResource) Configure(_ context.Context, req resource.Co
 	r.client = c
 }
 
-// ModifyPlan refuses, at plan time, a version-dependent setting that is
-// configured for a server older than the setting. Without a configured client
-// (provider settings not yet known) the same check runs before the update.
+// ModifyPlan plans a secret's plain attribute as null while its write-only
+// input is used, and refuses, at plan time, a version-dependent setting that
+// is configured for a server older than the setting. Without a configured
+// client (provider settings not yet known) that check runs before the update.
 func (r *applicationConfigResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
-	if req.Plan.Raw.IsNull() || r.client == nil {
+	if req.Plan.Raw.IsNull() {
+		return
+	}
+	for _, secret := range appConfigSecrets {
+		resp.Diagnostics.Append(secret.planWriteOnlyMode(ctx, req.Config, &resp.Plan)...)
+	}
+	if resp.Diagnostics.HasError() || r.client == nil {
 		return
 	}
 	version, versionRead := "", false
@@ -388,7 +414,11 @@ func (r *applicationConfigResource) ModifyPlan(ctx context.Context, req resource
 // did not show. Such a setting's planned value (from state) stays in state
 // until the next refresh, as Terraform requires; the next refresh records the
 // server's value, without a planned change because it is not configured.
-func (r *applicationConfigResource) applyConfig(ctx context.Context, config, plan *applicationConfigModel, diags *diag.Diagnostics) {
+//
+// writeOnly holds the write-only secret values to send, by attribute (see
+// appConfigWriteOnlyValues); every other secret is sent as configured through
+// its plain attribute, or else as the server holds it.
+func (r *applicationConfigResource) applyConfig(ctx context.Context, config, plan *applicationConfigModel, writeOnly map[string]string, diags *diag.Diagnostics) {
 	current, err := r.client.GetApplicationConfig(ctx)
 	if err != nil {
 		diags.AddError(
@@ -410,6 +440,11 @@ func (r *applicationConfigResource) applyConfig(ctx context.Context, config, pla
 	}
 
 	payload := modelToApplicationConfig(config, current)
+	for _, secret := range appConfigSecrets {
+		if value, ok := writeOnly[secret.attribute]; ok {
+			*secret.server(payload) = value
+		}
+	}
 
 	tflog.Debug(ctx, "Updating application configuration")
 
@@ -433,7 +468,21 @@ func (r *applicationConfigResource) applyConfig(ctx context.Context, config, pla
 
 	var stored applicationConfigModel
 	applicationConfigToModel(updated, &stored)
+	planned := make([]types.String, len(appConfigSecrets))
+	for i, secret := range appConfigSecrets {
+		planned[i] = *secret.plain(plan)
+	}
 	fillUnplannedFromServer(plan, &stored)
+	for i, secret := range appConfigSecrets {
+		// A planned secret is what was sent and stored (or, unconfigured,
+		// the value from state). One planned unknown was never configured
+		// or tracked: it stays out of state rather than taking the
+		// server's. One planned null uses the write-only input.
+		if planned[i].IsUnknown() {
+			planned[i] = types.StringNull()
+		}
+		*secret.plain(plan) = planned[i]
+	}
 }
 
 // unstoredAppConfigSettings names the settings whose value the update changed
@@ -486,7 +535,12 @@ func (r *applicationConfigResource) Create(ctx context.Context, req resource.Cre
 		return
 	}
 
-	r.applyConfig(ctx, &config, &plan, &resp.Diagnostics)
+	writeOnly, err := appConfigWriteOnlyValues(&config, &plan, nil)
+	if err != nil {
+		resp.Diagnostics.AddError("Missing write-only value", err.Error())
+		return
+	}
+	r.applyConfig(ctx, &config, &plan, writeOnly, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -513,21 +567,34 @@ func (r *applicationConfigResource) Read(ctx context.Context, req resource.ReadR
 		return
 	}
 
+	prior := make([]types.String, len(appConfigSecrets))
+	for i, secret := range appConfigSecrets {
+		prior[i] = *secret.plain(&state)
+	}
 	applicationConfigToModel(cfg, &state)
+	for i, secret := range appConfigSecrets {
+		*secret.plain(&state) = secret.forState(prior[i], &state, *secret.server(cfg))
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 // Update updates the resource and sets the updated Terraform state on success.
 func (r *applicationConfigResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan, config applicationConfigModel
+	var plan, config, prior applicationConfigModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &prior)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	r.applyConfig(ctx, &config, &plan, &resp.Diagnostics)
+	writeOnly, err := appConfigWriteOnlyValues(&config, &plan, &prior)
+	if err != nil {
+		resp.Diagnostics.AddError("Missing write-only value", err.Error())
+		return
+	}
+	r.applyConfig(ctx, &config, &plan, writeOnly, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}

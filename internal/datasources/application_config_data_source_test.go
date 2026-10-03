@@ -57,11 +57,9 @@ func TestApplicationConfigDataSource_Schema(t *testing.T) {
 		assert.True(t, attr.Computed, "attribute %s should be computed", name)
 	}
 
-	// Secrets are marked sensitive.
+	// The secrets are not exposed at all.
 	for _, name := range []string{"smtp_password", "ldap_bind_password"} {
-		attr, ok := resp.Schema.Attributes[name].(schema.StringAttribute)
-		require.True(t, ok, "attribute %s should exist", name)
-		assert.True(t, attr.Sensitive, "attribute %s should be sensitive", name)
+		assert.NotContains(t, resp.Schema.Attributes, name)
 	}
 }
 
@@ -135,4 +133,20 @@ func TestApplicationConfigDataSource_AutoCreateOIDCClientSecret(t *testing.T) {
 
 	values = readApplicationConfigDataSource(t, []client.AppConfigVariable{{Key: "appName", Value: "Fixture"}})
 	assert.True(t, values["auto_create_oidc_client_secret"].IsNull(), "null on a server without the setting")
+}
+
+func TestApplicationConfigDataSource_NoSecrets(t *testing.T) {
+	values := readApplicationConfigDataSource(t, []client.AppConfigVariable{
+		{Key: "appName", Value: "Fixture"},
+		{Key: "smtpPassword", Value: "synthetic-smtp-password"},
+		{Key: "ldapBindPassword", Value: "synthetic-ldap-password"},
+	})
+	for name, value := range values {
+		var text string
+		if value.IsKnown() && !value.IsNull() && value.As(&text) == nil {
+			assert.NotContains(t, text, "synthetic-", "attribute %s", name)
+		}
+	}
+	assert.NotContains(t, values, "smtp_password")
+	assert.NotContains(t, values, "ldap_bind_password")
 }

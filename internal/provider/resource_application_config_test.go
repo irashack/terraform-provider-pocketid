@@ -265,3 +265,164 @@ func TestAccResourceApplicationConfig_unrelatedUpdate(t *testing.T) {
 		},
 	})
 }
+
+// The write-only passwords: moving from smtp_password to smtp_password_wo
+// keeps the password on the server and removes it from state; an update that
+// does not change the version (even with a different write-only value) sends
+// the server's password back unchanged; a version change sends the new one;
+// import and refresh never put a password into state; the data source has
+// none. Every password is checked through the API.
+func TestAccResourceApplicationConfig_writeOnlyPasswords(t *testing.T) {
+	resourceName := "pocketid_application_config.test"
+	suffix := acctest.RandString(8)
+	// Synthetic, generated per run.
+	plain := "tf-acc-plain-" + acctest.RandString(16)
+	ldapPlain := "tf-acc-ldap-plain-" + acctest.RandString(16)
+	firstWO := "tf-acc-wo1-" + acctest.RandString(16)
+	secondWO := "tf-acc-wo2-" + acctest.RandString(16)
+	ldapWO := "tf-acc-ldap-wo-" + acctest.RandString(16)
+
+	plainConfig := func(appName, smtp string) string {
+		return fmt.Sprintf(`
+resource "pocketid_application_config" "test" {
+  app_name           = %q
+  smtp_password      = %q
+  ldap_bind_password = %q
+}
+`, appName, smtp, ldapPlain)
+	}
+	writeOnlyConfig := func(appName, smtp, version string) string {
+		return fmt.Sprintf(`
+resource "pocketid_application_config" "test" {
+  app_name                      = %q
+  smtp_password_wo              = %q
+  smtp_password_wo_version      = %q
+  ldap_bind_password_wo         = %q
+  ldap_bind_password_wo_version = "1"
+}
+
+data "pocketid_application_config" "test" {
+  depends_on = [pocketid_application_config.test]
+}
+`, appName, smtp, version, ldapWO)
+	}
+	server := func(smtp, ldap string) resource.TestCheckFunc {
+		return func(*terraform.State) error {
+			config := testAccAppConfig(t)
+			if config["smtpPassword"] != smtp {
+				return fmt.Errorf("the server's SMTP password is not the expected one")
+			}
+			if config["ldapBindPassword"] != ldap {
+				return fmt.Errorf("the server's LDAP bind password is not the expected one")
+			}
+			return nil
+		}
+	}
+	noPasswordsInState := resource.ComposeAggregateTestCheckFunc(
+		resource.TestCheckNoResourceAttr(resourceName, "smtp_password"),
+		resource.TestCheckNoResourceAttr(resourceName, "ldap_bind_password"),
+		resource.TestCheckNoResourceAttr(resourceName, "smtp_password_wo"),
+		resource.TestCheckNoResourceAttr(resourceName, "ldap_bind_password_wo"),
+	)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: plainConfig("tf-acc-"+suffix, plain),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceName, "smtp_password", plain),
+					server(plain, ldapPlain),
+				),
+			},
+			{
+				// From the plain attributes to the write-only inputs.
+				Config: writeOnlyConfig("tf-acc-"+suffix, firstWO, "1"),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectKnownValue(resourceName, tfjsonpath.New("smtp_password"), knownvalue.Null()),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					noPasswordsInState,
+					resource.TestCheckResourceAttr(resourceName, "smtp_password_wo_version", "1"),
+					resource.TestCheckNoResourceAttr("data.pocketid_application_config.test", "smtp_password"),
+					resource.TestCheckNoResourceAttr("data.pocketid_application_config.test", "ldap_bind_password"),
+					server(firstWO, ldapWO),
+				),
+			},
+			{
+				// An unrelated update keeps both passwords.
+				Config: writeOnlyConfig("tf-upd-"+suffix, firstWO, "1"),
+				Check:  resource.ComposeAggregateTestCheckFunc(noPasswordsInState, server(firstWO, ldapWO)),
+			},
+			{
+				// A different write-only value without a version change is
+				// not sent.
+				Config: writeOnlyConfig("tf-acc-"+suffix, secondWO, "1"),
+				Check:  resource.ComposeAggregateTestCheckFunc(noPasswordsInState, server(firstWO, ldapWO)),
+			},
+			{
+				// The version change sends it.
+				Config: writeOnlyConfig("tf-acc-"+suffix, secondWO, "2"),
+				Check:  resource.ComposeAggregateTestCheckFunc(noPasswordsInState, server(secondWO, ldapWO)),
+			},
+			{
+				ResourceName:      resourceName,
+				ImportState:       true,
+				ImportStateVerify: true,
+				// The versions live only in configuration and state.
+				ImportStateVerifyIgnore: []string{"smtp_password_wo_version", "ldap_bind_password_wo_version"},
+				ImportStateCheck: func(states []*terraform.InstanceState) error {
+					for _, name := range []string{"smtp_password", "ldap_bind_password"} {
+						if _, ok := states[0].Attributes[name]; ok {
+							return fmt.Errorf("import stored %s", name)
+						}
+					}
+					return nil
+				},
+			},
+			{
+				// Back to the plain attribute.
+				Config: plainConfig("tf-acc-"+suffix, plain),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceName, "smtp_password", plain),
+					resource.TestCheckNoResourceAttr(resourceName, "smtp_password_wo_version"),
+					server(plain, ldapPlain),
+				),
+			},
+		},
+	})
+}
+
+// smtp_password and smtp_password_wo cannot be set together, and a write-only
+// input needs its version.
+func TestAccResourceApplicationConfig_writeOnlyValidation(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+resource "pocketid_application_config" "test" {
+  smtp_password            = "synthetic"
+  smtp_password_wo         = "synthetic"
+  smtp_password_wo_version = "1"
+}
+`,
+				PlanOnly:    true,
+				ExpectError: regexp.MustCompile(`(?s)smtp_password.*cannot be specified when.*smtp_password_wo`),
+			},
+			{
+				Config: `
+resource "pocketid_application_config" "test" {
+  ldap_bind_password_wo = "synthetic"
+}
+`,
+				PlanOnly:    true,
+				ExpectError: regexp.MustCompile(`(?s)ldap_bind_password_wo_version.*must be specified`),
+			},
+		},
+	})
+}

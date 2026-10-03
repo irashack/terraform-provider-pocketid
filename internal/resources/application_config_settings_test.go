@@ -201,7 +201,11 @@ func TestAppConfigSchemaValidators(t *testing.T) {
 		require.True(t, ok, setting.attribute)
 		assert.True(t, attribute.Optional && attribute.Computed, setting.attribute)
 		assert.Equal(t, setting.sensitive, attribute.Sensitive, setting.attribute)
-		require.Len(t, attribute.Validators, 1, setting.attribute)
+		validators := 1
+		if setting.sensitive {
+			validators = 2 // and ConflictsWith its write-only input
+		}
+		require.Len(t, attribute.Validators, validators, setting.attribute)
 		if setting.defaultValue != "" {
 			assert.Contains(t, attribute.Description, setting.defaultValue, setting.attribute)
 		}
@@ -290,7 +294,7 @@ func TestApplicationConfigApplyRefusesUnreportedSetting(t *testing.T) {
 	}
 	plan.AutoCreateOIDCClientSecret = types.StringValue("false")
 	var diags diag.Diagnostics
-	r.applyConfig(context.Background(), plan, plan, &diags)
+	r.applyConfig(context.Background(), plan, plan, nil, &diags)
 	require.True(t, diags.HasError())
 	assert.Contains(t, diags.Errors()[0].Detail(), "requires Pocket ID 2.17.0 or later")
 	assert.Contains(t, diags.Errors()[0].Detail(), "Nothing was changed")
