@@ -563,6 +563,10 @@ func (r *apiClientAccessResource) Delete(ctx context.Context, req resource.Delet
 		return
 	}
 	apiID, clientID := state.APIID.ValueString(), state.ClientID.ValueString()
+	if err := checkAPISupport(ctx, r.client); err != nil {
+		resp.Diagnostics.AddError("Cannot revoke API access", err.Error())
+		return
+	}
 	err := r.client.RemoveAPIClientAccess(ctx, apiID, clientID)
 	// Pocket ID deletes grants together with their API or client, so its own
 	// not-found error for either confirms the grant is gone.

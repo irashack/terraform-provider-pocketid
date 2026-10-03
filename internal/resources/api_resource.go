@@ -659,6 +659,13 @@ func (r *apiResource) Delete(ctx context.Context, req resource.DeleteRequest, re
 		return
 	}
 	id := state.ID.ValueString()
+	// Pocket ID had a DELETE for APIs before 2.14.0, but this provider
+	// manages APIs only from 2.14.0; an imported API is not deleted on a
+	// server that Create and Update refuse, or whose version is unknown.
+	if err := checkAPISupport(ctx, r.client); err != nil {
+		resp.Diagnostics.AddError("Cannot delete API", err.Error())
+		return
+	}
 	tflog.Debug(ctx, "Deleting API", map[string]any{"id": id})
 	if err := r.client.DeleteAPI(ctx, id); err != nil && !client.IsNotFound(err, client.ResourceAPI) {
 		resp.Diagnostics.AddError("Error deleting API", fmt.Sprintf("Could not delete API %s: %s", id, err))

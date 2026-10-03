@@ -42,6 +42,7 @@ type apiAccessTestPocketID struct {
 	t        *testing.T
 	mu       sync.Mutex
 	public   bool
+	version  string
 	grant    *client.APIClientGrant
 	calls    []string
 	failures map[string]apiTestFailure
@@ -50,7 +51,7 @@ type apiAccessTestPocketID struct {
 }
 
 func newAPIAccessTestPocketID(t *testing.T) (*apiAccessTestPocketID, *client.Client) {
-	f := &apiAccessTestPocketID{t: t, failures: map[string]apiTestFailure{}}
+	f := &apiAccessTestPocketID{t: t, version: "2.16.0", failures: map[string]apiTestFailure{}}
 	server := httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(server.Close)
 	c, err := client.NewClient(server.URL, "synthetic-token", false, 5)
@@ -77,7 +78,11 @@ func (f *apiAccessTestPocketID) serve(w http.ResponseWriter, r *http.Request) {
 	var route string
 	switch r.URL.Path {
 	case "/api/version/current":
-		_, _ = fmt.Fprint(w, `{"currentVersion":"2.16.0"}`)
+		if failure, failing := f.failures["GET version"]; failing {
+			w.WriteHeader(failure.status)
+			return
+		}
+		_, _ = fmt.Fprintf(w, `{"currentVersion":%q}`, f.version)
 		return
 	case "/api/apis/" + apiAccessTestAPI:
 		route = r.Method + " api"
@@ -441,6 +446,10 @@ func TestAPIClientAccessDelete(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
 			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/version/current" {
+					_, _ = fmt.Fprint(w, `{"currentVersion":"2.14.0"}`)
+					return
+				}
 				assert.Equal(t, "DELETE /api/apis/"+apiAccessTestAPI+"/clients/"+apiAccessTestClient, r.Method+" "+r.URL.Path)
 				w.WriteHeader(tc.status)
 				_, _ = fmt.Fprint(w, tc.body)
@@ -454,6 +463,33 @@ func TestAPIClientAccessDelete(t *testing.T) {
 			resp := resource.DeleteResponse{State: st}
 			(&apiClientAccessResource{client: c}).Delete(ctx, resource.DeleteRequest{State: st}, &resp)
 			assert.Equal(t, !tc.ok, resp.Diagnostics.HasError())
+		})
+	}
+}
+
+// Delete is gated like Create and Update: no DELETE is sent to a server
+// older than 2.14.0 or one whose version cannot be read.
+func TestAPIClientAccessDelete_VersionGate(t *testing.T) {
+	for name, setup := range map[string]func(f *apiAccessTestPocketID){
+		"old server":         func(f *apiAccessTestPocketID) { f.version = "2.13.0" },
+		"malformed version":  func(f *apiAccessTestPocketID) { f.version = "not-a-version" },
+		"version unreadable": func(f *apiAccessTestPocketID) { f.failures["GET version"] = apiTestFailure{status: 403} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			f, c := newAPIAccessTestPocketID(t)
+			f.grant = &client.APIClientGrant{UserDelegatedAccess: true}
+			setup(f)
+			sr := apiAccessTestSchema(t)
+			prior := apiAccessModel(apiAccessTestAPI, apiAccessTestClient, apiAccessGrant{UserAccess: true})
+			st := tfsdk.State{Schema: sr.Schema}
+			require.False(t, st.Set(ctx, &prior).HasError())
+			resp := resource.DeleteResponse{State: st}
+			(&apiClientAccessResource{client: c}).Delete(ctx, resource.DeleteRequest{State: st}, &resp)
+			require.True(t, resp.Diagnostics.HasError())
+			assert.Contains(t, resp.Diagnostics[0].Detail(), "no mutation was attempted")
+			assert.Empty(t, f.routes())
+			assert.NotNil(t, f.grant)
 		})
 	}
 }

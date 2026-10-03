@@ -556,6 +556,10 @@ func TestAPIResourceDelete_ConfirmedAbsence(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/version/current" {
+					_, _ = fmt.Fprint(w, `{"currentVersion":"2.14.0"}`)
+					return
+				}
 				assert.Equal(t, "DELETE", r.Method)
 				w.WriteHeader(404)
 				_, _ = fmt.Fprint(w, tc.body)
@@ -570,6 +574,33 @@ func TestAPIResourceDelete_ConfirmedAbsence(t *testing.T) {
 			resp := resource.DeleteResponse{State: state}
 			(&apiResource{client: c}).Delete(ctx, resource.DeleteRequest{State: state}, &resp)
 			assert.Equal(t, !tc.ok, resp.Diagnostics.HasError())
+		})
+	}
+}
+
+// Delete is gated like Create and Update: on a server older than 2.14.0, or
+// one whose version cannot be read, no DELETE is sent.
+func TestAPIResourceDelete_VersionGate(t *testing.T) {
+	for name, setup := range map[string]func(f *apiTestPocketID){
+		"old server":         func(f *apiTestPocketID) { f.version = "2.13.0" },
+		"malformed version":  func(f *apiTestPocketID) { f.version = "not-a-version" },
+		"version unreadable": func(f *apiTestPocketID) { f.failures["GET version"] = apiTestFailure{status: 403} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			f, c := newAPITestPocketID(t)
+			existing := f.add(client.API{Name: "Inventory", Resource: "https://inventory.example"})
+			setup(f)
+			sr := apiTestSchema(t)
+			prior := apiTestModel(existing.ID, "Inventory", "https://inventory.example", false, nil)
+			state := tfsdk.State{Schema: sr.Schema}
+			require.False(t, state.Set(ctx, &prior).HasError())
+			resp := resource.DeleteResponse{State: state}
+			(&apiResource{client: c}).Delete(ctx, resource.DeleteRequest{State: state}, &resp)
+			require.True(t, resp.Diagnostics.HasError())
+			assert.Contains(t, resp.Diagnostics[0].Detail(), "no mutation was attempted")
+			assert.Empty(t, f.routes(), "no request other than the version check")
+			assert.Contains(t, f.apis, existing.ID)
 		})
 	}
 }
