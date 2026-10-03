@@ -220,6 +220,56 @@ func TestClient_APIWrites_UndecodableAnswerIsUnread(t *testing.T) {
 	assert.NotErrorIs(t, err, client.ErrResultUnread, "a read is not a mutation")
 }
 
+// A response that cannot be decoded is reported with fixed text, never with
+// Go's decoding error: a number that overflows its field, or one that equals a
+// numeric API key, would otherwise be echoed (a pagination count is one).
+func TestClient_APIDecodeErrorsCarryNoValue(t *testing.T) {
+	const numericKey = "1234567890123456"
+	overflow := "99" + numericKey + "999999" // 24 digits: overflows int64
+	server := func(body string) *client.Client {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = fmt.Fprint(w, body) }))
+		t.Cleanup(server.Close)
+		c, err := client.NewClient(server.URL, numericKey, false, 5)
+		require.NoError(t, err)
+		return c
+	}
+	ctx := context.Background()
+	check := func(label string, err error) {
+		t.Helper()
+		require.Error(t, err, label)
+		assert.Contains(t, err.Error(), "could not be decoded", label)
+		assert.NotContains(t, err.Error(), numericKey, label)
+		assert.NotContains(t, err.Error(), overflow, label)
+	}
+
+	// A numeric value where a string belongs, and a number that overflows.
+	for label, body := range map[string]string{
+		"number as name":  fmt.Sprintf(`{"id":%q,"name":%s}`, apiTestAPIID, numericKey),
+		"overflow":        fmt.Sprintf(`{"id":%q,"name":"x","permissions":[{"id":%q,"key":%s}]}`, apiTestAPIID, apiTestPermissionID, overflow),
+		"syntax error":    `{"id":` + numericKey + `{`,
+		"number as array": fmt.Sprintf(`{"id":%q,"permissions":%s}`, apiTestAPIID, overflow),
+	} {
+		c := server(body)
+		_, err := c.GetAPI(ctx, apiTestAPIID)
+		check("read "+label, err)
+		_, err = c.CreateAPI(ctx, &client.APICreateRequest{Name: "x", Resource: "urn:x"})
+		check("create "+label, err)
+		_, err = c.UpdateAPI(ctx, apiTestAPIID, &client.APIUpdateRequest{Name: "x"})
+		check("update "+label, err)
+		assert.ErrorIs(t, err, client.ErrResultUnread, label)
+	}
+
+	// The list: an overflowing pagination count, and a mistyped entry.
+	for label, body := range map[string]string{
+		"overflowing page":  fmt.Sprintf(`{"data":[],"pagination":{"totalPages":1,"totalItems":0,"currentPage":%s,"itemsPerPage":100}}`, overflow),
+		"overflowing total": fmt.Sprintf(`{"data":[],"pagination":{"totalPages":%s,"totalItems":0,"currentPage":1,"itemsPerPage":100}}`, overflow),
+		"mistyped entry":    fmt.Sprintf(`{"data":[{"id":%s}],"pagination":{"totalPages":1,"totalItems":1,"currentPage":1,"itemsPerPage":100}}`, numericKey),
+	} {
+		_, err := server(body).ListAPIs(ctx)
+		check("list "+label, err)
+	}
+}
+
 // The checks leave a normal response alone: UUID identifiers, text without
 // the key, null permissions.
 func TestClient_APIResponses_NormalPass(t *testing.T) {

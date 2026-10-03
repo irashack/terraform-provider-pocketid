@@ -311,7 +311,7 @@ func (c *Client) DeleteAPI(ctx context.Context, id string) error {
 func (c *Client) ListAPIs(ctx context.Context) ([]API, error) {
 	apis, err := listAll(ctx, c, "APIs", "/api/apis", nil, func(api API) string { return api.ID })
 	if err != nil {
-		return nil, err
+		return nil, valueFreeDecodeError(err)
 	}
 	for i := range apis {
 		if err := c.apiCheckResponse(&apis[i], ""); err != nil {
@@ -586,12 +586,31 @@ func (c *Client) decodeClientAPIGrants(body []byte) ([]ClientAPIGrant, error) {
 	return grants, nil
 }
 
+// errAPIResponseUndecodable is what every decode failure in this file becomes:
+// a fixed message with no part of the response. Go's own decoding errors can
+// carry a value from it (a number that overflows its field), which could be
+// a reflected credential. At integration the sites switch to the foundation's
+// decodeResponse.
+var errAPIResponseUndecodable = errors.New("the response could not be decoded")
+
 func decodeAPI(body []byte) (*API, error) {
 	var result API
 	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("error unmarshaling response: %w", err)
+		return nil, errAPIResponseUndecodable
 	}
 	return &result, nil
+}
+
+// valueFreeDecodeError replaces a Go JSON decoding error found anywhere in
+// err's chain (the pagination walk wraps one) with errAPIResponseUndecodable;
+// other errors pass unchanged.
+func valueFreeDecodeError(err error) error {
+	var typeErr *json.UnmarshalTypeError
+	var syntaxErr *json.SyntaxError
+	if errors.As(err, &typeErr) || errors.As(err, &syntaxErr) {
+		return errAPIResponseUndecodable
+	}
+	return err
 }
 
 // Pocket ID's limits for APIs (api.apiCreateDto and apiPermissionInputDto,

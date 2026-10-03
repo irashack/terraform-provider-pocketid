@@ -48,7 +48,9 @@
   contains the provider's own API key is refused, as is an API name,
   resource identifier, creation time or permission text that contains the key. The error
   is fixed text that never repeats the value, and nothing from that answer
-  reaches a diagnostic, the state or a data source.
+  reaches a diagnostic, the state or a data source. An answer that cannot be
+  decoded is reported the same way, without Go's decoding error, which can
+  quote a number from the response.
 - Identifiers you give the provider are checked the same way before anything
   uses them: an API ID in an import ID, in state or in configuration, and an
   OIDC client ID in an import ID, in state or in configuration, must be valid
