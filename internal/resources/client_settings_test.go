@@ -92,7 +92,7 @@ func TestClientUpdateSettings(t *testing.T) {
 func TestClientCreateSettings(t *testing.T) {
 	for name, configured := range map[string]bool{"defaults": false, "configured": true} {
 		t.Run(name, func(t *testing.T) {
-			fake := newFakePocketID(t, "2.16.0", &fakeClient{ID: "c1"})
+			fake := newFakePocketID(t, "2.16.0", &fakeClient{ID: generatedClientID})
 			r := &clientResource{client: fake.start()}
 			ctx := context.Background()
 			s := clientSchema(t).Schema

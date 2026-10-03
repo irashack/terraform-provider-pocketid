@@ -255,7 +255,7 @@ func TestClientCreateGroupRestriction(t *testing.T) {
 		"missing group rolled back": {stringSet(groupA, groupMissing), types.BoolValue(true), true, true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			fake := newFakePocketID(t, "2.17.0", &fakeClient{ID: "c1"})
+			fake := newFakePocketID(t, "2.17.0", &fakeClient{ID: generatedClientID})
 			fake.groups = map[string]bool{groupA: true}
 			r := &clientResource{client: fake.start()}
 			ctx := context.Background()
@@ -271,7 +271,7 @@ func TestClientCreateGroupRestriction(t *testing.T) {
 			if tc.wantErr {
 				require.True(t, resp.Diagnostics.HasError())
 				assert.Contains(t, resp.Diagnostics[len(resp.Diagnostics)-1].Detail(), groupMissing)
-				assert.Equal(t, 1, fake.called("DELETE /api/oidc/clients/c1"), "rolled back")
+				assert.Equal(t, 1, fake.called("DELETE /api/oidc/clients/"+generatedClientID), "rolled back")
 				assert.True(t, resp.State.Raw.IsNull())
 				return
 			}

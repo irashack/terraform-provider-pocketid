@@ -421,20 +421,20 @@ func TestClientCreateGroupReadBackRefusedIsUncertain(t *testing.T) {
 			_, _ = fmt.Fprint(w, `{"currentVersion":"2.16.0"}`)
 		case "POST /api/oidc/clients":
 			w.WriteHeader(http.StatusCreated)
-			_, _ = fmt.Fprint(w, `{"id":"new-fixture","name":"fixture","callbackURLs":["https://example.invalid/callback"],"pkceEnabled":true}`)
-		case "POST /api/oidc/clients/new-fixture/secrets":
+			_, _ = fmt.Fprint(w, `{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","name":"fixture","callbackURLs":["https://example.invalid/callback"],"pkceEnabled":true}`)
+		case "POST /api/oidc/clients/cccccccc-cccc-4ccc-8ccc-cccccccccccc/secrets":
 			w.WriteHeader(http.StatusCreated)
 			_, _ = fmt.Fprint(w, `{"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","secret":"synthetic-managed-secret"}`)
-		case "PUT /api/oidc/clients/new-fixture/allowed-user-groups":
-			_, _ = fmt.Fprint(w, `{"id":"new-fixture"}`)
-		case "GET /api/oidc/clients/new-fixture":
+		case "PUT /api/oidc/clients/cccccccc-cccc-4ccc-8ccc-cccccccccccc/allowed-user-groups":
+			_, _ = fmt.Fprint(w, `{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc"}`)
+		case "GET /api/oidc/clients/cccccccc-cccc-4ccc-8ccc-cccccccccccc":
 			reads++
 			if reads == 1 {
 				w.WriteHeader(http.StatusForbidden) // the read-back
 				return
 			}
-			_, _ = fmt.Fprint(w, `{"id":"new-fixture"}`)
-		case "DELETE /api/oidc/clients/new-fixture":
+			_, _ = fmt.Fprint(w, `{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc"}`)
+		case "DELETE /api/oidc/clients/cccccccc-cccc-4ccc-8ccc-cccccccccccc":
 			deletes++
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -460,7 +460,7 @@ func TestClientCreateGroupReadBackRefusedIsUncertain(t *testing.T) {
 	require.Equal(t, "OIDC client creation result uncertain", response.Diagnostics[len(response.Diagnostics)-1].Summary())
 	var state clientResourceModel
 	require.False(t, response.State.Get(ctx, &state).HasError())
-	require.Equal(t, "new-fixture", state.ID.ValueString())
+	require.Equal(t, "cccccccc-cccc-4ccc-8ccc-cccccccccccc", state.ID.ValueString())
 	require.Equal(t, "synthetic-managed-secret", state.ClientSecret.ValueString())
 	for _, d := range response.Diagnostics {
 		require.NotContains(t, d.Detail(), "synthetic-managed-secret")

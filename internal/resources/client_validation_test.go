@@ -51,7 +51,7 @@ func TestClientValidateConfigPublicClient(t *testing.T) {
 func TestClientPublicPARVersionGate(t *testing.T) {
 	for version, refused := range map[string]bool{"2.9.0": true, "2.10.0": false, "2.17.0": false} {
 		t.Run(version, func(t *testing.T) {
-			fake := newFakePocketID(t, version, &fakeClient{ID: "c1"})
+			fake := newFakePocketID(t, version, &fakeClient{ID: generatedClientID})
 			r := &clientResource{client: fake.start()}
 			ctx := context.Background()
 			s := clientSchema(t).Schema

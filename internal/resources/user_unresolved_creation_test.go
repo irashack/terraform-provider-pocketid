@@ -111,9 +111,9 @@ func usersGroupsErrors(diags []*tfprotov6.Diagnostic) string {
 	return strings.Join(out, "\n")
 }
 
-// configOf is the configuration behind a planned model: Computed attributes
+// userConfigOf is the configuration behind a planned model: Computed attributes
 // the configuration does not set are null in it.
-func configOf(planned *userResourceModel) *userResourceModel {
+func userConfigOf(planned *userResourceModel) *userResourceModel {
 	if planned == nil {
 		return nil
 	}
@@ -137,7 +137,7 @@ func usersGroupsWarnings(diags []*tfprotov6.Diagnostic) string {
 // apply sends ApplyResourceChange; a nil planned model is a delete.
 func (h *usersGroupsUserHarness) apply(prior, planned *userResourceModel, private []byte) (*userResourceModel, []byte, string) {
 	h.t.Helper()
-	config := configOf(planned)
+	config := userConfigOf(planned)
 	resp, err := h.server.ApplyResourceChange(context.Background(), &tfprotov6.ApplyResourceChangeRequest{
 		TypeName: "pocketid_user", PriorState: h.dynamic(prior), PlannedState: h.dynamic(planned),
 		Config: h.dynamic(config), PlannedPrivate: private,
@@ -182,7 +182,7 @@ func (h *usersGroupsUserHarness) readWithWarnings(current *userResourceModel, pr
 func (h *usersGroupsUserHarness) planFromNull(config *userResourceModel) (*userResourceModel, []byte, string) {
 	h.t.Helper()
 	resp, err := h.server.PlanResourceChange(context.Background(), &tfprotov6.PlanResourceChangeRequest{
-		TypeName: "pocketid_user", PriorState: h.dynamic(nil), ProposedNewState: h.dynamic(configOf(config)), Config: h.dynamic(configOf(config)),
+		TypeName: "pocketid_user", PriorState: h.dynamic(nil), ProposedNewState: h.dynamic(userConfigOf(config)), Config: h.dynamic(userConfigOf(config)),
 	})
 	require.NoError(h.t, err)
 	return h.decode(resp.PlannedState), resp.PlannedPrivate, usersGroupsErrors(resp.Diagnostics)

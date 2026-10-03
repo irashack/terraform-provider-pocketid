@@ -72,6 +72,11 @@ type fakePocketID struct {
 	lostResponse map[string]bool
 }
 
+// generatedClientID is the ID the fake gives a client created without a
+// chosen ID: Pocket ID generates a UUID, and the client refuses any other
+// form in a create response.
+const generatedClientID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+
 func newFakePocketID(t *testing.T, version string, c *fakeClient) *fakePocketID {
 	t.Helper()
 	if c.ClientType == "" {

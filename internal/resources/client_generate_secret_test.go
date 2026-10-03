@@ -263,7 +263,7 @@ func TestClientReadFillsSecretAttributes(t *testing.T) {
 // With generate_secret = false a confidential client gets no secret from this
 // resource, and the one Pocket ID 2.17 creates with it is still revoked.
 func TestClientCreateWithoutSecret(t *testing.T) {
-	fake := newFakePocketID(t, "2.17.0", &fakeClient{ID: "c1"})
+	fake := newFakePocketID(t, "2.17.0", &fakeClient{ID: generatedClientID})
 	r := &clientResource{client: fake.start()}
 	ctx := context.Background()
 	s := clientSchema(t).Schema
@@ -282,13 +282,13 @@ func TestClientCreateWithoutSecret(t *testing.T) {
 	assert.True(t, after.ClientSecret.IsNull())
 	assert.True(t, after.ClientSecretID.IsNull())
 	assert.Empty(t, fake.secrets, "the server-created secret is revoked and none is generated")
-	assert.Zero(t, fake.called("POST /api/oidc/clients/c1/secrets"))
-	assert.Equal(t, 1, fake.called("DELETE /api/oidc/clients/c1/secrets/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"))
+	assert.Zero(t, fake.called("POST /api/oidc/clients/"+generatedClientID+"/secrets"))
+	assert.Equal(t, 1, fake.called("DELETE /api/oidc/clients/"+generatedClientID+"/secrets/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"))
 }
 
 // A generated secret's ID is recorded with its value.
 func TestClientCreateRecordsSecretID(t *testing.T) {
-	fake := newFakePocketID(t, "2.17.0", &fakeClient{ID: "c1"})
+	fake := newFakePocketID(t, "2.17.0", &fakeClient{ID: generatedClientID})
 	r := &clientResource{client: fake.start()}
 	ctx := context.Background()
 	s := clientSchema(t).Schema
