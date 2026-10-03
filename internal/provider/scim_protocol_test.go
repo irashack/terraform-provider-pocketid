@@ -18,24 +18,12 @@ import (
 
 const scimResourceType = "pocketid_scim_service_provider"
 
-// scimProtocolServer starts the provider behind a fake Pocket ID that holds
-// one SCIM service provider with the given token, and returns the configured
-// provider server together with the resource's object type.
-func scimProtocolServer(t *testing.T, serverToken string) (tfprotov6.ProviderServer, tftypes.Object) {
+// protocolServer starts the provider behind a fake Pocket ID served by
+// handler and returns the configured provider server and its schemas.
+func protocolServer(t *testing.T, handler http.Handler) (tfprotov6.ProviderServer, *tfprotov6.GetProviderSchemaResponse) {
 	t.Helper()
 	ctx := context.Background()
-	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/api/oidc/clients/scim-client/scim-service-provider" {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"id": "33333333-3333-4333-8333-333333333333", "endpoint": "https://scim.example.com/v2",
-				"token": serverToken, "lastSyncedAt": nil, "createdAt": "2026-01-01T00:00:00Z",
-				"oidcClient": map[string]any{"id": "scim-client", "name": "SCIM client"},
-			})
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	}))
+	api := httptest.NewServer(handler)
 	t.Cleanup(api.Close)
 
 	server := providerserver.NewProtocol6(pocketidprovider.New("test")())()
@@ -56,12 +44,36 @@ func scimProtocolServer(t *testing.T, serverToken string) (tfprotov6.ProviderSer
 	configured, err := server.ConfigureProvider(ctx, &tfprotov6.ConfigureProviderRequest{Config: &config})
 	require.NoError(t, err)
 	require.Empty(t, configured.Diagnostics)
+	return server, schemas
+}
 
-	resourceSchema, ok := schemas.ResourceSchemas[scimResourceType]
+func resourceObjectType(t *testing.T, schemas *tfprotov6.GetProviderSchemaResponse, typeName string) tftypes.Object {
+	t.Helper()
+	resourceSchema, ok := schemas.ResourceSchemas[typeName]
 	require.True(t, ok)
 	objectType, ok := resourceSchema.ValueType().(tftypes.Object)
 	require.True(t, ok)
-	return server, objectType
+	return objectType
+}
+
+// scimProtocolServer starts the provider behind a fake Pocket ID that holds
+// one SCIM service provider with the given token, and returns the configured
+// provider server together with the resource's object type.
+func scimProtocolServer(t *testing.T, serverToken string) (tfprotov6.ProviderServer, tftypes.Object) {
+	t.Helper()
+	server, schemas := protocolServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/oidc/clients/scim-client/scim-service-provider" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": "33333333-3333-4333-8333-333333333333", "endpoint": "https://scim.example.com/v2",
+				"token": serverToken, "lastSyncedAt": nil, "createdAt": "2026-01-01T00:00:00Z",
+				"oidcClient": map[string]any{"id": "scim-client", "name": "SCIM client"},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	return server, resourceObjectType(t, schemas, scimResourceType)
 }
 
 func scimProtocolObject(t *testing.T, objectType tftypes.Object, values map[string]any) tftypes.Value {

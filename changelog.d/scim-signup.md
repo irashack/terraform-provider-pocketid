@@ -29,3 +29,15 @@
   than the provider's `timeout` (30 seconds by default) fails the apply with a
   message that its outcome is unknown: raise `timeout`, and check
   `last_synced_at` on the service provider.
+- New resource `pocketid_signup_token` and data source `pocketid_signup_tokens`
+  for Pocket ID's signup tokens (people register with them; optionally into
+  groups). A token's inputs (`ttl`, `usage_limit`, `user_group_ids`) cannot be
+  changed, so changing one replaces the token. The token value is stored in the
+  state as a sensitive value. Pocket ID deletes a token when it expires, and
+  cannot tell that from an administrator deleting it: such a token stays in the
+  state with `expired = true` and the next plan does not create a new one. Use
+  `-replace` for a fresh token. Pocket ID silently ignores a group ID that
+  names no group; the provider fails and records the token as tainted so the
+  next apply replaces it. The data source lists the valid tokens; because
+  Pocket ID's list includes each token's value, every `token` it returns is a
+  live secret that is stored in the state (marked sensitive).
