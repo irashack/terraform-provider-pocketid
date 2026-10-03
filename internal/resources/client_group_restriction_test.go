@@ -179,18 +179,15 @@ func TestClientUpdateGroupRestriction(t *testing.T) {
 			wantRestricted: true, wantAllowed: []string{groupA},
 		},
 		// State written before is_group_restricted, applied without a
-		// refresh: the server's current restriction decides, never opened.
+		// refresh: planning leaves it unknown (see TestPlanGroupRestriction)
+		// and the server's current restriction decides, never opened. A
+		// stale known false is covered through the framework by
+		// TestClientUnrefreshedUpdateNeverOpensARestrictedClient.
 		"unrefreshed old state, groups removed": {
 			restricted: true, allowed: []string{groupA}, priorGroups: stringSet(groupA), priorRestrict: types.BoolNull(),
 			plannedGroups: types.SetNull(types.StringType), plannedRestrict: types.BoolUnknown(), configRestrict: types.BoolNull(),
 			wantMutations:  []string{"PUT /api/oidc/clients/c1/allowed-user-groups", "PUT /api/oidc/clients/c1"},
 			wantRestricted: true, wantSignedOut: []string{"member-a", "member-b", "outsider"},
-		},
-		"unrefreshed, restricted outside Terraform": {
-			restricted: true, priorGroups: types.SetNull(types.StringType), priorRestrict: types.BoolValue(false),
-			plannedGroups: types.SetNull(types.StringType), plannedRestrict: types.BoolUnknown(), configRestrict: types.BoolNull(),
-			wantMutations:  []string{"PUT /api/oidc/clients/c1"},
-			wantRestricted: true,
 		},
 		"an ID that names no group": {
 			restricted: true, allowed: []string{groupA}, priorGroups: stringSet(groupA), priorRestrict: types.BoolValue(true),
@@ -322,4 +319,37 @@ func TestClientUpdateRestrictionNotApplied(t *testing.T) {
 	next.GenerateSecret = types.BoolValue(true)
 	action, _ := planSecretAction(after, next)
 	assert.Equal(t, secretGenerate, action)
+}
+
+// A client restricted outside Terraform after the last refresh is never
+// opened by an unrefreshed update that leaves is_group_restricted unset:
+// planned from stale state, the restriction would read as false. The apply
+// refuses before any change and asks for a refreshed plan; with one, the
+// client stays restricted. Driven through the framework's planning.
+func TestClientUnrefreshedUpdateNeverOpensARestrictedClient(t *testing.T) {
+	fake := groupFake(t, false)
+	h := newProtoHarness(t, fake.start())
+	prior := managedModel()       // last refresh: open, no groups
+	fake.client.Restricted = true // restricted in the admin UI since then
+	config := homelabConfig()
+	config.Name = types.StringValue("renamed")
+
+	stale := h.plan(&prior, config, nil) // -refresh=false
+	require.Empty(t, stale.errors)
+	result := h.apply(&prior, config, stale)
+	require.Contains(t, result.errors, "refresh")
+	assert.Empty(t, fake.mutations(), "nothing changed")
+	assert.True(t, fake.client.Restricted)
+	assert.Equal(t, "fixture", fake.client.Name)
+
+	refreshed := h.read(prior, nil)
+	require.Empty(t, refreshed.errors)
+	p := h.plan(refreshed.model, config, refreshed.private)
+	require.Empty(t, p.errors)
+	assert.True(t, p.model.IsGroupRestricted.ValueBool())
+	result = h.apply(refreshed.model, config, p)
+	require.Empty(t, result.errors)
+	assert.True(t, fake.client.Restricted, "still restricted")
+	assert.Equal(t, "renamed", fake.client.Name)
+	assert.Empty(t, fake.signedOut)
 }

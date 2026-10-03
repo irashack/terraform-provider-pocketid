@@ -744,6 +744,16 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 	// sends its groups first; see the ordering below.
 	wantGroups := setStrings(plan.AllowedUserGroups)
 	isGroupRestricted := resolveGroupRestriction(plan.IsGroupRestricted, wantGroups, current.IsGroupRestricted)
+	// An omitted is_group_restricted is planned false only from state that
+	// recorded an open client. If the server has been restricted since, the
+	// plan was made from stale state (an unrefreshed plan) and never showed
+	// opening the client: refuse instead of opening it.
+	if config.IsGroupRestricted.IsNull() && !isGroupRestricted && current.IsGroupRestricted {
+		resp.Diagnostics.AddAttributeError(path.Root("is_group_restricted"), "Client restricted since the last refresh",
+			"The client is group-restricted in Pocket ID, but this plan was made from state that recorded it unrestricted, so applying it would open the client to every user. "+
+				"No change was made. Plan again with a refresh (without -refresh=false); to open the client, set is_group_restricted = false.")
+		return
+	}
 	if !isGroupRestricted && len(wantGroups) > 0 {
 		resp.Diagnostics.AddAttributeError(path.Root("allowed_user_groups"), "Conflicting group restriction",
 			"allowed_user_groups has no effect with is_group_restricted = false: every user may sign in. No change was made.")

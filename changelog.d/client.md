@@ -88,3 +88,7 @@
   never a value).
 - The `pocketid_client` data source examples used `client_id`, which is not
   an argument of that data source; they now use `id`.
+- An update planned without a refresh (`-refresh=false`) no longer opens a
+  client that was group-restricted in the admin UI after the last refresh
+  when `is_group_restricted` is not configured; the apply stops before
+  changing anything and asks for a refreshed plan.

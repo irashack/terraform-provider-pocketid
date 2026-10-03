@@ -19,6 +19,8 @@ The new build then takes over the same state, with the same configuration:
   by its prefix, and keeps the group restriction;
 - generate_secret = true generates a new one in place;
 - removing a client's groups leaves it restricted (to nobody), stably;
+- a client restricted outside Terraform after the last refresh is not opened
+  by an unrefreshed update; the apply asks for a refresh;
 - a different client_id plans a replacement, which prevent_destroy refuses.
 
 Everything lives in a temporary directory; only the fixture is touched.
@@ -53,6 +55,13 @@ def api(path):
         return json.load(response)
 
 
+def api_put(path, body):
+    req = urllib.request.Request(base + path, method="PUT", data=json.dumps(body).encode(),
+        headers={"X-API-KEY": os.environ["POCKETID_API_TOKEN"], "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=15) as response:
+        return json.load(response)
+
+
 def secrets_of(cid):
     return api("/api/oidc/clients/" + cid + "/secrets") or []
 
@@ -75,7 +84,7 @@ with tempfile.TemporaryDirectory(prefix="pocketid-client-upgrade-") as tmp:
         if key.startswith("TF_LOG") or key in ("TF_PLUGIN_CACHE_DIR", "TF_REATTACH_PROVIDERS"):
             del env[key]
 
-    def config(version, home_extra="", public_groups="[pocketid_group.a.id]", home_id=HOMELAB, protect=True):
+    def config(version, home_extra="", public_groups="[pocketid_group.a.id]", home_id=HOMELAB, protect=True, generated_name="Generated ID"):
         lifecycle = "\n lifecycle {\n  prevent_destroy = true\n }\n" if protect else ""
         groups = "" if public_groups is None else " allowed_user_groups = " + public_groups + "\n"
         (work / "main.tf").write_text('''terraform {
@@ -112,7 +121,7 @@ resource "pocketid_client" "public" {
  pkce_enabled = true
 ''' + groups + lifecycle + '''}
 resource "pocketid_client" "generated" {
- name = "Generated ID"
+ name = "''' + generated_name + '''"
  callback_urls = ["https://generated.example.invalid/callback"]
  logout_callback_urls = ["https://generated.example.invalid/logout"]
 ''' + lifecycle + '''}
@@ -185,11 +194,30 @@ resource "pocketid_client" "generated" {
     assert restriction(PUBLIC) == (True, []), "removing the groups opened the client"
     run("plan", "-detailed-exitcode", "-input=false")
 
-    # 6. A different client_id plans a replacement; prevent_destroy refuses it.
-    config(DEV_VERSION, public_groups=None, home_id=HOMELAB + "-renamed")
+    # 6. A client restricted outside Terraform since the last refresh is not
+    #    opened by an unrefreshed update that leaves is_group_restricted
+    #    unset: the apply refuses and asks for a refresh; refreshed, the
+    #    update keeps the restriction.
+    generated_id = current["generated"]["id"]
+    client = api("/api/oidc/clients/" + generated_id)
+    client["isGroupRestricted"] = True
+    api_put("/api/oidc/clients/" + generated_id, client)
+    assert restriction(generated_id) == (True, [])
+    config(DEV_VERSION, public_groups=None, generated_name="Generated ID renamed")
+    refused = run("apply", "-refresh=false", "-auto-approve", "-input=false", ok=(1,))
+    assert b"refresh" in refused.stderr, "the unrefreshed apply failed for another reason"
+    assert restriction(generated_id) == (True, []), "an unrefreshed update opened the client"
+    assert api("/api/oidc/clients/" + generated_id)["name"] == "Generated ID", "the refused update changed the client"
+    run("apply", "-auto-approve", "-input=false")
+    assert restriction(generated_id) == (True, []), "a refreshed update opened the client"
+    assert api("/api/oidc/clients/" + generated_id)["name"] == "Generated ID renamed"
+    run("plan", "-detailed-exitcode", "-input=false")
+
+    # 7. A different client_id plans a replacement; prevent_destroy refuses it.
+    config(DEV_VERSION, public_groups=None, home_id=HOMELAB + "-renamed", generated_name="Generated ID renamed")
     refused = run("plan", "-input=false", ok=(1,))
     assert b"prevent_destroy" in refused.stderr, "the plan failed for another reason than prevent_destroy"
 
-    config(DEV_VERSION, public_groups=None, protect=False)
+    config(DEV_VERSION, public_groups=None, protect=False, generated_name="Generated ID renamed")
     run("destroy", "-auto-approve", "-input=false")
-    print("PASS native " + tool + " client upgrade " + released_version + " -> new build: empty refreshed plan; unrefreshed generate_secret=false revoked only the stored secret by prefix; regenerated in place; groups removal kept the restriction; client_id change refused by prevent_destroy; secrets after the released create: " + str(len(released_secrets)))
+    print("PASS native " + tool + " client upgrade " + released_version + " -> new build: empty refreshed plan; unrefreshed generate_secret=false revoked only the stored secret by prefix; regenerated in place; groups removal kept the restriction; an unrefreshed update refused to open a client restricted outside Terraform; client_id change refused by prevent_destroy; secrets after the released create: " + str(len(released_secrets)))
