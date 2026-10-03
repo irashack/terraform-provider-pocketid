@@ -292,9 +292,11 @@ func TestAccResourceSignupToken_deletedOutsideTerraform(t *testing.T) {
 	})
 }
 
-// Pocket ID silently ignores a group ID that names no group; the provider
-// reports it, keeps the token in state as tainted, and the destroy removes it.
-func TestAccResourceSignupToken_unknownGroupIsReported(t *testing.T) {
+// Pocket ID silently ignores a group ID that names no group. The provider
+// reports it and deletes the token again, so no usable credential survives
+// the failed apply: the next step finds the fixture holding no more tokens
+// than before, while the state still has nothing to destroy.
+func TestAccResourceSignupToken_unknownGroupIsReportedAndTheTokenDeleted(t *testing.T) {
 	name := acctest.RandomWithPrefix("tf-acc-signup-grp")
 	var before int
 
@@ -320,7 +322,21 @@ func TestAccResourceSignupToken_unknownGroupIsReported(t *testing.T) {
 			{
 				Config: testAccSignupTokenConfig(name, `
   user_group_ids = [pocketid_group.test.id, "0b6f4f2e-7c1a-4d3e-9f10-2a3b4c5d6e7f"]`),
-				ExpectError: regexp.MustCompile(`(?s)did not create the signup token as requested.*0b6f4f2e-7c1a-4d3e-9f10-2a3b4c5d6e7f`),
+				ExpectError: regexp.MustCompile(`(?s)did not create the signup token as requested.*0b6f4f2e-7c1a-4d3e-9f10-2a3b4c5d6e7f.*deleted again`),
+			},
+			{
+				// Nothing is left behind by the failed create, before any destroy.
+				PreConfig: func() {
+					tokens, err := testAccSignupTokensOnServer()
+					require.NoError(t, err)
+					require.Len(t, tokens, before, "the token Pocket ID made must have been deleted again")
+				},
+				Config: testAccProviderConfig() + fmt.Sprintf(`
+resource "pocketid_group" "test" {
+  name          = %[1]q
+  friendly_name = %[1]q
+}
+`, name),
 			},
 		},
 	})

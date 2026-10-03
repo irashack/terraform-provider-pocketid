@@ -44,8 +44,10 @@
   cannot tell that from an administrator deleting it: such a token stays in the
   state with `expired = true` and the next plan does not create a new one. Use
   `-replace` for a fresh token. Pocket ID silently ignores a group ID that
-  names no group; the provider fails and records the token as tainted so the
-  next apply replaces it. The data source lists the valid tokens with their
+  names no group; the provider fails, deletes the token it just made (checking
+  Pocket ID's list that it is gone) and records nothing. If that deletion
+  cannot be confirmed, the token's ID stays in the state, tainted, so the next
+  apply deletes it, and the error says the token may be valid until it expires. The data source lists the valid tokens with their
   ID, times, limits, use count and groups. Token values are deliberately not
   exposed by the list: Pocket ID's list includes each token's value, and
   copying every outstanding token, including ones created outside Terraform,

@@ -56,7 +56,7 @@ output "signup_token_expired" {
 
 - `ttl` (String) How long the token is valid, as a Go duration such as `24h` or `90m`: more than 1 second and at most `744h` (31 days). Defaults to `1h`. Changing it, even to an equal duration written differently, creates a new token.
 - `usage_limit` (Number) How many people can register with the token, 1 to 100. Defaults to `1`. Changing it creates a new token.
-- `user_group_ids` (Set of String) IDs of the groups people who register with the token join. Pocket-ID silently ignores an ID that names no group; the provider fails when it did, and the token is then recorded as tainted so the next apply replaces it. Changing the set creates a new token.
+- `user_group_ids` (Set of String) IDs of the groups people who register with the token join. Pocket-ID silently ignores an ID that names no group; the provider fails when it did and deletes the token again. If that deletion cannot be confirmed, the token (valid until it expires) is recorded as tainted so the next apply deletes it. Changing the set creates a new token.
 
 ### Read-Only
 

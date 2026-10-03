@@ -122,8 +122,9 @@ func (r *signupTokenResource) Schema(_ context.Context, _ resource.SchemaRequest
 			},
 			"user_group_ids": schema.SetAttribute{
 				MarkdownDescription: "IDs of the groups people who register with the token join. Pocket-ID silently ignores an " +
-					"ID that names no group; the provider fails when it did, and the token is then recorded as tainted so " +
-					"the next apply replaces it. Changing the set creates a new token.",
+					"ID that names no group; the provider fails when it did and deletes the token again. If that deletion " +
+					"cannot be confirmed, the token (valid until it expires) is recorded as tainted so the next apply " +
+					"deletes it. Changing the set creates a new token.",
 				Optional:    true,
 				ElementType: types.StringType,
 				PlanModifiers: []planmodifier.Set{
@@ -300,32 +301,63 @@ func (r *signupTokenResource) Create(ctx context.Context, req resource.CreateReq
 	plan.UsageLimit = types.Int64Value(int64(created.UsageLimit))
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 
+	// Check what Pocket ID created against what was asked for. A token that
+	// fails the check is a live registration credential with the wrong shape
+	// (fewer groups than requested, or groups nobody asked for), so it is
+	// deleted again rather than left to its ttl.
+	var problems []string
 	if err != nil {
-		// The ID is usable but the answer had no token value.
-		resp.Diagnostics.AddError("Error creating signup token",
-			"Pocket-ID created signup token "+created.ID+" but its answer did not carry the token value. The token is "+
-				"recorded as tainted so the next apply replaces it (which deletes it): "+err.Error())
+		problems = append(problems, "its answer did not carry the token value")
+	}
+	missing := signupTokenGroupDifference(requested, granted)
+	unexpected := signupTokenGroupDifference(granted, requested)
+	if len(missing) > 0 {
+		problems = append(problems, "ignored these group IDs, which name no group: "+strings.Join(missing, ", "))
+	}
+	if len(unexpected) > 0 {
+		problems = append(problems, "attached groups that were not requested: "+strings.Join(unexpected, ", "))
+	}
+	if !limitMatches {
+		problems = append(problems, fmt.Sprintf("set a usage limit of %d, not the requested value", created.UsageLimit))
+	}
+	if len(problems) == 0 {
 		return
 	}
 
-	missing := signupTokenGroupDifference(requested, granted)
-	unexpected := signupTokenGroupDifference(granted, requested)
-	if len(missing) > 0 || len(unexpected) > 0 || !limitMatches {
-		var problems []string
-		if len(missing) > 0 {
-			problems = append(problems, "ignored these group IDs, which name no group: "+strings.Join(missing, ", "))
-		}
-		if len(unexpected) > 0 {
-			problems = append(problems, "attached groups that were not requested: "+strings.Join(unexpected, ", "))
-		}
-		if !limitMatches {
-			problems = append(problems, fmt.Sprintf("set a usage limit of %d, not the requested value", created.UsageLimit))
-		}
-		resp.Diagnostics.AddError("Pocket-ID did not create the signup token as requested",
-			"Pocket-ID created signup token "+created.ID+" but "+strings.Join(problems, "; and ")+". The token is valid "+
-				"until it expires and is recorded as tainted, so the next apply replaces it (which deletes it). "+
-				"Fix the configuration first.")
+	summary := "Pocket-ID did not create the signup token as requested"
+	what := "Pocket-ID created signup token " + created.ID + " but " + strings.Join(problems, "; and ") + ". "
+	if cleanupErr := r.deleteSignupTokenConfirmed(ctx, created.ID); cleanupErr != nil {
+		// Keep the ID (and the value, if there is one) in state: the token may
+		// still be valid, and the taint makes the next apply delete it.
+		resp.Diagnostics.AddError(summary,
+			what+"One attempt to delete it again could not be confirmed ("+cleanupErr.Error()+"), so the token may still be "+
+				"valid until it expires at "+created.ExpiresAt+". It is recorded in the state as tainted, so the next apply "+
+				"deletes it; delete it in the Pocket-ID interface to revoke it sooner. Fix the configuration first.")
+		return
 	}
+	resp.State.RemoveResource(ctx)
+	resp.Diagnostics.AddError(summary,
+		what+"The token was deleted again (confirmed against Pocket-ID's list) and nothing is recorded. Fix the configuration first.")
+}
+
+// deleteSignupTokenConfirmed makes one attempt to delete a token and confirms
+// that Pocket ID no longer lists it. DELETE answers 204 whether or not the
+// token existed, so the answer alone proves nothing; the list does. The error
+// is nil only when the token is confirmed gone.
+func (r *signupTokenResource) deleteSignupTokenConfirmed(ctx context.Context, id string) error {
+	if err := r.client.DeleteSignupToken(ctx, id); err != nil {
+		return err
+	}
+	tokens, err := r.client.ListSignupTokens(ctx)
+	if err != nil {
+		return fmt.Errorf("the list that confirms it could not be read: %w", err)
+	}
+	for i := range tokens {
+		if tokens[i].ID == id {
+			return errors.New("the token is still listed after the deletion")
+		}
+	}
+	return nil
 }
 
 // applyListed copies what Pocket ID lists onto the model.

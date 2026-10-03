@@ -45,6 +45,11 @@ type signupFake struct {
 	// createBody, when set, replaces the answer to a create.
 	createBody string
 	nextID     int
+	// failDelete answers a delete with this failure; keepOnDelete makes a
+	// delete answer 204 without removing anything; failList answers the list.
+	failDelete   *scimFailure
+	keepOnDelete bool
+	failList     *scimFailure
 }
 
 func newSignupFake(t *testing.T) (*signupFake, *client.Client) {
@@ -91,6 +96,16 @@ func (f *signupFake) serve(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(f.failWith.Body))
 		return
 	}
+	if r.Method == http.MethodDelete && f.failDelete != nil {
+		w.WriteHeader(f.failDelete.Status)
+		_, _ = w.Write([]byte(f.failDelete.Body))
+		return
+	}
+	if r.Method == http.MethodGet && f.failList != nil {
+		w.WriteHeader(f.failList.Status)
+		_, _ = w.Write([]byte(f.failList.Body))
+		return
+	}
 	switch {
 	case r.Method == http.MethodPost && r.URL.Path == "/api/signup-tokens":
 		if f.createBody != "" {
@@ -125,7 +140,7 @@ func (f *signupFake) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/signup-tokens/"):
 		id := strings.TrimPrefix(r.URL.Path, "/api/signup-tokens/")
 		for i, tok := range f.tokens {
-			if tok["id"] == id {
+			if tok["id"] == id && !f.keepOnDelete {
 				f.tokens = append(f.tokens[:i], f.tokens[i+1:]...)
 				break
 			}
@@ -279,35 +294,88 @@ func TestSignupTokenResource_CreateWithoutGroupsKeepsTheSetNullAndSendsAnEmptyLi
 	assert.True(t, groups.IsNull())
 }
 
-// Pocket ID drops IDs that name no group. The token exists and is valid, so
-// it is recorded (as tainted, by the error) with the groups it really has,
-// and the diagnostic names the ignored IDs and never the token.
-func TestSignupTokenResource_CreateFailsWhenPocketIDIgnoresAGroup(t *testing.T) {
+// Pocket ID drops IDs that name no group. The token it made is a live
+// registration credential with the wrong groups, so the provider deletes it
+// again, confirms against the list that it is gone, and only then records
+// nothing. The diagnostic names the ignored IDs and never the token.
+func TestSignupTokenResource_CreateDeletesATokenWhoseGroupPocketIDIgnored(t *testing.T) {
 	fake, c := newSignupFake(t)
 	r, sch := signupResource(t, c)
 	const unknown = "88888888-8888-4888-8888-888888888888"
 
 	resp := signupCreate(t, r, sch, signupPlan(signupSet(signupTestGroupA, unknown), 1))
 	require.True(t, resp.Diagnostics.HasError())
-	assert.Len(t, fake.mutations(), 1)
 
-	var detail string
-	for _, d := range resp.Diagnostics {
-		detail += d.Summary() + " " + d.Detail()
-	}
+	mutations := fake.mutations()
+	require.Len(t, mutations, 2, "one creation and one deletion, nothing repeated")
+	assert.Equal(t, http.MethodPost, mutations[0].Method)
+	assert.Equal(t, http.MethodDelete, mutations[1].Method)
+	assert.Equal(t, "/api/signup-tokens/55555555-5555-4555-8555-000000000001", mutations[1].Path)
+	assert.Empty(t, fake.tokens, "the token must be gone from Pocket ID")
+	assert.True(t, resp.State.Raw.IsNull(), "a confirmed deletion leaves nothing in state")
+
+	detail := signupDiagnosticText(resp)
 	assert.Contains(t, detail, unknown)
 	assert.NotContains(t, detail, signupTestGroupA)
 	assert.NotContains(t, detail, signupTestSecret)
+	assert.Contains(t, detail, "deleted again")
+}
 
-	require.False(t, resp.State.Raw.IsNull(), "the created token must stay in state so it can be replaced")
-	var id, token types.String
-	var groups types.Set
-	signupAttr(t, resp.State, "id", &id)
-	signupAttr(t, resp.State, "token", &token)
-	signupAttr(t, resp.State, "user_group_ids", &groups)
-	assert.NotEmpty(t, id.ValueString())
-	assert.Equal(t, signupTestSecret, token.ValueString())
-	assert.Equal(t, []string{signupTestGroupA}, signupSetStrings(t, groups), "the state shows the groups the token really has")
+func signupDiagnosticText(resp *resource.CreateResponse) string {
+	var text string
+	for _, d := range resp.Diagnostics {
+		text += d.Summary() + " " + d.Detail() + " "
+	}
+	return text
+}
+
+// When the deletion cannot be confirmed, the token may still be valid: its ID
+// and value stay in state (tainted by the error) so the next apply deletes it,
+// and the diagnostic says the cleanup failed.
+func TestSignupTokenResource_CreateKeepsATokenWhoseCleanupCannotBeConfirmed(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(*signupFake)
+		want  string
+	}{
+		{"the deletion fails", func(f *signupFake) { f.failDelete = &scimFailure{500, `{"error":"boom signup-secret-value-0123"}`} }, "HTTP 500"},
+		{"the deletion is refused", func(f *signupFake) { f.failDelete = &scimFailure{403, `{"error":"no"}`} }, "HTTP 403"},
+		{"Pocket ID still lists the token", func(f *signupFake) { f.keepOnDelete = true }, "still listed"},
+		{"the confirming list cannot be read", func(f *signupFake) { f.failList = &scimFailure{503, `{"error":"later"}`} }, "could not be read"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake, c := newSignupFake(t)
+			tc.setup(fake)
+			r, sch := signupResource(t, c)
+			const unknown = "88888888-8888-4888-8888-888888888888"
+
+			resp := signupCreate(t, r, sch, signupPlan(signupSet(signupTestGroupA, unknown), 1))
+			require.True(t, resp.Diagnostics.HasError())
+
+			var deletes int
+			for _, m := range fake.mutations() {
+				if m.Method == http.MethodDelete {
+					deletes++
+				}
+			}
+			assert.Equal(t, 1, deletes, "exactly one attempt to delete")
+
+			require.False(t, resp.State.Raw.IsNull(), "an unconfirmed cleanup keeps the token in state")
+			var id, token types.String
+			signupAttr(t, resp.State, "id", &id)
+			signupAttr(t, resp.State, "token", &token)
+			assert.NotEmpty(t, id.ValueString())
+			assert.Equal(t, signupTestSecret, token.ValueString())
+
+			detail := signupDiagnosticText(resp)
+			assert.Contains(t, detail, "could not be confirmed")
+			assert.Contains(t, detail, "tainted")
+			assert.Contains(t, detail, tc.want)
+			assert.Contains(t, detail, unknown)
+			assert.NotContains(t, detail, signupTestSecret)
+		})
+	}
 }
 
 func signupSetStrings(t *testing.T, set types.Set) []string {
@@ -322,18 +390,36 @@ func signupSetStrings(t *testing.T, set types.Set) []string {
 	return out
 }
 
-func TestSignupTokenResource_CreateRecordsATokenWhoseAnswerHadNoValue(t *testing.T) {
+// An answer with a usable ID but no token value is a token nobody can hand
+// out; it is deleted again like any other token that is not as requested.
+func TestSignupTokenResource_CreateDeletesATokenWhoseAnswerHadNoValue(t *testing.T) {
 	fake, c := newSignupFake(t)
 	fake.createBody = fmt.Sprintf(`{"id":%q,"usageLimit":1,"userGroups":[]}`, signupTestTokenID)
 	r, sch := signupResource(t, c)
 
 	resp := signupCreate(t, r, sch, signupPlan(nil, 1))
 	require.True(t, resp.Diagnostics.HasError())
-	require.False(t, resp.State.Raw.IsNull(), "a token that exists is recorded by its ID")
+	mutations := fake.mutations()
+	require.Len(t, mutations, 2)
+	assert.Equal(t, http.MethodDelete, mutations[1].Method)
+	assert.Equal(t, "/api/signup-tokens/"+signupTestTokenID, mutations[1].Path)
+	assert.True(t, resp.State.Raw.IsNull())
+	assert.Contains(t, signupDiagnosticText(resp), "did not carry the token value")
+}
+
+func TestSignupTokenResource_CreateKeepsTheIDOfATokenWithNoValueWhenCleanupFails(t *testing.T) {
+	fake, c := newSignupFake(t)
+	fake.createBody = fmt.Sprintf(`{"id":%q,"usageLimit":1,"userGroups":[]}`, signupTestTokenID)
+	fake.failDelete = &scimFailure{500, `{"error":"boom"}`}
+	r, sch := signupResource(t, c)
+
+	resp := signupCreate(t, r, sch, signupPlan(nil, 1))
+	require.True(t, resp.Diagnostics.HasError())
+	require.False(t, resp.State.Raw.IsNull(), "a token that may still exist is recorded by its ID")
 	var id types.String
 	signupAttr(t, resp.State, "id", &id)
 	assert.Equal(t, signupTestTokenID, id.ValueString())
-	assert.Len(t, fake.mutations(), 1)
+	assert.Contains(t, signupDiagnosticText(resp), "could not be confirmed")
 }
 
 func TestSignupTokenResource_CreateFailuresAreReportedOnceAndRecordNothing(t *testing.T) {
