@@ -391,7 +391,7 @@ type ResponseBodyError struct {
 	TooLarge bool
 	// Accepted is set for a 2xx answer to a mutation.
 	Accepted  bool
-	cause     error
+	causes    []error
 	retryable bool
 }
 
@@ -404,13 +404,10 @@ func (e *ResponseBodyError) Error() string {
 }
 
 // Unwrap gives errResponseTooLarge or the read failure's classification (a
-// context error, a connection errno or io.ErrUnexpectedEOF), and
+// context error, the bare syscall.Errno, io.ErrUnexpectedEOF), and
 // ErrResultUnread when Accepted.
 func (e *ResponseBodyError) Unwrap() []error {
-	var causes []error
-	if e.cause != nil {
-		causes = append(causes, e.cause)
-	}
+	causes := append([]error(nil), e.causes...)
 	if e.Accepted {
 		causes = append(causes, ErrResultUnread)
 	}
@@ -423,18 +420,18 @@ func (e *ResponseBodyError) Unwrap() []error {
 func readBounded(resp *http.Response, limit int64) ([]byte, *ResponseBodyError) {
 	if resp.ContentLength > limit {
 		return nil, &ResponseBodyError{
-			StatusCode: resp.StatusCode, TooLarge: true, cause: errResponseTooLarge,
+			StatusCode: resp.StatusCode, TooLarge: true, causes: []error{errResponseTooLarge},
 			Reason: fmt.Sprintf("%s (%d bytes declared, limit %d); body not read", errResponseTooLarge, resp.ContentLength, limit),
 		}
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
-		reason, cause, retryable := classifyTransportError(err)
-		return nil, &ResponseBodyError{StatusCode: resp.StatusCode, Reason: "reading the response body failed: " + reason, cause: cause, retryable: retryable}
+		reason, causes, retryable := classifyTransportError(err)
+		return nil, &ResponseBodyError{StatusCode: resp.StatusCode, Reason: "reading the response body failed: " + reason, causes: causes, retryable: retryable}
 	}
 	if int64(len(body)) > limit {
 		return nil, &ResponseBodyError{
-			StatusCode: resp.StatusCode, TooLarge: true, cause: errResponseTooLarge,
+			StatusCode: resp.StatusCode, TooLarge: true, causes: []error{errResponseTooLarge},
 			Reason: fmt.Sprintf("%s (limit %d bytes); body discarded", errResponseTooLarge, limit),
 		}
 	}
@@ -490,7 +487,7 @@ type TransportError struct {
 	Endpoint string
 	// Reason is the fixed description of what went wrong.
 	Reason    string
-	cause     error
+	causes    []error
 	retryable bool
 }
 
@@ -499,44 +496,67 @@ func (e *TransportError) Error() string {
 }
 
 // Unwrap returns the classification, never the original error.
-func (e *TransportError) Unwrap() error { return e.cause }
+func (e *TransportError) Unwrap() []error { return e.causes }
 
 func newTransportError(method, endpoint, stage string, err error) *TransportError {
-	reason, cause, retryable := classifyTransportError(err)
-	return &TransportError{Method: method, Endpoint: endpoint, Reason: stage + ": " + reason, cause: cause, retryable: retryable}
+	reason, causes, retryable := classifyTransportError(err)
+	return &TransportError{Method: method, Endpoint: endpoint, Reason: stage + ": " + reason, causes: causes, retryable: retryable}
 }
 
 // classifyTransportError maps a client or connection error to a fixed
-// description, the sentinel it may wrap, and whether a GET may be retried
-// after it. Context errors come first, so cancellation and deadlines keep
-// their meaning (the HTTP client's own timeout is a deadline).
-func classifyTransportError(err error) (string, error, bool) {
+// description, the errors it may wrap, and whether a GET may be retried after
+// it. The wrapped errors are only sentinels whose text is fixed: a context
+// error (checked first, so cancellation and deadlines keep their meaning; the
+// HTTP client's own timeout is a deadline), the bare syscall.Errno the
+// failure carried, if any, kept whatever the description and the retry
+// decision, and io.ErrUnexpectedEOF for a connection closed early.
+func classifyTransportError(err error) (string, []error, bool) {
+	var causes []error
+	switch {
+	case errors.Is(err, context.Canceled):
+		causes = append(causes, context.Canceled)
+	case errors.Is(err, context.DeadlineExceeded):
+		causes = append(causes, context.DeadlineExceeded)
+	}
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		causes = append(causes, errno)
+	}
+
 	var dnsErr *net.DNSError
 	var netErr net.Error
 	var certErr *tls.CertificateVerificationError
 	var recordErr tls.RecordHeaderError
 	switch {
 	case errors.Is(err, context.Canceled):
-		return "request cancelled", context.Canceled, false
+		return "request cancelled", causes, false
 	case errors.Is(err, context.DeadlineExceeded):
-		return "timed out (context deadline exceeded)", context.DeadlineExceeded, false
+		return "timed out (context deadline exceeded)", causes, false
 	case errors.As(err, &dnsErr) && dnsErr.IsNotFound:
-		return "no such host", nil, true
+		return "no such host", causes, true
 	case errors.As(err, &netErr) && netErr.Timeout():
-		return "network timeout", nil, true
+		return "network timeout", causes, true
 	case errors.Is(err, syscall.ECONNREFUSED):
-		return "connection refused", syscall.ECONNREFUSED, true
+		return "connection refused", causes, true
 	case errors.Is(err, syscall.ECONNRESET):
-		return "connection reset by peer", syscall.ECONNRESET, true
+		return "connection reset by peer", causes, true
+	case errors.Is(err, syscall.EPIPE):
+		return "the connection broke while the request was being sent", causes, false
+	case errors.Is(err, syscall.ENETUNREACH):
+		return "network unreachable", causes, false
+	case errors.Is(err, syscall.EHOSTUNREACH):
+		return "host unreachable", causes, false
 	case errors.As(err, &certErr):
-		return "TLS certificate verification failed", nil, false
+		return "TLS certificate verification failed", causes, false
 	case errors.As(err, &recordErr):
-		return "TLS handshake failed (the server did not answer with TLS)", nil, false
+		return "TLS handshake failed (the server did not answer with TLS)", causes, false
 	case errors.As(err, &dnsErr):
-		return "host name lookup failed", nil, false
+		return "host name lookup failed", causes, false
 	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
-		return "the connection closed before a complete response", io.ErrUnexpectedEOF, false
+		return "the connection closed before a complete response", append(causes, io.ErrUnexpectedEOF), false
+	case errno != 0:
+		return "connection failed", causes, false
 	default:
-		return "no valid HTTP response (malformed response or protocol error)", nil, false
+		return "no valid HTTP response (malformed response or protocol error)", causes, false
 	}
 }

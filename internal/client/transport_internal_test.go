@@ -11,6 +11,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -520,4 +522,50 @@ func TestNothingReadFromAnIdleConnection(t *testing.T) {
 	assert.Equal(t, int32(3), closeHeaders.Load(), "each request asks for the connection to be closed")
 	assert.NotContains(t, standard.String(), key)
 	assert.NotContains(t, logs.String(), key)
+}
+
+// Whatever description and retry decision a connection failure gets, the
+// bare errno it carried stays reachable through errors.Is, for a failed
+// request and for a failed body read alike, and nothing else of it does.
+func TestTransportErrorsKeepTheirErrno(t *testing.T) {
+	cases := []struct {
+		errno     syscall.Errno
+		op, call  string
+		reason    string
+		retryable bool
+	}{
+		{syscall.ECONNREFUSED, "dial", "connect", "connection refused", true},
+		{syscall.ECONNRESET, "read", "read", "connection reset by peer", true},
+		{syscall.ETIMEDOUT, "dial", "connect", "network timeout", true},
+		{syscall.EPIPE, "write", "write", "the connection broke while the request was being sent", false},
+		{syscall.ENETUNREACH, "dial", "connect", "network unreachable", false},
+		{syscall.EHOSTUNREACH, "dial", "connect", "host unreachable", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.errno.Error(), func(t *testing.T) {
+			raw := &url.Error{Op: "Post", URL: "http://192.0.2.7:1411/api/x", Err: &net.OpError{
+				Op: tc.op, Net: "tcp", Err: os.NewSyscallError(tc.call, tc.errno),
+			}}
+
+			err := newTransportError(http.MethodPost, "/api/x", "no response", raw)
+			assert.ErrorIs(t, err, tc.errno)
+			assert.Equal(t, "POST /api/x: no response: "+tc.reason, err.Error())
+			assert.Equal(t, tc.retryable, isRetryableError(err))
+			walkErrorTree(err, func(e error) {
+				assert.NotContains(t, e.Error(), "192.0.2.7", "nothing of the original error is kept")
+			})
+
+			reason, causes, retryable := classifyTransportError(raw)
+			body := &ResponseBodyError{StatusCode: 200, Reason: reason, causes: causes, retryable: retryable}
+			assert.ErrorIs(t, body, tc.errno)
+			assert.Equal(t, tc.retryable, isRetryableError(body))
+		})
+	}
+	t.Run("context errors come first", func(t *testing.T) {
+		raw := &url.Error{Op: "Get", URL: "http://192.0.2.7/api/x", Err: fmt.Errorf("%w: %w", context.DeadlineExceeded, os.NewSyscallError("read", syscall.ETIMEDOUT))}
+		err := newTransportError(http.MethodGet, "/api/x", "no response", raw)
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.ErrorIs(t, err, syscall.ETIMEDOUT)
+		assert.False(t, isRetryableError(err), "an expired deadline is not retried")
+	})
 }
