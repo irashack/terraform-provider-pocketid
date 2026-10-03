@@ -4,6 +4,7 @@
 package provider_test
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 	"github.com/hashicorp/terraform-plugin-testing/tfversion"
 	"github.com/stretchr/testify/require"
@@ -485,10 +487,115 @@ func TestAccResourceScimServiceProvider_writeOnlyImport(t *testing.T) {
 				},
 			},
 			{
-				// The imported state and the configuration agree: nothing to do,
-				// and the server keeps its token.
+				// This plans against the state the apply made, not the imported
+				// one (ImportStatePersist is off); the import-block tests below
+				// plan against the imported state.
 				Config:   config,
 				PlanOnly: true,
+			},
+		},
+	})
+}
+
+// expectNoPlannedToken fails when the plan of the resource carries a value for
+// the token or the write-only token, which a write-only import must not leave
+// in the state the plan starts from.
+type expectNoPlannedToken struct{ address string }
+
+func (e expectNoPlannedToken) CheckPlan(_ context.Context, req plancheck.CheckPlanRequest, resp *plancheck.CheckPlanResponse) {
+	for _, change := range req.Plan.ResourceChanges {
+		if change.Address != e.address {
+			continue
+		}
+		for _, side := range []any{change.Change.Before, change.Change.After} {
+			values, ok := side.(map[string]any)
+			if !ok {
+				continue
+			}
+			for _, name := range []string{"token", "token_wo"} {
+				if values[name] != nil {
+					resp.Error = fmt.Errorf("the plan of %s holds a value for %s", e.address, name)
+					return
+				}
+			}
+		}
+		return
+	}
+	resp.Error = fmt.Errorf("the plan has no change for %s", e.address)
+}
+
+// An import block plans against the state the import produced. For a
+// write-only configuration the plan must be a no-op with no token anywhere in
+// it: the version seeded by the import ID matches the configuration's, so no
+// update, and nothing for the state to have stored. (The import step above
+// verifies the imported state but plans against the apply's state.)
+func TestAccResourceScimServiceProvider_writeOnlyImportBlockPlansNoOp(t *testing.T) {
+	resourceName := "pocketid_scim_service_provider.test"
+	clientName := acctest.RandomWithPrefix("tf-acc-scim-wo-import-block")
+	endpoint := "https://scim.example.com/v2"
+	config := testAccResourceScimServiceProviderConfig_writeOnly(clientName, endpoint, "wo-import-token", "7")
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		TerraformVersionChecks:   []tfversion.TerraformVersionCheck{tfversion.SkipBelow(tfversion.Version1_11_0)},
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check:  testAccScimCheckServerToken(resourceName, "wo-import-token"),
+			},
+			{
+				ResourceName:    resourceName,
+				ImportState:     true,
+				ImportStateKind: resource.ImportBlockWithID,
+				ImportStateIdFunc: func(s *terraform.State) (string, error) {
+					rs, ok := s.RootModule().Resources[resourceName]
+					if !ok {
+						return "", fmt.Errorf("Not found: %s", resourceName)
+					}
+					return rs.Primary.Attributes["client_id"] + ",token_wo_version=7", nil
+				},
+				// The step fails unless the import plan is a no-op.
+				ImportPlanChecks: resource.ImportPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction(resourceName, plancheck.ResourceActionNoop),
+						expectNoPlannedToken{address: resourceName},
+					},
+				},
+			},
+		},
+	})
+}
+
+// The ordinary form, for a configuration that uses token: the refresh stores
+// the token Pocket ID holds, which equals the configured one, so the import
+// plan is a no-op as well.
+func TestAccResourceScimServiceProvider_plainImportBlockPlansNoOp(t *testing.T) {
+	resourceName := "pocketid_scim_service_provider.test"
+	clientName := acctest.RandomWithPrefix("tf-acc-scim-import-block")
+	config := testAccResourceScimServiceProviderConfig_basic(clientName, "https://scim.example.com/v2", "plain-import-token")
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: config},
+			{
+				ResourceName:    resourceName,
+				ImportState:     true,
+				ImportStateKind: resource.ImportBlockWithID,
+				ImportStateIdFunc: func(s *terraform.State) (string, error) {
+					rs, ok := s.RootModule().Resources[resourceName]
+					if !ok {
+						return "", fmt.Errorf("Not found: %s", resourceName)
+					}
+					return rs.Primary.Attributes["client_id"], nil
+				},
+				ImportPlanChecks: resource.ImportPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction(resourceName, plancheck.ResourceActionNoop),
+					},
+				},
 			},
 		},
 	})
