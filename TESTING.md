@@ -1,45 +1,159 @@
-# Maintenance release validation
+# Testing and release validation
+
+How every check runs, what each native script proves, and the evidence recorded
+for each release. The sections from "Release 2.4.104 evidence" down are the record
+of earlier releases; the support matrix and tool versions in each belong to that
+release, not to the current one. The current range is Pocket ID **2.14.0 through
+2.17.0**.
 
 ## Reproducible checks
 
 ```sh
-go test -race ./internal/...
-go vet ./...
-golangci-lint run ./...
-for version in 2.16.0 2.17.0; do
-  python3 scripts/disposable-pocketid.py "$version" -- go test -v -count=1 -timeout 20m ./internal/provider -tags=acc
-  python3 scripts/disposable-pocketid.py "$version" -- go test -v -count=1 -timeout 20m ./internal/datasources -tags=acc
-done
-make test-acc-provider POCKETID_VERSION=2.17.0  # both packages above, on one fixture
-make test-acc-matrix  # client (resource and data sources) and application-config acceptance on 2.14.0 to 2.17.0
+make check                  # format, vet, race unit tests, fixture-script tests, build, lint
+make docs-check             # generated documentation matches the checkout
+make actionlint             # GitHub Actions syntax and expressions
+make vuln                   # reachable Go vulnerabilities
+go vet -tags=acc ./...      # the acceptance tests compile
+make test-acc               # client, application-config and API-contract acceptance on POCKETID_VERSION (default 2.17.0)
+make test-acc-matrix        # the same subset on 2.14.0, 2.15.0, 2.16.0 and 2.17.0
+make test-acc-provider      # full provider and data-source suites on POCKETID_VERSION, one fixture
+make test-acc-supported     # the full suites on every supported version, 2.14.0 to 2.17.0
 ```
 
-The fixture pulls official versioned Pocket ID images. It creates an isolated
-container and database, waits for health (HTTP 204 is success), stops the server,
-and seeds one synthetic administrator and a hash of a random API token, following
-upstream's fixture strategy. It restarts before tests and removes its container
-and anonymous volumes afterward. No production URL, database, or user input is
-accepted. Credentials pass only through process memory/environment. Failure
-output is suppressed because the acceptance harness may include state in errors.
-For local diagnosis only, `POCKETID_FIXTURE_FAILURE_LOG` can name a private file
-outside source; never publish that file. Logs/state are not release assets.
+`make test-acc-supported` runs `make test-acc-provider` once per supported version
+and is the acceptance gate before a release. CI is lighter to keep its run time
+down: the full suites on 2.16.0 and 2.17.0, and `make test-acc` on 2.14.0 and
+2.15.0. The release workflow runs `make check`, `make vuln` and
+`make test-acc-matrix` on the tagged source.
 
-Native binary tests use an already populated filesystem mirror:
+The acceptance packages share one fixture and run one after another (`-p 1`), so a
+client created by one package cannot crowd another's list reads. Version-specific
+behavior is selected inside the tests from `POCKETID_TEST_VERSION`.
+
+## The disposable server fixture
+
+`scripts/disposable-pocketid.py VERSION -- COMMAND` is the only way tests get a
+Pocket ID server. VERSION must be one of 2.14.0, 2.15.0, 2.16.0 or 2.17.0. The
+fixture pulls the official versioned image, creates an isolated container and
+database on a free loopback port, waits for health (HTTP 204 is success), stops the
+server, and seeds one synthetic administrator and a hash of a random API token,
+following upstream's fixture strategy. It restarts before running COMMAND and
+removes its container and anonymous volumes afterward. COMMAND sees
+`POCKETID_BASE_URL`, `POCKETID_API_TOKEN` and `POCKETID_TEST_VERSION`. No production
+URL, database, or user input is accepted. Credentials pass only through process
+memory/environment. Failure output is suppressed because the acceptance harness may
+include state in errors. For local diagnosis only, `POCKETID_FIXTURE_FAILURE_LOG`
+can name a new private file outside source; never publish that file. Logs/state are
+not release assets. `make test-scripts` (part of `make check`) runs the fixture
+script's own unit tests without a container.
+
+## Native Terraform and OpenTofu scripts
+
+These run a real `terraform` or `tofu` binary against a fixture, with the provider
+installed from a filesystem mirror, and only touch temporary directories and the
+fixture. Run each as
+`python3 scripts/disposable-pocketid.py VERSION -- python3 tests/native/SCRIPT ARGS`.
+TOOL is `terraform` or `tofu`. OpenTofu runs of `lifecycle.py` and
+`application_config.py` enforce AES-GCM encryption of state, backups and saved plans
+with a random passphrase.
+
+| Script and arguments | What it proves |
+|---|---|
+| `lifecycle.py TOOL MIRROR PROVIDER_VERSION` (the version defaults to 2.3.1; always pass it) | The provider in the mirror installs; a confidential client is created, refreshed, updated, imported (no secret invented), planned empty and destroyed. On 2.14.0 and later the client has exactly one secret, client-credentials authentication works with it and fails with a wrong one. Under OpenTofu, state, backups and a saved plan are encrypted. |
+| `upgrade.py TOOL RELEASED_ARCHIVE NEW_BINARY` | State written by a published release upgrades with an empty plan. The released provider creates a confidential client with two federated identities; an administrator enables replay protection on one outside Terraform. The new build keeps the client ID and secret and each identity's replay protection through an update applied with `-refresh=false`. On 2.17.0 a back-channel logout URL set outside Terraform survives such an update, shows on the next refreshed plan, and plans empty once configured. |
+| `client_upgrade.py TOOL RELEASED_ARCHIVE NEW_BINARY` | `pocketid_client` state from a published release survives the client changes: homelab-shaped clients (fixed `client_id`, `launch_url`, `prevent_destroy`, a sorted `allowed_user_groups` list), a public restricted client and one with a generated ID plan empty (list to set, `client_id`, new computed attributes, `generate_secret`, `client_secret_id`). `generate_secret = false` applied without a refresh revokes exactly the stored secret and keeps the restriction; `true` generates a new one; removing the groups leaves the client restricted; a client restricted outside Terraform is not opened by an unrefreshed update; a different `client_id` plans a replacement that `prevent_destroy` refuses. |
+| `upgrade_users_groups.py TOOL OLD_BINARY NEW_BINARY` | User and group state from a previous build upgrades with an empty plan. The old build creates groups (with and without custom claims), a user with names, groups and claims, a group membership for a user Terraform does not manage, and a one-time access token. The new build plans no change, applies an unrelated update and plans empty again. |
+| `application_config.py TOOL MIRROR TARGET_VERSION [OLD_VERSION]` | The application-configuration flow, below. |
+
+`MIRROR` is a filesystem mirror holding the provider under
+`registry.terraform.io/irashack/pocketid`, either unpacked
+(`.../VERSION/PLATFORM/terraform-provider-pocketid_vVERSION`) or as the published
+archive. `RELEASED_ARCHIVE` is the verified archive of a published release and must
+keep its published file name (`terraform-provider-pocketid_X.Y.Z_OS_ARCH.zip`);
+`NEW_BINARY` is the build under test, for example `bin/terraform-provider-pocketid`
+from `make build`. `upgrade_users_groups.py` takes binaries, not an archive: pass
+the binary unpacked from that archive (or built from the release tag's source) as
+`OLD_BINARY`. It serves both under development version numbers (98.0.0 and 99.0.0)
+from a temporary mirror.
 
 ```sh
-python3 scripts/disposable-pocketid.py 2.17.0 -- python3 tests/native/lifecycle.py terraform /absolute/mirror 2.4.104
-python3 scripts/disposable-pocketid.py 2.17.0 -- python3 tests/native/lifecycle.py tofu /absolute/mirror 2.4.104
+make build
+python3 scripts/disposable-pocketid.py 2.17.0 -- python3 tests/native/upgrade.py tofu \
+  "$PWD/dist/terraform-provider-pocketid_2.4.104_darwin_arm64.zip" "$PWD/bin/terraform-provider-pocketid"
+python3 scripts/disposable-pocketid.py 2.17.0 -- python3 tests/native/client_upgrade.py tofu \
+  "$PWD/dist/terraform-provider-pocketid_2.4.104_darwin_arm64.zip" "$PWD/bin/terraform-provider-pocketid"
+old=$(mktemp -d)
+unzip -q "$PWD/dist/terraform-provider-pocketid_2.4.104_darwin_arm64.zip" -d "$old"
+python3 scripts/disposable-pocketid.py 2.17.0 -- python3 tests/native/upgrade_users_groups.py tofu \
+  "$old/terraform-provider-pocketid_v2.4.104" "$PWD/bin/terraform-provider-pocketid"
 ```
+
+### The application-configuration script
+
+`application_config.py` seeds non-default settings and passwords through Pocket ID's
+own API, then proves, in order:
+
+- The old payload (without the WebAuthn and CIMD settings) is rejected by the real
+  validator with no change.
+- An empty `pocketid_application_config` imports and plans empty, and an import
+  tracks no password in state.
+- An SMTP configuration (with `allow_own_account_edit` and
+  `email_login_notification_enabled`) changes only those settings. Every other
+  returned setting is unchanged, the resource and the data source show the same
+  values, and the data source has no password attributes. Refresh and an empty plan
+  follow.
+- The write-only flow, below.
+- Removing every attribute, then removing the resource from state and importing it
+  again, plans empty, and destroying the resource leaves the live configuration
+  untouched.
+
+The write-only flow: the password moves to `smtp_password_wo` with
+`smtp_password_wo_version`. The server gets the new value, the plain password leaves
+state, and state holds neither value (the script searches the Terraform state file,
+and the OpenTofu saved plan, for both). An unrelated update applied with
+`-refresh=false` keeps the password on the server without blanking it. The target
+build must support write-only attributes, and the tool must be Terraform or OpenTofu
+1.11 or later; a build without them fails at this step.
+
+The two paths differ in who writes the first state:
+
+- Without `OLD_VERSION`, `TARGET_VERSION` itself imports the configuration and
+  applies SMTP with the plain `smtp_password`.
+- With `OLD_VERSION` (the last release), that older provider applies SMTP with the
+  plain `smtp_password`, exactly as a configuration written for it would, and
+  stores every password it read, the LDAP one included. The target build then takes
+  over after `init -upgrade` and **must plan nothing** for the unchanged
+  configuration. `show` cannot decode the data source's stored result (it still has
+  the removed password attributes) until `apply -refresh-only` rewrites it. The rest
+  is the same.
+
+```sh
+mirror=/tmp/pocketid-test-mirror
+dir="$mirror/registry.terraform.io/irashack/pocketid"
+mkdir -p "$dir/3.0.0/darwin_arm64"
+go build -ldflags '-X main.version=3.0.0' -o "$dir/3.0.0/darwin_arm64/terraform-provider-pocketid_v3.0.0" .
+cp terraform-provider-pocketid_2.4.104_darwin_arm64.zip "$dir/"   # the verified published archive
+for version in 2.14.0 2.15.0 2.16.0 2.17.0; do
+  for tool in terraform tofu; do
+    python3 scripts/disposable-pocketid.py "$version" -- python3 tests/native/application_config.py "$tool" "$mirror" 3.0.0 2.4.104
+  done
+done
+```
+
+Never install a test build over an existing provider, and substitute your platform
+directory. Release packaging uses GoReleaser as documented in RELEASE_CHECKLIST.md.
+
+### Address migration from upstream
 
 `PROVIDER_MIGRATION_TEST=1` (address migration from upstream 2.3.0) was last run on
 Pocket ID 2.13.0 for release 2.3.1. It cannot run on a supported server: upstream
 2.3.0 cannot create a confidential client on 2.14 or later, and 2.13.0 has left the
-fixture allowlist. The case is retained in the script as a record.
+fixture allowlist. The case is retained in `lifecycle.py` as a record.
 The migration case additionally needs the genuine upstream 2.3.0 artifact under
 `registry.opentofu.org/trozz/pocketid` in the isolated mirror. It must not be a
-renamed fork binary. The test uses supported state replacement, checks encrypted
-state/backups and saved-plan encryption, preserves the ID and secret, and requires
-an empty subsequent plan. No development overrides are used.
+renamed binary of this provider. The test uses supported state replacement, checks
+encrypted state/backups and saved-plan encryption, preserves the ID and secret, and
+requires an empty subsequent plan. No development overrides are used.
 
 ## Release 2.4.104 evidence — 2026-10-02
 
