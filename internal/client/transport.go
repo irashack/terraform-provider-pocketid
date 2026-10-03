@@ -79,12 +79,39 @@ const (
 	maxRetryElapsed = 30 * time.Second
 )
 
-// retryPolicy holds the limits above. It is a field so tests can shorten it.
+// retryPolicy holds the limits above. It is a field so tests can shorten it,
+// and can replace the clock (now and sleep; nil means the real one) to check
+// the retry arithmetic without depending on scheduling.
 type retryPolicy struct {
 	maxAttempts int
 	backoffUnit time.Duration
 	maxWait     time.Duration
 	maxElapsed  time.Duration
+	now         func() time.Time
+	sleep       func(ctx context.Context, d time.Duration) error
+}
+
+func (p retryPolicy) clock() (func() time.Time, func(context.Context, time.Duration) error) {
+	now, sleep := p.now, p.sleep
+	if now == nil {
+		now = time.Now
+	}
+	if sleep == nil {
+		sleep = sleepContext
+	}
+	return now, sleep
+}
+
+// sleepContext waits d, or until ctx is done, whose error it then returns.
+func sleepContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 var defaultRetryPolicy = retryPolicy{
@@ -103,7 +130,9 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body in
 	if policy.maxAttempts == 0 {
 		policy = defaultRetryPolicy
 	}
-	retryDeadline := time.Now().Add(policy.maxElapsed)
+	now, sleep := policy.clock()
+	start := now()
+	retryDeadline := start.Add(policy.maxElapsed)
 	if deadline, ok := ctx.Deadline(); ok && deadline.Before(retryDeadline) {
 		retryDeadline = deadline
 	}
@@ -111,7 +140,7 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body in
 		// The deadline applies to the attempts themselves, not only to
 		// whether another one starts: a slow attempt is cut off too.
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithDeadline(ctx, retryDeadline)
+		ctx, cancel = context.WithTimeout(ctx, retryDeadline.Sub(start))
 		defer cancel()
 	}
 	var payload []byte
@@ -157,7 +186,7 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body in
 		if wait > policy.maxWait {
 			return nil, fmt.Errorf("not retrying: the server asked to wait %s, longer than the %s this provider waits: %w", wait, policy.maxWait, lastErr)
 		}
-		if time.Now().Add(wait).After(retryDeadline) {
+		if now().Add(wait).After(retryDeadline) {
 			return nil, fmt.Errorf("not retrying: waiting %s would pass the time allowed for this request after %d attempt(s): %w", wait, attempt, lastErr)
 		}
 
@@ -168,12 +197,8 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body in
 			"backoff":      wait.String(),
 		})
 
-		timer := time.NewTimer(wait)
-		select {
-		case <-timer.C:
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, fmt.Errorf("context cancelled during retry backoff: %w (previous attempt: %w)", ctx.Err(), lastErr)
+		if err := sleep(ctx, wait); err != nil {
+			return nil, fmt.Errorf("context cancelled during retry backoff: %w (previous attempt: %w)", err, lastErr)
 		}
 	}
 }

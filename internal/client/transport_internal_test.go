@@ -608,3 +608,83 @@ func TestWinsockClass(t *testing.T) {
 		assert.True(t, isRetryableError(err))
 	}
 }
+
+// fakeClock is a clock that only moves when the retry loop waits or a test
+// server says a request took time, so the retry arithmetic is exact.
+type fakeClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (f *fakeClock) now() time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.t
+}
+
+func (f *fakeClock) advance(d time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.t = f.t.Add(d)
+}
+
+func (f *fakeClock) sleep(ctx context.Context, d time.Duration) error {
+	f.advance(d)
+	return ctx.Err()
+}
+
+// The retry budget, checked with a clock that moves only by the waits and
+// by each request's stated duration: exact attempt counts and stop reasons,
+// boundaries included, whatever the machine's load.
+func TestRetryArithmetic(t *testing.T) {
+	cases := []struct {
+		name         string
+		status       int
+		retryAfter   string
+		cost         time.Duration // how long each request takes
+		maxAttempts  int
+		budget       time.Duration
+		wantAttempts int
+		wantElapsed  time.Duration
+		wantText     string
+	}{
+		// Waits of 100, 200 and 400ms end at 700ms; the 800ms one would end at 1500ms.
+		{name: "budget stops the fifth", status: 503, maxAttempts: 10, budget: 1200 * time.Millisecond, wantAttempts: 4, wantElapsed: 700 * time.Millisecond, wantText: "not retrying"},
+		{name: "a wait may end exactly at the deadline", status: 503, maxAttempts: 10, budget: 700 * time.Millisecond, wantAttempts: 4, wantElapsed: 700 * time.Millisecond, wantText: "not retrying"},
+		{name: "one millisecond less", status: 503, maxAttempts: 10, budget: 699 * time.Millisecond, wantAttempts: 3, wantElapsed: 300 * time.Millisecond, wantText: "not retrying"},
+		// 300ms per request: 0-300, wait to 400, 400-700, wait to 900, 900-1200; a 400ms wait would end at 1600.
+		{name: "slow requests leave room for fewer", status: 503, cost: 300 * time.Millisecond, maxAttempts: 10, budget: 1200 * time.Millisecond, wantAttempts: 3, wantElapsed: 1200 * time.Millisecond, wantText: "not retrying"},
+		{name: "attempt limit", status: 503, maxAttempts: 4, budget: time.Hour, wantAttempts: 4, wantElapsed: 700 * time.Millisecond, wantText: "after 4 attempts"},
+		// Retry-After 2s: attempts at 0, 2s and 4s; the next wait would end at 6s.
+		{name: "server-asked waits", status: 429, retryAfter: "2", maxAttempts: 10, budget: 5 * time.Second, wantAttempts: 3, wantElapsed: 4 * time.Second, wantText: "not retrying"},
+		{name: "server asks too long", status: 429, retryAfter: "11", maxAttempts: 10, budget: time.Hour, wantAttempts: 1, wantElapsed: 0, wantText: "longer than the 10s"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clock := &fakeClock{t: time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)}
+			start := clock.now()
+			var attempts atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				attempts.Add(1)
+				clock.advance(tc.cost)
+				if tc.retryAfter != "" {
+					w.Header().Set("Retry-After", tc.retryAfter)
+				}
+				w.WriteHeader(tc.status)
+			}))
+			defer server.Close()
+			c, err := NewClient(server.URL, "test-token", false, 30)
+			require.NoError(t, err)
+			c.retry = retryPolicy{
+				maxAttempts: tc.maxAttempts, backoffUnit: 100 * time.Millisecond, maxWait: 10 * time.Second, maxElapsed: tc.budget,
+				now: clock.now, sleep: clock.sleep,
+			}
+
+			_, err = c.doRequest(context.Background(), http.MethodGet, "/api/x", nil)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantText)
+			assert.Equal(t, int32(tc.wantAttempts), attempts.Load())
+			assert.Equal(t, tc.wantElapsed, clock.now().Sub(start))
+		})
+	}
+}
