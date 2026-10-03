@@ -519,7 +519,7 @@ func fillUnplannedFromServer(plan, stored *applicationConfigModel) {
 	storedValue := reflect.ValueOf(stored).Elem()
 	for i := 0; i < planValue.NumField(); i++ {
 		value, ok := planValue.Field(i).Interface().(types.String)
-		if !ok || !(value.IsUnknown() || value.IsNull()) {
+		if !ok || (!value.IsUnknown() && !value.IsNull()) {
 			continue
 		}
 		planValue.Field(i).Set(storedValue.Field(i))
