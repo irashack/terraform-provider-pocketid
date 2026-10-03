@@ -66,7 +66,10 @@ type fixedIDServer struct {
 	existing     bool
 	createStatus int
 	createdID    string
-	readStatus   int
+	// createdDisplayName, when set, is the display name the create answer
+	// shows.
+	createdDisplayName string
+	readStatus         int
 	// afterPostExisting and afterPostReadStatus replace existing and
 	// readStatus once the create has been received (a create that
 	// committed although its response failed, or a read that fails).
@@ -114,7 +117,11 @@ func (s *fixedIDServer) start(t *testing.T) *client.Client {
 				id = fixedUserID
 			}
 			w.WriteHeader(http.StatusCreated)
-			_, _ = fmt.Fprint(w, user(id))
+			answer := user(id)
+			if s.createdDisplayName != "" {
+				answer = strings.Replace(answer, `"username"`, `"displayName":"`+s.createdDisplayName+`","username"`, 1)
+			}
+			_, _ = fmt.Fprint(w, answer)
 		case r.Method == "PUT" && strings.HasSuffix(r.URL.Path, "/user-groups"):
 			s.puts++
 			_, _ = fmt.Fprint(w, user(strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/users/"), "/user-groups")))
@@ -186,11 +193,25 @@ func TestUserCreateWithFixedID(t *testing.T) {
 		require.True(t, resp.Diagnostics.HasError())
 		require.Zero(t, s.posts)
 	})
-	t.Run("server_ignored_id_rolled_back", func(t *testing.T) {
-		s := &fixedIDServer{version: "2.17.0", createdID: "ffffffff-ffff-4fff-8fff-ffffffffffff"}
-		resp := runFixedIDCreate(t, s, types.StringValue(fixedUserID))
-		require.True(t, resp.Diagnostics.HasError())
-		require.Equal(t, 1, s.deletes, "the user created under another ID is deleted")
-		require.True(t, resp.State.Raw.IsNull())
-	})
+	// An answer that names another user (B) than the chosen ID (A), here
+	// also with the API key in its display name, may describe someone
+	// else's user: nothing is written to or deleted from B, and A is kept
+	// only as an unresolved creation.
+	for name, display := range map[string]string{"another_id": "", "another_id_carrying_the_key": "Shown synthetic-token here"} {
+		t.Run(name, func(t *testing.T) {
+			s := &fixedIDServer{version: "2.17.0", createdID: "ffffffff-ffff-4fff-8fff-ffffffffffff", createdDisplayName: display}
+			resp := runFixedIDCreate(t, s, types.StringValue(fixedUserID))
+			require.True(t, resp.Diagnostics.HasError())
+			require.Zero(t, s.deletes, "the other user is not deleted")
+			require.Zero(t, s.puts, "the other user is not changed")
+			var state userResourceModel
+			require.False(t, resp.State.Get(context.Background(), &state).HasError())
+			require.Equal(t, fixedUserID, state.ID.ValueString(), "only the chosen ID is tracked")
+			require.True(t, state.UnresolvedCreation.ValueBool())
+			for _, d := range resp.Diagnostics {
+				require.NotContains(t, d.Detail(), "ffffffff-ffff-4fff-8fff-ffffffffffff")
+				require.NotContains(t, d.Detail(), "synthetic-token")
+			}
+		})
+	}
 }

@@ -345,3 +345,37 @@ func TestClientCreateKeepsTheIDOfAnAnswerCarryingTheKey(t *testing.T) {
 		})
 	}
 }
+
+// A chosen-ID create whose answer names another client (B) than the chosen
+// ID (A), with or without the API key in it, may describe someone else's
+// client: nothing is written to or deleted from B, and A is kept only as an
+// unresolved creation.
+func TestClientCreateNeverTouchesAnotherClientNamedByTheAnswer(t *testing.T) {
+	for name, answerName := range map[string]string{"another_id": "", "another_id_carrying_the_key": "fixture synthetic-token"} {
+		t.Run(name, func(t *testing.T) {
+			fake := newFakePocketID(t, "2.17.0", &fakeClient{ID: "my-app"})
+			fake.missing = true
+			fake.answerID = "someone-elses-app"
+			fake.answerName = answerName
+			r := &clientResource{client: fake.start()}
+			ctx := context.Background()
+			s := clientSchema(t).Schema
+			model := lifecycleModel()
+			model.ClientID = types.StringValue("my-app")
+			plan := tfsdk.Plan{Schema: s}
+			require.False(t, plan.Set(ctx, &model).HasError())
+			resp := resource.CreateResponse{State: tfsdk.State{Schema: s}}
+			r.Create(ctx, resource.CreateRequest{Plan: plan}, &resp)
+			require.True(t, resp.Diagnostics.HasError())
+			assert.Equal(t, []string{"POST /api/oidc/clients"}, fake.mutations(), "nothing else is written")
+			var after clientResourceModel
+			require.False(t, resp.State.Get(ctx, &after).HasError())
+			assert.Equal(t, "my-app", after.ID.ValueString(), "only the chosen ID is tracked")
+			assert.True(t, after.UnresolvedCreation.ValueBool())
+			for _, d := range resp.Diagnostics {
+				assert.NotContains(t, d.Summary()+d.Detail(), "someone-elses-app")
+				assert.NotContains(t, d.Summary()+d.Detail(), "synthetic-token")
+			}
+		})
+	}
+}

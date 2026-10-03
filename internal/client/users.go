@@ -78,8 +78,10 @@ func (c *Client) CreateUser(ctx context.Context, user *UserCreateRequest) (*User
 	if err := decodeResult(body, &result); err != nil {
 		return nil, err
 	}
-	// The request carries no ID yet, so the server chose it.
-	if err := c.checkCreatedID("user", "", result.ID); err != nil {
+	// An ID the server chose must be a UUID; a chosen one must come back
+	// exactly. Any other answer names no object this create owns (it may
+	// name another user), so nothing of it is returned.
+	if err := c.checkCreatedID("user", user.ID, result.ID); err != nil {
 		return nil, fmt.Errorf("user creation returned no usable ID, so no follow-up request uses it; the user may exist: inspect before recovery: %w", unreadResult(err))
 	}
 	// A create whose own ID is usable is not failed over its groups: when

@@ -311,6 +311,14 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 
+	// CreateUser returns a user only under the chosen ID. Should another ID
+	// ever come back, it may name someone else's user: nothing is changed
+	// or deleted, and the chosen ID is tracked as an unresolved creation.
+	if createReq.ID != "" && userResp.ID != createReq.ID {
+		r.uncertainFixedIDCreate(ctx, &plan, displayName, errors.New("the create answer named another user"), resp)
+		return
+	}
+
 	tflog.Debug(ctx, "Created user", map[string]any{
 		"id": userResp.ID,
 	})
@@ -324,10 +332,6 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 		}
 	} else {
 		setUserFieldsFromAPI(&plan, userResp)
-	}
-	if createReq.ID != "" && userResp.ID != createReq.ID {
-		r.failedCreate(ctx, &plan, "ID", fmt.Errorf("the user was created with ID %s instead of the requested %s", userResp.ID, createReq.ID), resp)
-		return
 	}
 
 	// Pocket ID gives a user created through the API the instance's signup

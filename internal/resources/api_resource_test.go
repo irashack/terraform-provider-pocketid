@@ -1063,3 +1063,26 @@ func TestAPIResource_CredentialBearingConfiguration(t *testing.T) {
 	destroy := h.plan("pocketid_api", apiHarnessValue(t, r, &created), null, null, nil)
 	assert.Empty(t, apiHarnessErrors(destroy.Diagnostics))
 }
+
+// A create answer for another API (another resource identifier, the API's
+// chosen unique name) names an API this create does not own: no follow-up
+// request addresses it, and nothing is recorded.
+func TestAPIResourceCreate_AnswerForAnotherAPI(t *testing.T) {
+	f, c := newAPITestPocketID(t)
+	other := f.add(client.API{Name: "Other", Resource: "https://other.example"})
+	f.tamper = func(route string, api *client.API) {
+		if route == "POST apis" {
+			api.Resource = other.Resource
+		}
+	}
+	description := "Read items"
+	resp, state := apiTestCreate(t, c, apiTestModel("", "Inventory", "https://inventory.example", true, map[string]attr.Value{
+		"inventory.read": apiTestPermission("", "Read", &description, true),
+	}))
+	require.True(t, resp.Diagnostics.HasError())
+	assert.Nil(t, state, "nothing is recorded")
+	assert.Contains(t, apiTestCreateDiag(resp), "API creation result uncertain")
+	for _, route := range f.routes() {
+		assert.True(t, route == "POST apis" || strings.HasPrefix(route, "GET "), "no follow-up mutation: %v", f.routes())
+	}
+}

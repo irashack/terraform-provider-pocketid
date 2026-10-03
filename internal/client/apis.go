@@ -125,6 +125,13 @@ func (c *Client) CreateAPI(ctx context.Context, req *APICreateRequest) (*API, er
 	if err := c.apiCheckResponse(result, ""); err != nil {
 		return nil, fmt.Errorf("API creation returned an unusable response, so no follow-up request uses it; the API may exist: inspect before recovery: %w: %w", ErrResultUnread, err)
 	}
+	// The resource identifier is the API's chosen, unique name, which
+	// Pocket ID stores as sent (without trailing slashes, which the request
+	// never has). An answer for another one names an API this create does
+	// not own, so no follow-up request may address it.
+	if result.Resource != req.Resource {
+		return nil, fmt.Errorf("API creation returned another API, so no follow-up request uses it; the API may exist: inspect before recovery: %w", ErrResultUnread)
+	}
 	return result, nil
 }
 

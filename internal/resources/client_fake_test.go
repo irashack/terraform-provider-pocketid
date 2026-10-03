@@ -75,6 +75,8 @@ type fakePocketID struct {
 	// missing makes the client absent (Pocket ID's not-found error) until
 	// it is created.
 	missing bool
+	// answerID, when set, replaces the ID the create answer shows.
+	answerID string
 }
 
 // generatedClientID is the ID the fake gives a client created without a
@@ -214,6 +216,9 @@ func (f *fakePocketID) serve(w http.ResponseWriter, r *http.Request) {
 		body := f.clientJSON()
 		if f.answerName != "" {
 			body["name"] = f.answerName
+		}
+		if f.answerID != "" {
+			body["id"] = f.answerID
 		}
 		if f.atLeast("2.17.0") && !f.client.IsPublic {
 			// autoCreateOidcClientSecret, on by default.
