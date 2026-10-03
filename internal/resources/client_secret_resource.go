@@ -294,6 +294,16 @@ func (r *clientSecretResource) Create(ctx context.Context, req resource.CreateRe
 
 	tflog.Debug(ctx, "Creating client secret", map[string]any{"client_id": clientID, "caller_supplied_value": writeOnly, "expires": opts.ExpiresAt != nil})
 	created, err := r.client.CreateClientSecret(ctx, clientID, opts)
+	if created != nil && clientSecretListed(before, created.ID) {
+		// A new secret has a new ID. A response naming one the client
+		// already held (a faulty or replayed answer) proves nothing about
+		// what was created, and taking ownership of that ID would let a
+		// later replacement revoke a secret this resource never created,
+		// such as the one pocketid_client holds.
+		r.reportFailedCreate(ctx, clientID, before,
+			fmt.Errorf("the response named client secret %s, which the client already held before this request, as the new secret", created.ID), resp)
+		return
+	}
 	if err != nil {
 		if created != nil {
 			// The secret exists, named by its ID, but its value was not
@@ -403,6 +413,16 @@ func (r *clientSecretResource) reportFailedCreate(ctx context.Context, clientID 
 	}
 	detail += "\n\nSecrets on the client now:\n" + describeClientSecrets(after, known)
 	resp.Diagnostics.AddError("Client secret creation result uncertain", detail)
+}
+
+// clientSecretListed reports whether a secret with this ID is in the list.
+func clientSecretListed(secrets []client.ClientSecretMetadata, id string) bool {
+	for _, secret := range secrets {
+		if secret.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func clientSecretLimitDetail(clientID string, secrets []client.ClientSecretMetadata) string {

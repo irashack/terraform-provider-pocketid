@@ -50,6 +50,7 @@ type clientSecretFake struct {
 	listAfterDel  []string
 	posts         int
 	deletes       int
+	deletedIDs    []string // DELETEs of secrets other than clientSecretTestID
 	postedBody    string
 }
 
@@ -103,6 +104,18 @@ func (f *clientSecretFake) serve(t *testing.T) *client.Client {
 			}
 			w.WriteHeader(f.deleteStatus)
 		default:
+			if id, ok := strings.CutPrefix(r.URL.Path, "/api/oidc/clients/app/secrets/"); ok && r.Method == http.MethodDelete {
+				f.deletedIDs = append(f.deletedIDs, id)
+				kept := f.listed[:0]
+				for _, secret := range f.listed {
+					if !strings.Contains(secret, `"id":"`+id+`"`) {
+						kept = append(kept, secret)
+					}
+				}
+				f.listed = kept
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusTeapot)
 		}
@@ -523,4 +536,52 @@ func TestClientSecretResource_ModifyPlan(t *testing.T) {
 	expired.ExpiresAt = types.StringValue("2020-01-01T00:00:00Z")
 	resp, _ := run(expired)
 	assert.True(t, resp.Diagnostics.HasError())
+}
+
+// A create response naming a secret the client already held is not taken as
+// the new secret: nothing is kept in state, so no later replacement can
+// revoke that secret, and the secret that did appear is reported. The next
+// apply creates a secret of its own, and destroying it revokes only that one.
+func TestClientSecretResource_CreateNamesExistingSecret(t *testing.T) {
+	const existing = clientSecretTestOther // say, the secret pocketid_client holds
+	const recovered = "77777777-7777-4777-8777-777777777777"
+	for name, body := range map[string]string{
+		"with a value":    `{"id":"` + existing + `","prefix":"GENE","createdAt":"2026-10-02T10:00:00Z","isActive":true,"secret":"` + clientSecretTestGen + `"}`,
+		"without a value": `{"id":"` + existing + `","prefix":"GENE","createdAt":"2026-10-02T10:00:00Z","isActive":true}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := clientSecretFake{version: "2.17.0", listed: []string{clientSecretObject(existing, "own1")},
+				postStatus: http.StatusCreated, postBody: body, appearOnPost: clientSecretObject(clientSecretTestID, "newp")}
+			c := fake.serve(t)
+			resp, state := clientSecretCreate(t, c, clientSecretPlanned())
+			require.True(t, resp.Diagnostics.HasError())
+			text := clientSecretDiagText(resp.Diagnostics)
+			assert.Contains(t, text, "result uncertain")
+			assert.Contains(t, text, "already held before this request")
+			assert.Contains(t, text, clientSecretTestID+"  prefix newp  created 2026-10-02T10:00:00.5Z  active  [new since this attempt]")
+			assert.NotContains(t, text, clientSecretTestGen)
+			assert.Nil(t, state, "no ownership of the existing secret, so nothing is tainted or replaced")
+			assert.Equal(t, 1, fake.posts)
+
+			// Recovery: the next apply creates again, and gets a secret of
+			// its own; destroying it revokes only that secret.
+			fake.mu.Lock()
+			fake.postBody = `{"id":"` + recovered + `","prefix":"RECO","createdAt":"2026-10-02T11:00:00Z","isActive":true,"secret":"RECOVEREDrecovered0123456789abcd"}`
+			fake.appearOnPost = clientSecretObject(recovered, "RECO")
+			fake.mu.Unlock()
+			resp, state = clientSecretCreate(t, c, clientSecretPlanned())
+			require.False(t, resp.Diagnostics.HasError(), clientSecretDiagText(resp.Diagnostics))
+			require.Equal(t, recovered, state.ID.ValueString())
+
+			ctx := context.Background()
+			stored := tfsdk.State{Schema: clientSecretTestSchema(t)}
+			require.False(t, stored.Set(ctx, state).HasError())
+			deleteResp := resource.DeleteResponse{State: stored}
+			(&clientSecretResource{client: c}).Delete(ctx, resource.DeleteRequest{State: stored}, &deleteResp)
+			require.False(t, deleteResp.Diagnostics.HasError(), clientSecretDiagText(deleteResp.Diagnostics))
+			assert.Equal(t, []string{recovered}, fake.deletedIDs)
+			assert.Zero(t, fake.deletes, "the secret that appeared during the failed attempt is left to the operator")
+			assert.NotContains(t, fake.deletedIDs, existing, "the pre-existing secret is never revoked")
+		})
+	}
 }
