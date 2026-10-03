@@ -78,11 +78,11 @@ func (r *groupMembersResource) Schema(_ context.Context, _ resource.SchemaReques
 			"Those checks cover what the group held at that read only. A change made by something else (the Pocket ID admin interface, another Terraform run, an onboarding service) after the read and before the write, an instant later, cannot be protected, in either direction: a user added in that instant is removed by the write, and a user removed in that instant is put back by it, which restores access that was just revoked. " +
 			"No check can prevent this, and the provider cannot tell afterwards that it happened. " +
 			"Within one provider process this resource holds a lock around the whole read, write and verification of each change. `pocketid_group_membership` and `pocketid_user` are to take the same lock (that integration is pending, and until it lands those two do not wait for it), so that the writes of the three do not overwrite each other. The lock does not reach another Terraform run, another process or anything outside Terraform.\n\n" +
-			"~> **Replace this resource only by destroying the old one first** When this resource is replaced for the same group (it is tainted by a failed create or update, or you run `terraform apply -replace=...`), the old resource must be destroyed before the new one is created, which is Terraform's default order. " +
+			"~> **Replace this resource only by destroying the old one first** When this resource is replaced for the same group (a failed create leaves it tainted, so Terraform replaces it on the next apply, or you run `terraform apply -replace=...`), the old resource must be destroyed before the new one is created, which is Terraform's default order. " +
 			"Do not set `create_before_destroy = true` on it, directly or through lifecycle ordering inherited from a resource that depends on it. " +
 			"The provider cannot tell the old resource's cleanup (the members it recorded and the users in `unresolved_user_ids`) from the members the new resource has just recorded for itself, and another read of the group cannot tell it either, so in the other order the old resource's destroy removes users that the new resource's state still lists as members.\n\n" +
 			"~> **LDAP groups** A group synchronized from LDAP gets its membership rewritten by the next LDAP synchronization. Do not manage its members with this resource.\n\n" +
-			"**Partial results.** If Pocket ID applies only part of a request (it skips an ID that names no user), the resource reports the error and still records the members the group actually holds, so that Terraform marks it tainted and destroying it removes those members; nothing is left unmanaged.\n\n" +
+			"**Partial results.** If Pocket ID applies only part of a request (it skips an ID that names no user), the resource reports the error and still records the members the group actually holds, so that nothing is left unmanaged. After a failed create Terraform marks the resource tainted, and destroying it removes those members; after a failed update the resource stays in place with the members the group holds recorded, and the corrected configuration applies to it.\n\n" +
 			"**Requests whose outcome is unknown.** When a request fails in a way that does not show whether it was applied (the answer was lost or could not be read, or a server or proxy error), the provider reads the group once. If the group then holds what was asked for, that is recorded. " +
 			"Otherwise, whether the group still shows its old members or the read fails too, the request may yet take effect (a proxy can give up on a request the server goes on to commit), so the resource keeps its identity, records the members it read, and lists the users that were requested in `unresolved_user_ids`. " +
 			"While that is set, plans for the resource are refused, naming the recovery. A refresh reads the group again and clears it, recording the members then held. Destroying the resource first reads the group and removes the requested users that are members, together with the members it had recorded, so a request that committed late is cleaned up too; if the group cannot be read, destroy stops with an error and keeps the resource in state. " +
@@ -318,18 +318,19 @@ func (r *groupMembersResource) write(ctx context.Context, groupID string, known,
 	return groupMembersWrite{Changed: result.Changed, Members: result.Observed}
 }
 
-// groupMembersReplaceNote ends every diagnostic that leaves a tainted resource
-// behind, because the next apply replaces it: the order of that replacement is
-// part of this resource's contract.
-const groupMembersReplaceNote = "Terraform replaces the tainted resource on the next apply: the old resource must be destroyed before the new one is created, which is its default order. " +
+// groupMembersReplaceNote ends every diagnostic that keeps a resource in state
+// after a failed write: the order of a replacement is part of this resource's
+// contract. It is conditional because only a failed Create taints the resource
+// (and so has Terraform replace it on the next apply); after a failed Update the
+// corrected configuration proceeds in place, and -replace replaces any of them.
+const groupMembersReplaceNote = "If this resource is replaced (Terraform replaces one that a failed create left tainted on the next apply, and `-replace` replaces any), the old resource must be destroyed before the new one is created, which is its default order. " +
 	"Do not use create_before_destroy for this resource, including lifecycle ordering inherited from a resource that depends on it."
 
 // groupMembersReportDifference adds an error naming how what the group holds
 // differs from what was asked for.
 //
-// tainted says the resource is kept in state after this error, so that the next
-// apply replaces it.
-func groupMembersReportDifference(groupID string, want, got []string, requestErr error, tainted bool, diags *diag.Diagnostics) {
+// kept says the resource is kept in state after this error.
+func groupMembersReportDifference(groupID string, want, got []string, requestErr error, kept bool, diags *diag.Diagnostics) {
 	missing := groupMembersDiff(want, got)
 	extra := groupMembersDiff(got, want)
 	var parts []string
@@ -344,7 +345,7 @@ func groupMembersReportDifference(groupID string, want, got []string, requestErr
 		lead = "The request to set the members of group %s failed (" + requestErr.Error() + ") and the group does not hold what was asked for"
 	}
 	detail := fmt.Sprintf(lead+": %s. The resource records the members the group actually holds; correct user_ids and apply again.", groupID, strings.Join(parts, "; "))
-	if tainted {
+	if kept {
 		detail += " " + groupMembersReplaceNote
 	}
 	diags.AddError("Group members differ from the request", detail)

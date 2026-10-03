@@ -348,9 +348,12 @@ func TestGroupMembersResource_SchemaAndMetadata(t *testing.T) {
 		assert.Contains(t, sch.MarkdownDescription, claim)
 	}
 	// Replacement order is part of the contract.
-	for _, claim := range []string{"Replace this resource only by destroying the old one first", "create_before_destroy = true", "inherited from a resource that depends on it"} {
+	for _, claim := range []string{"Replace this resource only by destroying the old one first", "create_before_destroy = true", "inherited from a resource that depends on it",
+		"a failed create leaves it tainted", "after a failed update the resource stays in place"} {
 		assert.Contains(t, sch.MarkdownDescription, claim)
 	}
+	// Only a failed create taints: a failed update is not said to.
+	assert.NotContains(t, sch.MarkdownDescription, "failed create or update")
 	unresolved, ok := sch.Attributes["unresolved_user_ids"].(schema.SetAttribute)
 	require.True(t, ok)
 	assert.True(t, unresolved.Computed)
@@ -465,6 +468,40 @@ func TestGroupMembersResource_TaintingDiagnosticsStateTheReplacementOrder(t *tes
 			require.True(t, resp.Diagnostics.HasError())
 			require.False(t, resp.State.Raw.IsNull(), "the resource is kept, so it is tainted")
 			assert.Contains(t, resp.Diagnostics.Errors()[0].Detail(), note)
+			assert.Contains(t, resp.Diagnostics.Errors()[0].Detail(), "If this resource is replaced")
+		})
+	}
+
+	// A failed update does not taint the resource, so its diagnostic must not
+	// say Terraform replaces it: the corrected configuration proceeds in place.
+	// It still carries the ordering for the case that it is replaced anyway.
+	updates := map[string]func() *resource.UpdateResponse{
+		"partial result": func() *resource.UpdateResponse {
+			s, c := newGMServer(t, gmUUID(101), gmUUID(102))
+			r, sch := gmResource(t, c)
+			return gmUpdate(t, r, sch, s.groupID, []string{gmUUID(101), gmUUID(102)}, []string{gmUUID(102), gmUUID(103), gmUUID(999)})
+		},
+		"unreadable group": func() *resource.UpdateResponse {
+			s, c := newGMServer(t, gmUUID(101))
+			s.putAppliesThenFails, s.failGetsAfterPut = http.StatusInternalServerError, true
+			r, sch := gmResource(t, c)
+			return gmUpdate(t, r, sch, s.groupID, []string{gmUUID(101)}, []string{gmUUID(101), gmUUID(102)})
+		},
+		"unchanged group": func() *resource.UpdateResponse {
+			s, c := newGMServer(t, gmUUID(101))
+			s.putStatus = http.StatusInternalServerError
+			r, sch := gmResource(t, c)
+			return gmUpdate(t, r, sch, s.groupID, []string{gmUUID(101)}, []string{gmUUID(101), gmUUID(102)})
+		},
+	}
+	for name, update := range updates {
+		t.Run("update, "+name, func(t *testing.T) {
+			resp := update()
+			require.True(t, resp.Diagnostics.HasError())
+			detail := resp.Diagnostics.Errors()[0].Detail()
+			assert.Contains(t, detail, note)
+			assert.Contains(t, detail, "If this resource is replaced")
+			assert.NotContains(t, detail, "replaces the tainted resource", "a failed update does not taint the resource")
 		})
 	}
 

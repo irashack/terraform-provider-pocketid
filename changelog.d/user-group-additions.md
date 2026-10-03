@@ -124,11 +124,12 @@
   first**, which is Terraform's default order. Do not set
   `create_before_destroy = true` on it, directly or through ordering inherited
   from a resource that depends on it. When the resource is replaced for the same
-  group (tainted by a failed create or update, or `-replace`), the provider
+  group (a failed create leaves it tainted, or `-replace`), the provider
   cannot tell the old resource's cleanup from the members the new resource has
   just recorded, so in the other order the old resource's destroy removes users
-  the new resource's state still lists. The description and the errors that
-  leave a tainted resource behind say so.
+  the new resource's state still lists. A failed update does not taint the
+  resource: the corrected configuration applies in place. The description and
+  the errors that keep a resource after a failed create or update say so.
 - `pocketid_group_members`: a refresh and a destroy each read the group once,
   so they observe a snapshot and neither proves that an earlier request with an
   unknown outcome has finished. The cleanup covers the grants visible at those
