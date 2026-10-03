@@ -157,6 +157,32 @@ resource "pocketid_api" "test" {
 					testAccResourceAPIServerCIMD(&ids, false, nil),
 				),
 			},
+			// Adding a key to an existing API plans its ID as unknown and keeps
+			// the others (Terraform rejects an apply that contradicts the plan).
+			{
+				Config: testAccProviderConfig() + fmt.Sprintf(`
+resource "pocketid_api" "test" {
+  name     = "%[1]s-renamed"
+  resource = %[2]q
+  permissions = {
+    read = {
+      name        = "Read everything"
+      description = "Read all items"
+    }
+    write = {
+      name        = "Write"
+      description = "Write items"
+    }
+    admin = { name = "Admin" }
+  }
+}
+`, rName, uri),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(name, "permissions.%", "3"),
+					resource.TestCheckResourceAttrSet(name, "permissions.admin.id"),
+					ids.same(name, "read", "write"),
+				),
+			},
 			// Removing every permission empties the server's list.
 			{
 				Config: testAccProviderConfig() + fmt.Sprintf(`
@@ -168,6 +194,25 @@ resource "pocketid_api" "test" {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr(name, "permissions.%", "0"),
 					ids.same(name),
+				),
+			},
+			// A removed key that comes back is a new permission with a new ID.
+			{
+				Config: testAccProviderConfig() + fmt.Sprintf(`
+resource "pocketid_api" "test" {
+  name        = "%[1]s-renamed"
+  resource    = %[2]q
+  permissions = { read = { name = "Read" } }
+}
+`, rName, uri),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet(name, "permissions.read.id"),
+					func(s *terraform.State) error {
+						if s.RootModule().Resources[name].Primary.Attributes["permissions.read.id"] == ids.permissions["read"] {
+							return fmt.Errorf("the re-added permission kept its old ID")
+						}
+						return nil
+					},
 				),
 			},
 		},

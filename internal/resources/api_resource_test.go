@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -632,4 +633,113 @@ func TestAPIDifferences(t *testing.T) {
 	}, diffs)
 	assert.True(t, apiPermissionsNeedUpdate(desired, api))
 	assert.Empty(t, apiDifferences(apiDesired{Name: "A", Resource: "urn:a", Permissions: map[string]apiDesiredPermission{}}, &client.API{Name: "A", Resource: "urn:a"}))
+}
+
+// apiPlanConfig is the configuration of an API named Inventory with the
+// given permission keys, as Terraform sends it: computed values null.
+func apiPlanConfig(keys ...string) apiResourceModel {
+	permissions := map[string]attr.Value{}
+	for _, key := range keys {
+		permissions[key] = types.ObjectValueMust(apiPermissionAttrTypes, map[string]attr.Value{
+			"id": types.StringNull(), "name": types.StringValue("Permission " + key), "description": types.StringNull(),
+			"allowed_for_cimd_clients": types.BoolValue(false),
+		})
+	}
+	return apiResourceModel{
+		ID: types.StringNull(), Name: types.StringValue("Inventory"), Resource: types.StringValue("https://inventory.example"),
+		CreatedAt: types.StringNull(), AllowCIMDClients: types.BoolValue(false),
+		Permissions: types.MapValueMust(types.ObjectType{AttrTypes: apiPermissionAttrTypes}, permissions),
+	}
+}
+
+// apiPlanProposed builds Terraform's proposed new state from a configuration
+// and the prior state: computed values the configuration leaves null come
+// from the prior state, matched by permission key, and stay null for a key
+// the prior state does not have.
+func apiPlanProposed(t *testing.T, config apiResourceModel, prior *apiResourceModel) apiResourceModel {
+	t.Helper()
+	proposed := config
+	if prior == nil {
+		return proposed
+	}
+	proposed.ID, proposed.CreatedAt = prior.ID, prior.CreatedAt
+	priorPermissions := apiTestPermissions(t, *prior)
+	permissions := map[string]attr.Value{}
+	for key, p := range apiTestPermissions(t, config) {
+		if old, ok := priorPermissions[key]; ok {
+			p.ID = old.ID
+		}
+		permissions[key] = types.ObjectValueMust(apiPermissionAttrTypes, map[string]attr.Value{
+			"id": p.ID, "name": p.Name, "description": p.Description, "allowed_for_cimd_clients": p.AllowedForCIMDClients,
+		})
+	}
+	proposed.Permissions = types.MapValueMust(types.ObjectType{AttrTypes: apiPermissionAttrTypes}, permissions)
+	return proposed
+}
+
+// apiPlanAndApply plans the configuration against the prior state through
+// the protocol server, checks the plan, applies it to the fake server, and
+// checks that every value the plan knew is what the apply returned (what
+// Terraform enforces as "inconsistent result after apply").
+func apiPlanAndApply(t *testing.T, h *apiHarness, prior *apiResourceModel, config apiResourceModel) (planned, applied apiResourceModel) {
+	t.Helper()
+	r := &apiResource{}
+	typ := h.types["pocketid_api"]
+	proposed := apiPlanProposed(t, config, prior)
+	priorValue := apiHarnessValue(t, r, prior)
+	configValue := apiHarnessValue(t, r, &config)
+	plan := h.plan("pocketid_api", priorValue, configValue, apiHarnessValue(t, r, &proposed), nil)
+	require.Empty(t, apiHarnessErrors(plan.Diagnostics))
+	planned, _ = apiHarnessDecode[apiResourceModel](t, r, typ, plan.PlannedState)
+	result := h.apply("pocketid_api", priorValue, configValue, plan.PlannedState, plan.PlannedPrivate)
+	require.Empty(t, apiHarnessErrors(result.Diagnostics))
+	applied, ok := apiHarnessDecode[apiResourceModel](t, r, typ, result.NewState)
+	require.True(t, ok)
+	plannedValue, err := plan.PlannedState.Unmarshal(typ)
+	require.NoError(t, err)
+	appliedValue, err := result.NewState.Unmarshal(typ)
+	require.NoError(t, err)
+	require.NoError(t, tftypes.Walk(plannedValue, func(p *tftypes.AttributePath, v tftypes.Value) (bool, error) {
+		if !v.IsKnown() {
+			return false, nil
+		}
+		if v.Type().Is(tftypes.Object{}) || v.Type().Is(tftypes.Map{}) {
+			return true, nil
+		}
+		got, _, err := tftypes.WalkAttributePath(appliedValue, p)
+		if err != nil {
+			return false, fmt.Errorf("%s: planned but missing after apply", p)
+		}
+		if !v.Equal(got.(tftypes.Value)) {
+			return false, fmt.Errorf("%s: planned %s, applied %s", p, v, got)
+		}
+		return false, nil
+	}))
+	return planned, applied
+}
+
+// Permission IDs through the framework's planning: unknown for a key the API
+// does not have yet (at creation, when a key is added, and when a removed key
+// comes back), and carried over for a kept key. Planning a key new to an
+// existing API as null made the ID the server assigned contradict the plan.
+func TestAPIResourcePlan_PermissionIDs(t *testing.T) {
+	_, c := newAPITestPocketID(t)
+	h := newAPIHarness(t, c)
+
+	planned, created := apiPlanAndApply(t, h, nil, apiPlanConfig("read"))
+	assert.True(t, apiTestPermissions(t, planned)["read"].ID.IsUnknown(), "a new API's permission ID is unknown")
+	readID := apiTestPermissions(t, created)["read"].ID
+	require.False(t, readID.IsNull() || readID.IsUnknown())
+
+	planned, added := apiPlanAndApply(t, h, &created, apiPlanConfig("read", "write"))
+	assert.True(t, apiTestPermissions(t, planned)["write"].ID.IsUnknown(), "an added key's ID is unknown, not null")
+	assert.Equal(t, readID, apiTestPermissions(t, planned)["read"].ID, "a kept key's ID is planned from state")
+	assert.Equal(t, readID, apiTestPermissions(t, added)["read"].ID)
+	assert.False(t, apiTestPermissions(t, added)["write"].ID.IsNull())
+
+	_, removed := apiPlanAndApply(t, h, &added, apiPlanConfig("write"))
+	planned, readded := apiPlanAndApply(t, h, &removed, apiPlanConfig("read", "write"))
+	assert.True(t, apiTestPermissions(t, planned)["read"].ID.IsUnknown(), "a re-added key's ID is unknown")
+	assert.NotEqual(t, readID, apiTestPermissions(t, readded)["read"].ID, "a re-added key is a new permission")
+	assert.Equal(t, apiTestPermissions(t, added)["write"].ID, apiTestPermissions(t, readded)["write"].ID)
 }

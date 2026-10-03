@@ -146,8 +146,12 @@ func (r *apiResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *
 						"id": schema.StringAttribute{
 							Description: "The permission's ID. It stays the same while the key does.",
 							Computed:    true,
+							// A key new to this API has no ID in state (null); the
+							// plain UseStateForUnknown would plan that null, and
+							// the ID the server then assigns would contradict the
+							// plan. Only a known ID is carried over.
 							PlanModifiers: []planmodifier.String{
-								stringplanmodifier.UseStateForUnknown(),
+								stringplanmodifier.UseNonNullStateForUnknown(),
 							},
 						},
 						"name": schema.StringAttribute{
