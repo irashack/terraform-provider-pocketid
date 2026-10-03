@@ -395,13 +395,15 @@ func (r *clientSecretResource) reportFailedCreate(ctx context.Context, clientID 
 		resp.Diagnostics.AddError("Client secret creation result uncertain", detail)
 		return
 	}
+	// Keyed on the canonical (lower-case) UUID: the same secret may be
+	// listed in another letter case.
 	known := map[string]bool{}
 	for _, secret := range before {
-		known[secret.ID] = true
+		known[strings.ToLower(secret.ID)] = true
 	}
 	var appeared int
 	for _, secret := range after {
-		if !known[secret.ID] {
+		if !known[strings.ToLower(secret.ID)] {
 			appeared++
 		}
 	}
@@ -453,7 +455,7 @@ func describeClientSecrets(secrets []client.ClientSecretMetadata, known map[stri
 			state = "expired"
 		}
 		line := fmt.Sprintf("  - %s  prefix %s  created %s  %s", secret.ID, prefix, formatSecretTime(secret.CreatedAt), state)
-		if known != nil && !known[secret.ID] {
+		if known != nil && !known[strings.ToLower(secret.ID)] {
 			line += "  [new since this attempt]"
 		}
 		lines = append(lines, line)

@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -136,4 +137,23 @@ func TestGroupMembersResource_UnusableIDInAnAcceptedAnswerIsVerified(t *testing.
 		assert.Equal(t, []string{gmUUID(101)}, candidates)
 		assert.Equal(t, []string{gmUUID(101)}, s.memberSet(), "the write took effect")
 	})
+}
+
+// A group and its members addressed in another letter case than the server's
+// are the same group and users (PostgreSQL answers with its own lower-case
+// spelling): the plan is not taken for a difference, and the write and its
+// verification address the group the read described, in the server's
+// spelling.
+func TestGroupMembersResource_IDsInAnotherCaseAreTheSame(t *testing.T) {
+	const group = "abcdef01-0000-4000-8000-0000000000aa"
+	const lettered = "abcdef02-0000-4000-8000-0000000000bb"
+	s, c := newGMServer(t)
+	s.anyCase = true
+	s.groupID = group
+	s.users[lettered] = true
+	r, sch := gmResource(t, c)
+	resp := gmCreate(t, r, sch, strings.ToUpper(group), []string{strings.ToUpper(lettered), gmUUID(102)})
+	require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
+	assert.Equal(t, []string{"/api/user-groups/" + group + "/users"}, s.putPaths, "the PUT uses the server's spelling")
+	assert.Equal(t, []string{gmUUID(102), lettered}, s.memberSet())
 }

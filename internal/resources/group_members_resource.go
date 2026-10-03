@@ -151,13 +151,15 @@ func groupMembersIDs(ctx context.Context, set types.Set, diags *diag.Diagnostics
 
 // groupMembersDiff returns the IDs in a that are not in b, sorted.
 func groupMembersDiff(a, b []string) []string {
+	// User IDs are UUIDs, the same in any letter case (PostgreSQL answers
+	// with its own lower-case spelling); each is reported in a's spelling.
 	in := make(map[string]struct{}, len(b))
 	for _, id := range b {
-		in[id] = struct{}{}
+		in[strings.ToLower(id)] = struct{}{}
 	}
 	var out []string
 	for _, id := range a {
-		if _, ok := in[id]; !ok {
+		if _, ok := in[strings.ToLower(id)]; !ok {
 			out = append(out, id)
 		}
 	}
@@ -280,7 +282,9 @@ func (r *groupMembersResource) write(ctx context.Context, groupID string, known,
 		return groupMembersWrite{OK: true} // already exactly right: nothing to write
 	}
 
-	result := r.put(ctx, groupID, want, current.MemberIDs)
+	// The write and its verification address the group the read
+	// described, in the server's own spelling of its ID.
+	result := r.put(ctx, current.ID, want, current.MemberIDs)
 	switch {
 	case result.Gone:
 		diags.AddError("Group not found", fmt.Sprintf("Group %s does not exist (any longer). Nothing was changed.", groupID))
@@ -414,10 +418,13 @@ func groupMembersUnresolved(ctx context.Context, attribute types.Set, private gr
 // groupMembersUnique drops repeats from a sorted list.
 func groupMembersUnique(sorted []string) []string {
 	var out []string
-	for i, id := range sorted {
-		if i == 0 || id != sorted[i-1] {
-			out = append(out, id)
+	seen := map[string]bool{}
+	for _, id := range sorted {
+		if seen[strings.ToLower(id)] {
+			continue
 		}
+		seen[strings.ToLower(id)] = true
+		out = append(out, id)
 	}
 	return out
 }
@@ -689,7 +696,9 @@ func (r *groupMembersResource) Delete(ctx context.Context, req resource.DeleteRe
 		return // none of the managed users is a member any more
 	}
 
-	result := r.put(ctx, groupID, remaining, current.MemberIDs)
+	// The removal and its verification address the group the read
+	// described, in the server's own spelling of its ID.
+	result := r.put(ctx, current.ID, remaining, current.MemberIDs)
 	switch {
 	case result.Gone:
 		return // the group was deleted in the meantime

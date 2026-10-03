@@ -60,6 +60,12 @@ type gmServer struct {
 	// getStatus / getBody, when set, answer every GET of the group.
 	getStatus int
 	getBody   any
+	// anyCase answers a GET of the group in any letter case, with the ID in
+	// the server's own spelling, as PostgreSQL does; other requests still
+	// match the stored spelling only.
+	anyCase bool
+	// putPaths records the path of every PUT.
+	putPaths []string
 }
 
 func newGMServer(t *testing.T, members ...string) (*gmServer, *client.Client) {
@@ -97,8 +103,11 @@ func (s *gmServer) serve(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 	s.log = append(s.log, r.Method+" "+r.URL.Path)
 	base := "/api/user-groups/" + s.groupID
+	if r.Method == http.MethodPut {
+		s.putPaths = append(s.putPaths, r.URL.Path)
+	}
 	switch {
-	case r.Method == http.MethodGet && r.URL.Path == base:
+	case r.Method == http.MethodGet && (r.URL.Path == base || s.anyCase && strings.EqualFold(r.URL.Path, base)):
 		if s.getStatus != 0 {
 			gmReply(w, s.getStatus, s.getBody)
 			return
@@ -133,6 +142,9 @@ func (s *gmServer) serve(w http.ResponseWriter, r *http.Request) {
 		var kept []string
 		seen := map[string]bool{}
 		for _, id := range *body.UserIDs {
+			if s.anyCase {
+				id = strings.ToLower(id)
+			}
 			if s.users[id] && !seen[id] {
 				kept = append(kept, id)
 				seen[id] = true

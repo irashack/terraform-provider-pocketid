@@ -395,3 +395,48 @@ func TestClientUpdateHoldsTheSecretLockForSecretChangesOnly(t *testing.T) {
 		assertHeld(t, held(), "GET /api/oidc/clients/c1/secrets", "DELETE /api/oidc/clients/c1/secrets/"+heldID)
 	})
 }
+
+// After an uncertain create, a secret listed before in one letter case and
+// after in another is the same secret, not one that appeared.
+func TestClientSecretResource_UncertainCreateCountsSecretsAsUUIDs(t *testing.T) {
+	const existing = "abcdef01-0000-4000-8000-0000000000aa"
+	const created = "abcdef02-0000-4000-8000-0000000000bb"
+	posted := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		object := func(id string) string {
+			return `{"id":"` + id + `","prefix":"abcd","createdAt":"2026-10-02T10:00:00Z","expiresAt":null,"isActive":true}`
+		}
+		switch r.Method + " " + r.URL.Path {
+		case "GET /api/version/current":
+			_, _ = fmt.Fprint(w, `{"currentVersion":"2.17.0"}`)
+		case "GET /api/oidc/clients/app":
+			_, _ = fmt.Fprint(w, `{"id":"app","name":"app","callbackURLs":[],"isPublic":false,"allowedUserGroups":[]}`)
+		case "GET /api/oidc/clients/app/secrets":
+			if !posted {
+				_, _ = fmt.Fprint(w, "["+object(strings.ToUpper(existing))+"]")
+				return
+			}
+			_, _ = fmt.Fprint(w, "["+object(existing)+","+object(created)+"]")
+		case "POST /api/oidc/clients/app/secrets":
+			posted = true
+			w.WriteHeader(http.StatusBadGateway)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusTeapot)
+		}
+	}))
+	t.Cleanup(server.Close)
+	c, err := client.NewClient(server.URL, "synthetic-token", false, 2)
+	require.NoError(t, err)
+	resp, state := clientSecretCreate(t, c, clientSecretPlanned())
+	require.True(t, resp.Diagnostics.HasError())
+	assert.Nil(t, state)
+	detail := clientSecretDiagText(resp.Diagnostics)
+	assert.Contains(t, detail, "One secret appeared on the client during the attempt")
+	for _, line := range strings.Split(detail, "\n") {
+		if strings.Contains(strings.ToLower(line), existing) {
+			assert.NotContains(t, line, "[new since this attempt]", "the secret listed before is not new")
+		}
+	}
+}

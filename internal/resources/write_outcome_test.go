@@ -3,6 +3,7 @@ package resources
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -34,4 +35,20 @@ func TestWriteRefused(t *testing.T) {
 			assert.Equal(t, tc.refused, apiWriteRefused(tc.err), "the API resources agree")
 		})
 	}
+}
+
+// Group, member and secret IDs are UUIDs, the same in any letter case.
+func TestUUIDComparisonsIgnoreCase(t *testing.T) {
+	const lower = "abcdef01-0000-4000-8000-0000000000aa"
+	upper := strings.ToUpper(lower)
+	assert.Empty(t, missingFrom([]string{upper}, []string{lower}), "a client's group in another case is not missing")
+	assert.True(t, sameMembers([]string{upper}, []string{lower}))
+	assert.Empty(t, groupMembersDiff([]string{lower}, []string{upper}))
+	assert.Equal(t, []string{upper}, groupMembersUnique([]string{upper, lower}), "one ID, the first spelling kept")
+
+	// A failed secret create counts as new only the secrets that were not
+	// listed before, in any spelling.
+	known := map[string]bool{strings.ToLower(upper): true}
+	text := describeClientSecrets([]client.ClientSecretMetadata{{ID: lower, Prefix: "abcd"}}, known)
+	assert.NotContains(t, text, "new since this attempt")
 }

@@ -54,9 +54,10 @@ func sameMembers(a, b []string) bool {
 
 // missingFrom returns the IDs in want that got lacks, sorted.
 func missingFrom(want, got []string) []string {
+	// Group IDs are UUIDs, the same in any letter case.
 	var missing []string
 	for _, id := range want {
-		if !slices.Contains(got, id) {
+		if !slices.ContainsFunc(got, func(held string) bool { return client.SameUUID(held, id) }) {
 			missing = append(missing, id)
 		}
 	}
