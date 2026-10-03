@@ -202,7 +202,10 @@ func TestValidationOfKeyedNestedObjectsNeverShowsTheKey(t *testing.T) {
 			mapType := objectType.AttributeTypes[attribute.Name].(tftypes.Map)
 			elementType := mapType.ElementType.(tftypes.Object)
 			config := func(set map[string]tftypes.Value) *tfprotov6.DynamicValue {
-				element := valueFreeObject(elementType, set)
+				element := tftypes.NewValue(elementType, nil) // a null entry
+				if set != nil {
+					element = valueFreeObject(elementType, set)
+				}
 				value := tftypes.NewValue(mapType, map[string]tftypes.Value{valueFreeKey: element})
 				dynamic, err := tfprotov6.NewDynamicValue(objectType, valueFreeObject(objectType, map[string]tftypes.Value{attribute.Name: value}))
 				require.NoError(t, err)
@@ -214,7 +217,7 @@ func TestValidationOfKeyedNestedObjectsNeverShowsTheKey(t *testing.T) {
 					validName["name"] = tftypes.NewValue(tftypes.String, "Read")
 				}
 			}
-			cases := map[string]map[string]tftypes.Value{"every nested attribute left out": {}}
+			cases := map[string]map[string]tftypes.Value{"every nested attribute left out": {}, "a null entry": nil}
 			for _, nested := range attribute.NestedType.Attributes {
 				if !elementType.AttributeTypes[nested.Name].Is(tftypes.String) || !nested.Computed {
 					continue
@@ -247,7 +250,7 @@ func TestValidationOfKeyedNestedObjectsNeverShowsTheKey(t *testing.T) {
 			}
 		}
 	}
-	assert.GreaterOrEqual(t, checked, 2, "pocketid_api.permissions: a missing name and a set id")
+	assert.GreaterOrEqual(t, checked, 3, "pocketid_api.permissions: a missing name, a null entry and a set id")
 }
 
 // A rule broken by a nested attribute under a configured key is reported on

@@ -230,3 +230,24 @@ func wrapInt64s(vs []validator.Int64) []validator.Int64 {
 	}
 	return vs
 }
+
+// Conversion replaces the diagnostics of converting a configured collection
+// (ElementsAs and the like), which name an element's path, a map key
+// included, and sometimes its value, with one value-free error per
+// diagnostic, reported on the collection at.
+func Conversion(at path.Path, reported diag.Diagnostics) diag.Diagnostics {
+	if len(reported) == 0 {
+		return nil
+	}
+	safe := SafePath(at)
+	var out diag.Diagnostics
+	detail := fmt.Sprintf("Attribute %s holds a value the provider cannot read. The configured value is not shown.", safe)
+	for _, d := range reported {
+		if d.Severity() == diag.SeverityWarning {
+			out.AddAttributeWarning(safe, "Unreadable value", detail)
+			continue
+		}
+		out.AddAttributeError(safe, "Unreadable value", detail)
+	}
+	return out
+}

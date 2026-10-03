@@ -261,7 +261,7 @@ func (r *signupTokenResource) Create(ctx context.Context, req resource.CreateReq
 	}
 	var requested []string
 	if !plan.UserGroupIDs.IsNull() {
-		resp.Diagnostics.Append(plan.UserGroupIDs.ElementsAs(ctx, &requested, false)...)
+		resp.Diagnostics.Append(valuefree.Conversion(path.Root("user_group_ids"), plan.UserGroupIDs.ElementsAs(ctx, &requested, false))...)
 		if resp.Diagnostics.HasError() {
 			return
 		}

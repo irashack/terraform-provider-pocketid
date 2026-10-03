@@ -8,9 +8,11 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
+	"github.com/irashack/terraform-provider-pocketid/internal/valuefree"
 )
 
 // customClaimsToAPI converts a Terraform map of custom claims into the API's
@@ -23,7 +25,9 @@ func customClaimsToAPI(ctx context.Context, claims types.Map) ([]client.CustomCl
 	}
 
 	values := make(map[string]string, len(claims.Elements()))
-	diags = claims.ElementsAs(ctx, &values, false)
+	// The conversion's diagnostics name the claim's key: only a value-free
+	// form of them is returned.
+	diags = valuefree.Conversion(path.Root("custom_claims"), claims.ElementsAs(ctx, &values, false))
 	if diags.HasError() {
 		return nil, diags
 	}

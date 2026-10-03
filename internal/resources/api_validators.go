@@ -156,8 +156,9 @@ func (v apiIdentifierValidator) ValidateString(_ context.Context, req validator.
 }
 
 // apiPermissionsNameRequired requires a name in every permission of the
-// map. It stands in for Required on the nested attribute, whose framework
-// check would name the configured key.
+// map: a permission that is null has none, so it is refused too (one that is
+// unknown is checked when it is known). It stands in for Required on the
+// nested attribute, whose framework check would name the configured key.
 type apiPermissionsNameRequired struct{}
 
 func (apiPermissionsNameRequired) Description(context.Context) string {
@@ -169,11 +170,21 @@ func (v apiPermissionsNameRequired) MarkdownDescription(ctx context.Context) str
 }
 
 func (apiPermissionsNameRequired) ValidateMap(_ context.Context, req validator.MapRequest, resp *validator.MapResponse) {
-	for _, element := range apiPermissionObjects(req.ConfigValue) {
-		if name, ok := element["name"]; ok && name.IsNull() {
-			resp.Diagnostics.AddAttributeError(req.Path, "Missing permission name", "Every permission in "+req.Path.String()+" requires a name.")
-			return
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	for _, element := range req.ConfigValue.Elements() {
+		if element.IsUnknown() {
+			continue
 		}
+		object, ok := element.(types.Object)
+		if ok && !object.IsNull() {
+			if name, present := object.Attributes()["name"]; !present || !name.IsNull() {
+				continue
+			}
+		}
+		resp.Diagnostics.AddAttributeError(req.Path, "Missing permission name", "Every permission in "+req.Path.String()+" requires a name.")
+		return
 	}
 }
 

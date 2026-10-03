@@ -144,7 +144,7 @@ func (r *groupMembersResource) Configure(_ context.Context, req resource.Configu
 // groupMembersIDs reads a set of user IDs out of the model, sorted.
 func groupMembersIDs(ctx context.Context, set types.Set, diags *diag.Diagnostics) []string {
 	var ids []string
-	diags.Append(set.ElementsAs(ctx, &ids, false)...)
+	diags.Append(valuefree.Conversion(path.Root("user_ids"), set.ElementsAs(ctx, &ids, false))...)
 	sort.Strings(ids)
 	return ids
 }
@@ -396,7 +396,7 @@ func groupMembersUnresolved(ctx context.Context, attribute types.Set, private gr
 	var candidates []string
 	if !attribute.IsNull() && !attribute.IsUnknown() {
 		unresolved = true
-		diags.Append(attribute.ElementsAs(ctx, &candidates, false)...)
+		diags.Append(valuefree.Conversion(path.Root("unresolved_user_ids"), attribute.ElementsAs(ctx, &candidates, false))...)
 	}
 	if private != nil {
 		value, d := private.GetKey(ctx, groupMembersUnresolvedKey)

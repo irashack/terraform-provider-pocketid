@@ -234,7 +234,9 @@ func apiDesiredFromModel(ctx context.Context, m apiResourceModel) (apiDesired, d
 		Permissions:      map[string]apiDesiredPermission{},
 	}
 	var permissions map[string]apiPermissionModel
-	diags := m.Permissions.ElementsAs(ctx, &permissions, false)
+	// The framework's conversion diagnostics name the map key, which is
+	// configured text: only a value-free form of them is returned.
+	diags := valuefree.Conversion(path.Root("permissions"), m.Permissions.ElementsAs(ctx, &permissions, false))
 	for key, p := range permissions {
 		desired.Permissions[key] = apiDesiredPermission{
 			Name:                  p.Name.ValueString(),

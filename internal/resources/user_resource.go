@@ -217,7 +217,7 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 	// error cannot leave a new user behind.
 	var groupIDs []string
 	if !plan.Groups.IsNull() && !plan.Groups.IsUnknown() {
-		resp.Diagnostics.Append(plan.Groups.ElementsAs(ctx, &groupIDs, false)...)
+		resp.Diagnostics.Append(valuefree.Conversion(path.Root("groups"), plan.Groups.ElementsAs(ctx, &groupIDs, false))...)
 	}
 	var claims []client.CustomClaim
 	if !plan.CustomClaims.IsNull() && !plan.CustomClaims.IsUnknown() {
@@ -622,13 +622,13 @@ func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	// Handle user groups
 	var plannedGroupIDs []string
 	if !plan.Groups.IsNull() && !plan.Groups.IsUnknown() {
-		diags = plan.Groups.ElementsAs(ctx, &plannedGroupIDs, false)
+		diags = valuefree.Conversion(path.Root("groups"), plan.Groups.ElementsAs(ctx, &plannedGroupIDs, false))
 		resp.Diagnostics.Append(diags...)
 	}
 
 	var currentGroupIDs []string
 	if !state.Groups.IsNull() {
-		diags = state.Groups.ElementsAs(ctx, &currentGroupIDs, false)
+		diags = valuefree.Conversion(path.Root("groups"), state.Groups.ElementsAs(ctx, &currentGroupIDs, false))
 		resp.Diagnostics.Append(diags...)
 	}
 

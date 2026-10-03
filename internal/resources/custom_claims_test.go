@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -103,4 +104,18 @@ func TestCheckCustomClaims(t *testing.T) {
 	assert.NotContains(t, err.Error(), "zz-held-value", "values are never named")
 	// Default claims left on a user whose plan has none.
 	require.Error(t, checkCustomClaims(nil, []client.CustomClaim{{Key: "dept", Value: "default"}}))
+}
+
+// A claim whose value is null cannot be converted; the error is reported on
+// custom_claims without the claim's key.
+func TestCustomClaimsToAPI_ConversionNamesNoKey(t *testing.T) {
+	claims := types.MapValueMust(types.StringType, map[string]attr.Value{"claim-synthetic-token": types.StringNull()})
+	_, diags := customClaimsToAPI(context.Background(), claims)
+	require.True(t, diags.HasError())
+	for _, d := range diags {
+		assert.NotContains(t, d.Summary()+d.Detail(), "synthetic-token")
+		withPath, ok := d.(diag.DiagnosticWithPath)
+		require.True(t, ok)
+		assert.Equal(t, "custom_claims", withPath.Path().String())
+	}
 }

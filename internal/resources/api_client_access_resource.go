@@ -269,8 +269,8 @@ func (g apiAccessGrant) grantsClientAccess() bool {
 func apiAccessGrantFromModel(ctx context.Context, m apiClientAccessModel) (apiAccessGrant, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	grant := apiAccessGrant{UserAccess: m.UserDelegatedAccess.ValueBool(), ClientAccess: m.ClientAccess.ValueBool()}
-	diags.Append(m.UserDelegatedPermissions.ElementsAs(ctx, &grant.UserKeys, false)...)
-	diags.Append(m.ClientPermissions.ElementsAs(ctx, &grant.ClientKeys, false)...)
+	diags.Append(valuefree.Conversion(path.Root("user_delegated_permissions"), m.UserDelegatedPermissions.ElementsAs(ctx, &grant.UserKeys, false))...)
+	diags.Append(valuefree.Conversion(path.Root("client_permissions"), m.ClientPermissions.ElementsAs(ctx, &grant.ClientKeys, false))...)
 	sort.Strings(grant.UserKeys)
 	sort.Strings(grant.ClientKeys)
 	return grant, diags

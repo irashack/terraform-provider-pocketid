@@ -78,14 +78,16 @@ func apiModelTexts(ctx context.Context, m apiResourceModel) []string {
 	if m.Permissions.IsNull() || m.Permissions.IsUnknown() {
 		return texts
 	}
-	var permissions map[string]apiPermissionModel
-	if m.Permissions.ElementsAs(ctx, &permissions, false).HasError() {
-		return texts
-	}
-	for key, p := range permissions {
+	// Every key counts, whatever its value (null, unknown or an object
+	// that would not convert), so none escapes the check.
+	for key, element := range m.Permissions.Elements() {
 		texts = append(texts, key)
-		for _, value := range []types.String{p.Name, p.Description} {
-			if !value.IsNull() && !value.IsUnknown() {
+		object, ok := element.(types.Object)
+		if !ok || object.IsNull() || object.IsUnknown() {
+			continue
+		}
+		for _, name := range []string{"name", "description"} {
+			if value, ok := object.Attributes()[name].(types.String); ok && !value.IsNull() && !value.IsUnknown() {
 				texts = append(texts, value.ValueString())
 			}
 		}

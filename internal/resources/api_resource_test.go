@@ -1086,3 +1086,39 @@ func TestAPIResourceCreate_AnswerForAnotherAPI(t *testing.T) {
 		assert.True(t, route == "POST apis" || strings.HasPrefix(route, "GET "), "no follow-up mutation: %v", f.routes())
 	}
 }
+
+// A null permission (refused at validation, but reaching Create when it was
+// unknown then) gives a value-free error on permissions, never one that
+// names its key, and nothing is sent.
+func TestAPIResourceCreate_NullPermissionNamesNoKey(t *testing.T) {
+	f, c := newAPITestPocketID(t)
+	const key = "perm-synthetic-token"
+	resp, state := apiTestCreate(t, c, apiTestModel("", "Inventory", "https://inventory.example", false, map[string]attr.Value{
+		key: types.ObjectNull(apiPermissionAttrTypes),
+	}))
+	require.True(t, resp.Diagnostics.HasError())
+	assert.Nil(t, state)
+	for _, d := range resp.Diagnostics {
+		assert.NotContains(t, d.Summary()+d.Detail(), "synthetic-token")
+		if withPath, ok := d.(diag.DiagnosticWithPath); ok {
+			assert.Equal(t, "permissions", withPath.Path().String())
+		}
+	}
+	for _, route := range f.routes() {
+		assert.True(t, strings.HasPrefix(route, "GET "), "nothing is sent: %v", f.routes())
+	}
+}
+
+// The keys of permissions are checked for the API key whatever their value.
+func TestAPIModelTextsIncludesEveryKey(t *testing.T) {
+	m := apiTestModel("", "Inventory", "https://inventory.example", false, map[string]attr.Value{
+		"null-entry":    types.ObjectNull(apiPermissionAttrTypes),
+		"unknown-entry": types.ObjectUnknown(apiPermissionAttrTypes),
+		"named":         apiTestPermission("", "Read", nil, false),
+	})
+	texts := apiModelTexts(context.Background(), m)
+	assert.Contains(t, texts, "null-entry")
+	assert.Contains(t, texts, "unknown-entry")
+	assert.Contains(t, texts, "named")
+	assert.Contains(t, texts, "Read")
+}
