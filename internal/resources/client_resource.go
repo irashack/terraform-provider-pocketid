@@ -854,6 +854,13 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 	updateReq.IsGroupRestricted = isGroupRestricted
 	clientResp, err := r.client.UpdateClient(ctx, plan.ID.ValueString(), updateReq)
 	if err != nil {
+		if !client.IsDefiniteRejection(err) || errors.Is(err, client.ErrResultUnread) {
+			// The update may have been applied although its answer was
+			// lost (the client may now be confidential or public). Keep a
+			// planned secret step due for the next plan, which the
+			// refreshed state alone would no longer show.
+			recordPending(skipSecretAction(secretAction, state, &state))
+		}
 		resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 		resp.Diagnostics.AddError(
 			"Error updating OIDC client",

@@ -188,3 +188,61 @@ func TestClientPendingRevocationAfterGenerateSecretOff(t *testing.T) {
 	assert.Empty(t, fake.secrets)
 	assert.Equal(t, 2, fake.called(held), "one attempt per apply")
 }
+
+// Making a public client confidential whose client PUT is carried out but
+// whose response is lost: the generation it planned is not lost with it.
+// The next refresh shows the client confidential, and the next plan still
+// generates the secret.
+func TestClientLostUpdateResponseKeepsGenerationDue(t *testing.T) {
+	fake := managedFake(t, "2.17.0")
+	fake.client.IsPublic, fake.secrets = true, nil
+	fake.lostResponse = map[string]bool{"PUT /api/oidc/clients/c1": true}
+	h := newProtoHarness(t, fake.start())
+	prior := managedModel()
+	prior.IsPublic = types.BoolValue(true)
+	prior.ClientSecret, prior.ClientSecretID = types.StringNull(), types.StringNull()
+	config := homelabConfig() // confidential, generate_secret default true
+
+	result := h.apply(&prior, config, h.plan(&prior, config, nil))
+	require.NotEmpty(t, result.errors)
+	assert.False(t, fake.client.IsPublic, "the server applied the update")
+	assert.Zero(t, fake.called("POST /api/oidc/clients/c1/secrets"))
+
+	fake.lostResponse = nil
+	refreshed := h.read(*result.model, result.private)
+	require.Empty(t, refreshed.errors)
+	assert.False(t, refreshed.model.IsPublic.ValueBool())
+	next := h.plan(refreshed.model, config, refreshed.private)
+	require.Empty(t, next.errors)
+	assert.True(t, next.model.ClientSecret.IsUnknown(), "the next plan still generates the secret")
+	done := h.apply(refreshed.model, config, next)
+	require.Empty(t, done.errors)
+	assert.Len(t, fake.secrets, 1)
+	assert.False(t, done.model.ClientSecret.IsNull())
+	assert.True(t, done.model.GenerateSecret.ValueBool())
+}
+
+// The same for a confidential client made public: the revocation it planned
+// stays due after a lost response.
+func TestClientLostUpdateResponseKeepsRevocationDue(t *testing.T) {
+	fake := managedFake(t, "2.17.0")
+	fake.lostResponse = map[string]bool{"PUT /api/oidc/clients/c1": true}
+	h := newProtoHarness(t, fake.start())
+	prior := managedModel()
+	config := homelabConfig()
+	config.IsPublic = types.BoolValue(true)
+
+	result := h.apply(&prior, config, h.plan(&prior, config, nil))
+	require.NotEmpty(t, result.errors)
+	assert.True(t, fake.client.IsPublic)
+	assert.Len(t, fake.secrets, 1)
+
+	fake.lostResponse = nil
+	refreshed := h.read(*result.model, result.private)
+	next := h.plan(refreshed.model, config, refreshed.private)
+	require.Empty(t, next.errors)
+	assert.True(t, next.model.ClientSecret.IsNull(), "the next plan still revokes the secret")
+	done := h.apply(refreshed.model, config, next)
+	require.Empty(t, done.errors)
+	assert.Empty(t, fake.secrets)
+}

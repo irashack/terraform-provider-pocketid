@@ -67,6 +67,9 @@ type fakePocketID struct {
 	nextSecret int
 	// ignoreRestriction makes client writes ignore isGroupRestricted.
 	ignoreRestriction bool
+	// lostResponse lists "METHOD path" calls that are carried out but
+	// answered with a truncated body, as when a response is lost.
+	lostResponse map[string]bool
 }
 
 func newFakePocketID(t *testing.T, version string, c *fakeClient) *fakePocketID {
@@ -180,6 +183,10 @@ func (f *fakePocketID) serve(w http.ResponseWriter, r *http.Request) {
 	base := "/api/oidc/clients/" + f.client.ID
 	write := func(status int, v any) {
 		w.WriteHeader(status)
+		if f.lostResponse[call] {
+			_, _ = fmt.Fprint(w, `{"id":`)
+			return
+		}
 		require.NoError(f.t, json.NewEncoder(w).Encode(v))
 	}
 	switch {
