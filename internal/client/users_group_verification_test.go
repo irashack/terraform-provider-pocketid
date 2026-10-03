@@ -255,3 +255,57 @@ func TestClient_UserGroupsReadBackRequiresListedGroups(t *testing.T) {
 		})
 	}
 }
+
+// A PUT response that lists groups without being evidence of this user's
+// groups (it names another user, or no user, or a group without an ID) is not
+// believed: the result is read back with a GET, and the resulting set is what
+// a membership change reports. A removal never reports done on such a body.
+func TestClient_UserGroupsPutEvidenceMustNameTheUser(t *testing.T) {
+	ctx := context.Background()
+	const other = "88888888-8888-4888-8888-888888888888"
+	for name, body := range map[string]string{
+		"other_user_empty_list": `{"id":"` + other + `","userGroups":[]}`,
+		"other_user_null":       `{"id":"` + other + `","userGroups":null}`,
+		"no_user_id":            `{"userGroups":[]}`,
+		"group_without_id":      `{"id":"` + verifyUserID + `","userGroups":[{}]}`,
+	} {
+		t.Run("remove_not_applied_"+name, func(t *testing.T) {
+			// The server did not remove g2 (a concurrent writer held it), and
+			// the bogus response claims nobody is in any group.
+			s := &usersGroupsVerifyServer{existing: []string{"g1", "g2"}, current: []string{"g1", "g2"}, extraHeld: []string{"g2"}, putBody: body}
+			err := s.start(t).RemoveUserFromGroup(ctx, verifyUserID, "g2")
+			var mismatch *client.UserGroupsMismatchError
+			require.ErrorAs(t, err, &mismatch, "the read-back, not the response, decides")
+			assert.Equal(t, []string{"g2"}, mismatch.Unexpected)
+			assert.Equal(t, 2, s.gets, "the snapshot and the read-back")
+			assert.Equal(t, 1, s.puts, "the PUT is never repeated")
+		})
+		t.Run("add_applied_"+name, func(t *testing.T) {
+			// The server added g2, and the bogus response lists nothing, which
+			// must not make a real addition look like a missing group.
+			s := &usersGroupsVerifyServer{existing: []string{"g1", "g2"}, current: []string{"g1"}, putBody: body}
+			require.NoError(t, s.start(t).AddUserToGroup(ctx, verifyUserID, "g2"))
+			assert.Equal(t, 2, s.gets)
+			assert.Equal(t, 1, s.puts)
+		})
+		t.Run("set_"+name, func(t *testing.T) {
+			s := &usersGroupsVerifyServer{existing: []string{"g1"}, putBody: body}
+			held, err := s.start(t).SetUserGroups(ctx, verifyUserID, []string{"g1"})
+			require.NoError(t, err)
+			assert.Equal(t, []string{"g1"}, held)
+			assert.Equal(t, 1, s.gets, "the result was read back")
+		})
+		t.Run("unconfirmed_when_read_back_fails_"+name, func(t *testing.T) {
+			s := &usersGroupsVerifyServer{existing: []string{"g1"}, putBody: body, failGetsFrom: 1}
+			_, err := s.start(t).SetUserGroups(ctx, verifyUserID, []string{"g1"})
+			require.ErrorIs(t, err, client.ErrResultUnread)
+			assert.Equal(t, 1, s.puts)
+		})
+	}
+	t.Run("error_does_not_echo_the_body", func(t *testing.T) {
+		s := &usersGroupsVerifyServer{existing: []string{"g1"}, putBody: `{"id":"` + other + `","userGroups":[{"id":"","name":"canary-text"}]}`, failGetsFrom: 1}
+		_, err := s.start(t).SetUserGroups(ctx, verifyUserID, []string{"g1"})
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), "canary-text")
+	})
+}

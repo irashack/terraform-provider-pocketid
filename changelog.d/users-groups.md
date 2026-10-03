@@ -120,7 +120,10 @@
   requires a response that names the user and lists its groups. An empty or
   malformed answer is an error instead of "no groups", which could have made a
   removal look done, dropped a membership from state, or rebuilt the user's
-  group list without the groups it had.
+  group list without the groups it had. The same rule applies to Pocket ID's
+  answer to the write itself: a response that names another user or none, or
+  lists a group without an ID, is not taken as the result, and the groups are
+  read back instead.
 - For a user synchronized from LDAP, only attributes the configuration
   actually changes are refused. A change to `locale`, `groups` or
   `custom_claims` is applied, and a `display_name` that is not configured

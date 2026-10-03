@@ -165,8 +165,10 @@ func (c *Client) ListAllUsers(ctx context.Context, search string) ([]User, error
 // drops the rest without an error (UserService.UpdateUserGroups looks the IDs
 // up with "id IN ?"), so a caller compares the result with what it asked
 // for. An empty or nil groupIDs is sent as [] (the server rejects null). A
-// response that cannot be decoded gives an error wrapping ErrResultUnread:
-// the change was made, its result is unknown. The PUT is never retried.
+// response that does not show the user's groups (see decodeUserGroupIDs: it
+// must name this user and list its groups, each with an ID) gives an error
+// wrapping ErrResultUnread: the change was made, its result is unknown. The
+// PUT is never retried.
 func (c *Client) UpdateUserGroups(ctx context.Context, userID string, groupIDs []string) ([]string, error) {
 	if groupIDs == nil {
 		groupIDs = []string{}
@@ -180,17 +182,14 @@ func (c *Client) UpdateUserGroups(ctx context.Context, userID string, groupIDs [
 	if err != nil {
 		return nil, err
 	}
-	// UserDto.userGroups has no omitempty: a user in no group is null.
-	var fields map[string]json.RawMessage
-	var groups []UserGroup
-	raw, present := json.RawMessage(nil), false
-	if json.Unmarshal(body, &fields) == nil {
-		raw, present = fields["userGroups"]
+	// The response is evidence of the result only when it shows the user's
+	// groups, by the same rule as a read of the user (decodeUserGroupIDs);
+	// anything else leaves the result unknown, and the caller reads it back.
+	ids, err := decodeUserGroupIDs(body, userID)
+	if err != nil {
+		return nil, fmt.Errorf("groups of user %s: %w: %w", userID, ErrResultUnread, err)
 	}
-	if !present || json.Unmarshal(raw, &groups) != nil {
-		return nil, fmt.Errorf("groups of user %s: %w: the response did not list them", userID, ErrResultUnread)
-	}
-	return userGroupIDs(groups), nil
+	return ids, nil
 }
 
 // UserGroupsMismatchError reports that after a write of a user's groups the
@@ -264,13 +263,42 @@ func (c *Client) writeUserGroups(ctx context.Context, userID string, groupIDs []
 // the user is in.
 var errUserGroupsUnlisted = errors.New("the response did not list the user's groups")
 
+// decodeUserGroupIDs returns the IDs of the groups a user response lists. It
+// is the one rule for evidence of a user's groups, shared by the read of the
+// user and by the response to the PUT that replaces them: the body must be a
+// JSON object that names the requested user (its id) and holds a decodable
+// userGroups field whose elements each carry an ID. An explicit null means no
+// groups (UserDto has no omitempty). An absent field, {}, null, another
+// user's record or a group without an ID is no evidence of anything and gives
+// an error wrapping errUserGroupsUnlisted; the body is never echoed.
+func decodeUserGroupIDs(body []byte, userID string) ([]string, error) {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(body, &fields) != nil || fields == nil {
+		return nil, errUserGroupsUnlisted
+	}
+	var gotID string
+	if raw, ok := fields["id"]; !ok || json.Unmarshal(raw, &gotID) != nil || gotID != userID {
+		return nil, fmt.Errorf("%w: it did not name the user", errUserGroupsUnlisted)
+	}
+	raw, ok := fields["userGroups"]
+	var groups []UserGroup
+	if !ok || json.Unmarshal(raw, &groups) != nil {
+		return nil, errUserGroupsUnlisted
+	}
+	ids := make([]string, 0, len(groups))
+	for _, group := range groups {
+		if group.ID == "" {
+			return nil, fmt.Errorf("%w: a group had no ID", errUserGroupsUnlisted)
+		}
+		ids = append(ids, group.ID)
+	}
+	return ids, nil
+}
+
 // readUserGroupIDs reads the groups a user is in. Unlike GetUser it accepts
-// only a response that shows them: one naming the requested user (its id)
-// and holding a decodable userGroups field, where null means none (UserDto
-// has no omitempty). An absent field, {}, null or another user's record is
-// no evidence of anything and gives an error wrapping errUserGroupsUnlisted.
-// Errors from the request itself are returned unchanged, so IsUserNotFound
-// still applies to them.
+// only a response that shows them (see decodeUserGroupIDs); anything else
+// gives an error wrapping errUserGroupsUnlisted. Errors from the request
+// itself are returned unchanged, so IsUserNotFound still applies to them.
 func (c *Client) readUserGroupIDs(ctx context.Context, userID string) ([]string, error) {
 	id, err := uuidSegment("user", userID)
 	if err != nil {
@@ -280,25 +308,9 @@ func (c *Client) readUserGroupIDs(ctx context.Context, userID string) ([]string,
 	if err != nil {
 		return nil, err
 	}
-	var fields map[string]json.RawMessage
-	if json.Unmarshal(body, &fields) != nil || fields == nil {
-		return nil, fmt.Errorf("user %s: %w", userID, errUserGroupsUnlisted)
-	}
-	var gotID string
-	if raw, ok := fields["id"]; !ok || json.Unmarshal(raw, &gotID) != nil || gotID != userID {
-		return nil, fmt.Errorf("user %s: %w: it did not name the user", userID, errUserGroupsUnlisted)
-	}
-	raw, ok := fields["userGroups"]
-	var groups []UserGroup
-	if !ok || json.Unmarshal(raw, &groups) != nil {
-		return nil, fmt.Errorf("user %s: %w", userID, errUserGroupsUnlisted)
-	}
-	ids := make([]string, 0, len(groups))
-	for _, group := range groups {
-		if group.ID == "" {
-			return nil, fmt.Errorf("user %s: %w: a group had no ID", userID, errUserGroupsUnlisted)
-		}
-		ids = append(ids, group.ID)
+	ids, err := decodeUserGroupIDs(body, userID)
+	if err != nil {
+		return nil, fmt.Errorf("user %s: %w", userID, err)
 	}
 	return ids, nil
 }

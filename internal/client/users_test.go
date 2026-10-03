@@ -279,6 +279,7 @@ func TestClient_ListUsers_Empty(t *testing.T) {
 func TestClient_UpdateUserGroups(t *testing.T) {
 	const user = "11111111-1111-4111-8111-111111111111"
 	const g1, unknown = "22222222-2222-4222-8222-222222222222", "33333333-3333-4333-8333-333333333333"
+	const other = "44444444-4444-4444-8444-444444444444"
 	for name, tc := range map[string]struct {
 		request    []string
 		wantBody   string
@@ -296,7 +297,18 @@ func TestClient_UpdateUserGroups(t *testing.T) {
 		"empty list":              {request: []string{}, wantBody: `{"userGroupIds":[]}`, status: 200, response: `{"id":"` + user + `","userGroups":[]}`, want: []string{}},
 		"result not listed":       {request: []string{g1}, status: 200, response: `{"id":"` + user + `"}`, wantUnread: true},
 		"empty body":              {request: []string{g1}, status: 200, response: ``, wantUnread: true},
-		"rejected":                {request: []string{g1}, status: 400, response: `{"error":"x"}`, wantStatus: 400},
+		// The response is evidence only when it names the addressed user
+		// and every group it lists carries an ID, as for a read of the user.
+		"wrong user ID":                {request: []string{g1}, status: 200, response: `{"id":"` + other + `","userGroups":[{"id":"` + g1 + `"}]}`, wantUnread: true},
+		"missing user ID":              {request: []string{g1}, status: 200, response: `{"userGroups":[{"id":"` + g1 + `"}]}`, wantUnread: true},
+		"user ID not a string":         {request: []string{g1}, status: 200, response: `{"id":5,"userGroups":[{"id":"` + g1 + `"}]}`, wantUnread: true},
+		"group without ID":             {request: []string{g1}, status: 200, response: `{"id":"` + user + `","userGroups":[{}]}`, wantUnread: true},
+		"group without ID and no user": {request: []string{g1}, status: 200, response: `{"userGroups":[{}]}`, wantUnread: true},
+		"other user, no groups":        {request: nil, status: 200, response: `{"id":"` + other + `","userGroups":[]}`, wantUnread: true},
+		"other user, null groups":      {request: nil, status: 200, response: `{"id":"` + other + `","userGroups":null}`, wantUnread: true},
+		"not an object":                {request: []string{g1}, status: 200, response: `null`, wantUnread: true},
+		"groups not a list":            {request: []string{g1}, status: 200, response: `{"id":"` + user + `","userGroups":"` + g1 + `"}`, wantUnread: true},
+		"rejected":                     {request: []string{g1}, status: 400, response: `{"error":"x"}`, wantStatus: 400},
 	} {
 		t.Run(name, func(t *testing.T) {
 			puts := 0
