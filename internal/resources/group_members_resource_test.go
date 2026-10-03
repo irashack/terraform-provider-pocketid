@@ -270,6 +270,11 @@ func TestGroupMembersResource_SchemaAndMetadata(t *testing.T) {
 	assert.Contains(t, sch.MarkdownDescription, "pocketid_group_membership")
 	assert.Contains(t, sch.MarkdownDescription, "pocketid_user")
 	assert.Contains(t, sch.MarkdownDescription, "back-channel logout")
+	// The window between the provider's read and its write cannot be closed, and
+	// the description says so for all three writes.
+	for _, claim := range []string{"after the read and before the write", "cannot be protected", "create and update refuse", "destroy keeps"} {
+		assert.Contains(t, sch.MarkdownDescription, claim)
+	}
 }
 
 func TestGroupMembersResource_Create(t *testing.T) {
