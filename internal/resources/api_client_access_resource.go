@@ -2,6 +2,7 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -26,6 +27,7 @@ var (
 	_ resource.Resource                   = &apiClientAccessResource{}
 	_ resource.ResourceWithConfigure      = &apiClientAccessResource{}
 	_ resource.ResourceWithImportState    = &apiClientAccessResource{}
+	_ resource.ResourceWithModifyPlan     = &apiClientAccessResource{}
 	_ resource.ResourceWithValidateConfig = &apiClientAccessResource{}
 )
 
@@ -85,7 +87,13 @@ func (r *apiClientAccessResource) Schema(_ context.Context, _ resource.SchemaReq
 			"configuration and fails, naming the difference, instead of recording access the server did not confirm.\n\n" +
 			"Refer to the API as `pocketid_api.<name>.id` so the API's permission changes are applied first. Removing a permission " +
 			"from the API deletes its grants; if it was the client's last permission of that kind, Pocket ID also removes that " +
-			"kind of access, and the next plan shows it. Deleting the API or the client removes the grant.",
+			"kind of access, and the next plan shows it. Deleting the API or the client removes the grant.\n\n" +
+			"If a write ends without a confirmed result (the connection failed, or the response was lost or unreadable) and the " +
+			"grant cannot be read back either, the provider does not guess: state keeps the last grant it confirmed, the resource " +
+			"is marked unresolved, and plans and writes for it are refused until a read succeeds. Run `terraform plan` or " +
+			"`terraform apply` without `-refresh=false` to read it, or `terraform state rm` the resource and import it again as " +
+			"`<api_id>/<client_id>`. A grant created that way is recorded without its access flags and permissions, which are " +
+			"unknown until a refresh reads them.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The resource ID, `<api_id>/<client_id>`.",
@@ -343,15 +351,59 @@ func apiAccessDifferences(want, got apiAccessGrant) []string {
 }
 
 // apiAccessOutcome is what a write left on the server, for the caller to
-// record. stored is the grant the server confirmed. Without it, mutated
-// says the write may have changed the pair (it was sent and not definitely
-// refused), and keepIdentity that a grant may exist although none is known:
-// the pair is then recorded with no access, which claims nothing the server
-// did not confirm and lets a refresh or a delete deal with what is there.
+// record. At most one field is set; none means nothing was sent or the
+// server refused the write, so the prior state still holds.
+//
+//   - stored: the grant the server confirmed, from its response or a read.
+//   - empty: the server confirmed that it holds no grant for the pair.
+//   - unresolved: the write may have changed the pair (it was sent and not
+//     definitely refused) and nothing confirmed what the pair holds now.
+//     Nothing may be recorded as known: an update keeps the last confirmed
+//     state, a create keeps only the pair's identity, and both mark the
+//     resource so that no plan or write is trusted until a read succeeds.
 type apiAccessOutcome struct {
-	stored       *apiAccessGrant
-	mutated      bool
-	keepIdentity bool
+	stored     *apiAccessGrant
+	empty      bool
+	unresolved bool
+}
+
+// apiAccessUnresolvedKey is the private-state key of the unresolved-outcome
+// marker. Private state is saved with the resource even when the apply that set
+// it failed.
+const apiAccessUnresolvedKey = "unresolved_write"
+
+// apiAccessPrivate is the part of the framework's private provider data this
+// resource uses (the concrete type is internal to the framework).
+type apiAccessPrivate interface {
+	GetKey(ctx context.Context, key string) ([]byte, diag.Diagnostics)
+	SetKey(ctx context.Context, key string, value []byte) diag.Diagnostics
+}
+
+func apiAccessMarkUnresolved(ctx context.Context, private apiAccessPrivate, diags *diag.Diagnostics) {
+	diags.Append(private.SetKey(ctx, apiAccessUnresolvedKey, []byte(`{"unresolved":true}`))...)
+}
+
+func apiAccessClearUnresolved(ctx context.Context, private apiAccessPrivate, diags *diag.Diagnostics) {
+	if apiAccessIsUnresolved(ctx, private, diags) {
+		diags.Append(private.SetKey(ctx, apiAccessUnresolvedKey, nil)...)
+	}
+}
+
+// apiAccessIsUnresolved reports whether an earlier write left the marker.
+func apiAccessIsUnresolved(ctx context.Context, private apiAccessPrivate, diags *diag.Diagnostics) bool {
+	value, d := private.GetKey(ctx, apiAccessUnresolvedKey)
+	diags.Append(d...)
+	return len(value) > 0
+}
+
+// apiAccessRecovery names the two ways out of an unresolved outcome.
+func apiAccessRecovery(apiID, clientID string) string {
+	return fmt.Sprintf("Run terraform plan or terraform apply without -refresh=false, which reads the grant and clears this, or run terraform state rm on the resource and import it again as %s/%s.", apiID, clientID)
+}
+
+func apiAccessUnresolvedDiagnostics(diags *diag.Diagnostics, apiID, clientID string) {
+	diags.AddError("API access outcome unresolved",
+		fmt.Sprintf("An earlier write of the grant of API %s to client %s ended without a confirmed result. State shows the last grant the provider confirmed, which may not be what the server holds, so no plan or write is accepted for this resource until a read succeeds. %s", apiID, clientID, apiAccessRecovery(apiID, clientID)))
 }
 
 // apiAccessWrite checks the request against the server, writes it with the
@@ -419,7 +471,7 @@ func (r *apiClientAccessResource) apiAccessWrite(ctx context.Context, apiID, cli
 		ClientPermissionIDs:        clientIDs,
 	})
 	if err != nil {
-		if client.IsDefiniteRejection(err) {
+		if apiAccessRefused(err) {
 			diags.AddError("Error granting API access", fmt.Sprintf("Pocket ID refused the grant of API %s to client %s: %s", apiID, clientID, err))
 			return apiAccessOutcome{}
 		}
@@ -430,7 +482,7 @@ func (r *apiClientAccessResource) apiAccessWrite(ctx context.Context, apiID, cli
 	if applied.IsEmpty() {
 		diags.AddError("API access not granted",
 			fmt.Sprintf("Pocket ID stored no grant of API %s to client %s although one was requested.", apiID, clientID))
-		return apiAccessOutcome{mutated: true}
+		return apiAccessOutcome{empty: true}
 	}
 	if diffs := apiAccessDifferences(want, stored); len(diffs) > 0 || len(unnamed) > 0 {
 		if len(unnamed) > 0 {
@@ -439,28 +491,36 @@ func (r *apiClientAccessResource) apiAccessWrite(ctx context.Context, apiID, cli
 		diags.AddError("Pocket ID stored a different grant",
 			fmt.Sprintf("The grant of API %s to client %s differs from the configuration: %s. State shows the grant the server holds.", apiID, clientID, strings.Join(diffs, "; ")))
 	}
-	return apiAccessOutcome{stored: &stored, mutated: true}
+	return apiAccessOutcome{stored: &stored}
+}
+
+// apiAccessRefused reports whether a failed write was definitely refused, so
+// that it changed nothing. A result that could not be read means the write may
+// have been applied, whatever else the error says, so that is checked first.
+func apiAccessRefused(err error) bool {
+	return !errors.Is(err, client.ErrResultUnread) && client.IsDefiniteRejection(err)
 }
 
 // apiAccessRecoverUncertain handles a write that failed without a definite
-// rejection: it may have been applied. A read decides what is recorded;
-// when the read fails too, only the pair's identity is kept, with no access.
+// rejection: it may have been applied. A read decides what is recorded. When
+// the read fails too, nothing about the grant is known and the outcome is
+// unresolved.
 func (r *apiClientAccessResource) apiAccessRecoverUncertain(ctx context.Context, apiID, clientID string, cause error, diags *diag.Diagnostics) apiAccessOutcome {
 	entry, err := r.client.FindClientAPIGrant(ctx, clientID, apiID)
 	switch {
 	case err != nil:
 		diags.AddError("API access result uncertain",
-			fmt.Sprintf("Writing the grant of API %s to client %s failed (%s), and it could not be read back (%s). The pair is kept in state with no access recorded; the next refresh shows what the server holds.", apiID, clientID, cause, err))
-		return apiAccessOutcome{mutated: true, keepIdentity: true}
+			fmt.Sprintf("Writing the grant of API %s to client %s failed (%s), and it could not be read back (%s). The grant may or may not have been changed, so what the server holds is not known; no access is recorded as confirmed. %s", apiID, clientID, cause, err, apiAccessRecovery(apiID, clientID)))
+		return apiAccessOutcome{unresolved: true}
 	case entry == nil:
 		diags.AddError("Error granting API access",
 			fmt.Sprintf("Writing the grant of API %s to client %s failed (%s). A read afterwards found no grant.", apiID, clientID, cause))
-		return apiAccessOutcome{mutated: true}
+		return apiAccessOutcome{empty: true}
 	default:
 		stored, _ := apiAccessFromServer(entry.APIClientGrant, entry.API.Permissions)
 		diags.AddError("API access result uncertain",
 			fmt.Sprintf("Writing the grant of API %s to client %s failed (%s), but the client now holds a grant on the API. State shows the grant the server holds.", apiID, clientID, cause))
-		return apiAccessOutcome{stored: &stored, mutated: true}
+		return apiAccessOutcome{stored: &stored}
 	}
 }
 
@@ -489,9 +549,16 @@ func (r *apiClientAccessResource) Create(ctx context.Context, req resource.Creat
 	case outcome.stored != nil:
 		model := apiAccessModel(apiID, clientID, *outcome.stored)
 		resp.Diagnostics.Append(resp.State.Set(ctx, &model)...)
-	case outcome.keepIdentity:
+	case outcome.unresolved:
+		// A grant may exist, and nothing says what it holds. Keep the pair's
+		// identity so it can be refreshed, replaced or removed, and leave what
+		// it grants unknown (null), not false or empty. Terraform keeps the
+		// object, tainted, because the create failed.
 		model := apiAccessModel(apiID, clientID, apiAccessGrant{})
+		model.UserDelegatedAccess, model.ClientAccess = types.BoolNull(), types.BoolNull()
+		model.UserDelegatedPermissions, model.ClientPermissions = types.SetNull(types.StringType), types.SetNull(types.StringType)
 		resp.Diagnostics.Append(resp.State.Set(ctx, &model)...)
+		apiAccessMarkUnresolved(ctx, resp.Private, &resp.Diagnostics)
 	}
 }
 
@@ -527,6 +594,29 @@ func (r *apiClientAccessResource) Read(ctx context.Context, req resource.ReadReq
 	}
 	model := apiAccessModel(apiID, clientID, stored)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &model)...)
+	// The grant was read: whatever an earlier write left unresolved is settled.
+	apiAccessClearUnresolved(ctx, resp.Private, &resp.Diagnostics)
+}
+
+// ModifyPlan refuses to plan changes to a grant whose last write ended
+// without a confirmed result. State then holds the last grant the provider
+// confirmed, which may no longer be what the server holds, so a plan made from
+// it (for instance with -refresh=false) could hide access that exists or
+// overwrite a grant nobody read. A read clears the marker. A plan to destroy
+// is allowed: removing the grant never widens access.
+func (r *apiClientAccessResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() {
+		return
+	}
+	if !apiAccessIsUnresolved(ctx, req.Private, &resp.Diagnostics) {
+		return
+	}
+	var state apiClientAccessModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	apiAccessUnresolvedDiagnostics(&resp.Diagnostics, state.APIID.ValueString(), state.ClientID.ValueString())
 }
 
 func (r *apiClientAccessResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -535,22 +625,34 @@ func (r *apiClientAccessResource) Update(ctx context.Context, req resource.Updat
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	apiID, clientID := plan.APIID.ValueString(), plan.ClientID.ValueString()
+	// ModifyPlan refuses to plan an unresolved resource; a plan made before the
+	// marker was set must not write either.
+	if apiAccessIsUnresolved(ctx, req.Private, &resp.Diagnostics) {
+		apiAccessUnresolvedDiagnostics(&resp.Diagnostics, apiID, clientID)
+		return
+	}
 	want, diags := apiAccessGrantFromModel(ctx, plan)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	apiID, clientID := plan.APIID.ValueString(), plan.ClientID.ValueString()
 	outcome := r.apiAccessWrite(ctx, apiID, clientID, want, &resp.Diagnostics)
 	switch {
 	case outcome.stored != nil:
 		model := apiAccessModel(apiID, clientID, *outcome.stored)
 		resp.Diagnostics.Append(resp.State.Set(ctx, &model)...)
-	case outcome.mutated:
-		// The prior grant may no longer be what the server holds, and nothing
-		// newer was confirmed: record no access until a refresh shows it.
+	case outcome.empty:
+		// The server confirmed that the pair holds no grant.
 		model := apiAccessModel(apiID, clientID, apiAccessGrant{})
 		resp.Diagnostics.Append(resp.State.Set(ctx, &model)...)
+	case outcome.unresolved:
+		// The write may have changed the grant and nothing says what it holds
+		// now. State keeps the last confirmed grant (the framework starts it as
+		// the prior state), never an access flag or permission set that no read
+		// confirmed, and the marker keeps ordinary plans and writes away until
+		// a read succeeds.
+		apiAccessMarkUnresolved(ctx, resp.Private, &resp.Diagnostics)
 	}
 	// Otherwise nothing was sent, or the server refused the write: the prior
 	// state still holds.
@@ -563,6 +665,8 @@ func (r *apiClientAccessResource) Delete(ctx context.Context, req resource.Delet
 		return
 	}
 	apiID, clientID := state.APIID.ValueString(), state.ClientID.ValueString()
+	// An unresolved outcome does not stop a delete: removing every grant the
+	// pair holds is correct whatever the last write did, and never widens access.
 	if err := checkAPISupport(ctx, r.client); err != nil {
 		resp.Diagnostics.AddError("Cannot revoke API access", err.Error())
 		return

@@ -28,7 +28,14 @@
   `false` while listing permissions, or granting nothing, is refused at plan
   time. Import with `<api_id>/<client_id>`. Clients registered through a
   Client ID Metadata Document cannot be addressed; give them access on the
-  API with `allow_cimd_clients`.
+  API with `allow_cimd_clients`. If a write ends without a confirmed result
+  (the connection failed, or the response was lost) and the grant cannot be
+  read back either, the resource keeps the last grant it confirmed instead of
+  recording "no access", is marked unresolved, and refuses plans and writes
+  until a read succeeds: run `terraform plan` or `terraform apply` without
+  `-refresh=false`, or `terraform state rm` the resource and import it again.
+  A grant whose creation ended that way is recorded without its access flags
+  and permissions until a refresh reads them.
 - New data sources `pocketid_api` (look up one API by `id` or by its exact
   `resource` identifier) and `pocketid_apis` (every API, oldest first, read
   across all pages), each with the API's permissions keyed by permission key

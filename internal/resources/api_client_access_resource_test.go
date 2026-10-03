@@ -3,6 +3,7 @@ package resources
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -100,10 +102,7 @@ func (f *apiAccessTestPocketID) serve(w http.ResponseWriter, r *http.Request) {
 	f.calls = append(f.calls, route)
 	failure, failing := f.failures[route]
 	if failing && !failure.afterApply {
-		w.WriteHeader(failure.status)
-		if failure.status == 404 && route == "GET grants" {
-			_, _ = fmt.Fprint(w, apiAccessTestClientGone)
-		}
+		f.fail(w, failure, route)
 		return
 	}
 	var out any
@@ -156,11 +155,25 @@ func (f *apiAccessTestPocketID) serve(w http.ResponseWriter, r *http.Request) {
 		out = list
 	}
 	if failing {
-		w.WriteHeader(failure.status)
+		f.fail(w, failure, route)
 		return
 	}
 	body, _ := json.Marshal(out)
 	_, _ = w.Write(body)
+}
+
+// fail answers with the injected failure: a status, or a closed connection.
+func (f *apiAccessTestPocketID) fail(w http.ResponseWriter, failure apiTestFailure, route string) {
+	if failure.hangUp {
+		conn, _, err := w.(http.Hijacker).Hijack()
+		require.NoError(f.t, err)
+		_ = conn.Close()
+		return
+	}
+	w.WriteHeader(failure.status)
+	if failure.status == 404 && route == "GET grants" {
+		_, _ = fmt.Fprint(w, apiAccessTestClientGone)
+	}
 }
 
 func apiAccessTestSchema(t *testing.T) resource.SchemaResponse {
@@ -303,18 +316,17 @@ func TestAPIClientAccessCreate_ServerStoredNothing(t *testing.T) {
 }
 
 // A write that failed without a definite answer is settled by a read: what
-// the server holds is recorded, nothing when it holds nothing, and only the
-// pair, with no access, when the read fails too. A refused write records
-// nothing and reads nothing.
+// the server holds is recorded, and nothing when it holds nothing. A refused
+// write records nothing and reads nothing. (When the read fails too, see
+// TestAPIClientAccessCreate_UnresolvedKeepsIdentity.)
 func TestAPIClientAccessCreate_UncertainWrite(t *testing.T) {
 	for name, tc := range map[string]struct {
 		failures map[string]apiTestFailure
-		state    string // "", "granted" or "empty"
+		state    string // "" or "granted"
 		summary  string
 	}{
 		"applied then 503": {map[string]apiTestFailure{"PUT grant": {status: 503, afterApply: true}}, "granted", "API access result uncertain"},
 		"503 not applied":  {map[string]apiTestFailure{"PUT grant": {status: 503}}, "", "Error granting API access"},
-		"read back failed": {map[string]apiTestFailure{"PUT grant": {status: 503, afterApply: true}, "GET grants": {status: 403}}, "empty", "API access result uncertain"},
 		"refused":          {map[string]apiTestFailure{"PUT grant": {status: 400}}, "", "Error granting API access"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -340,39 +352,278 @@ func TestAPIClientAccessCreate_UncertainWrite(t *testing.T) {
 	}
 }
 
-// After an update whose result is not confirmed, state claims no access
-// rather than the grant that was there before.
-func TestAPIClientAccessUpdate_UnconfirmedRecordsNoAccess(t *testing.T) {
-	ctx := context.Background()
+// apiAccessConfig is a configuration with the access flags left unset, so
+// they follow the permissions.
+func apiAccessConfig(userKeys, clientKeys []string) apiClientAccessModel {
+	return apiClientAccessModel{
+		ID: types.StringNull(), APIID: types.StringValue(apiAccessTestAPI), ClientID: types.StringValue(apiAccessTestClient),
+		UserDelegatedAccess: types.BoolNull(), UserDelegatedPermissions: apiAccessTestSet(userKeys...),
+		ClientAccess: types.BoolNull(), ClientPermissions: apiAccessTestSet(clientKeys...),
+	}
+}
+
+// apiAccessProposed is Terraform's proposed new state: the configuration with
+// the prior state's values for what the configuration leaves unset.
+func apiAccessProposed(config apiClientAccessModel, prior *apiClientAccessModel) apiClientAccessModel {
+	proposed := config
+	if prior != nil {
+		proposed.ID = prior.ID
+		if config.UserDelegatedAccess.IsNull() {
+			proposed.UserDelegatedAccess = prior.UserDelegatedAccess
+		}
+		if config.ClientAccess.IsNull() {
+			proposed.ClientAccess = prior.ClientAccess
+		}
+	}
+	return proposed
+}
+
+// apiAccessSummary describes a recorded grant; unknown (null) values show as
+// "unknown", so they cannot be mistaken for false or empty.
+func apiAccessSummary(t *testing.T, m *apiClientAccessModel) string {
+	t.Helper()
+	if m == nil {
+		return "no state"
+	}
+	flag := func(b types.Bool) string {
+		if b.IsNull() {
+			return "unknown"
+		}
+		return fmt.Sprint(b.ValueBool())
+	}
+	keys := func(s types.Set) string {
+		if s.IsNull() {
+			return "unknown"
+		}
+		return "[" + strings.Join(apiAccessTestKeys(t, s), " ") + "]"
+	}
+	return fmt.Sprintf("user=%s%s client=%s%s", flag(m.UserDelegatedAccess), keys(m.UserDelegatedPermissions), flag(m.ClientAccess), keys(m.ClientPermissions))
+}
+
+func apiAccessHasMarker(private []byte) bool {
+	return strings.Contains(string(private), apiAccessUnresolvedKey)
+}
+
+// apiAccessStep is one plan and apply through the protocol server.
+type apiAccessStep struct {
+	plan    *tfprotov6.PlanResourceChangeResponse
+	apply   *tfprotov6.ApplyResourceChangeResponse // nil when planning failed
+	state   *apiClientAccessModel                  // nil when the new state is null
+	private []byte
+}
+
+// apiAccessRun plans the configuration against the prior state and private
+// state as Terraform would, and applies the plan when planning succeeded.
+func apiAccessRun(t *testing.T, h *apiHarness, prior *apiClientAccessModel, priorPrivate []byte, config apiClientAccessModel) apiAccessStep {
+	t.Helper()
+	const name = "pocketid_api_client_access"
+	r := &apiClientAccessResource{}
+	proposed := apiAccessProposed(config, prior)
+	priorValue := apiHarnessValue(t, r, prior)
+	configValue := apiHarnessValue(t, r, &config)
+	step := apiAccessStep{plan: h.plan(name, priorValue, configValue, apiHarnessValue(t, r, &proposed), priorPrivate)}
+	if apiHarnessErrors(step.plan.Diagnostics) != "" {
+		return step
+	}
+	step.apply = h.apply(name, priorValue, configValue, step.plan.PlannedState, step.plan.PlannedPrivate)
+	step.private = step.apply.Private
+	if state, ok := apiHarnessDecode[apiClientAccessModel](t, r, h.types[name], step.apply.NewState); ok {
+		step.state = &state
+	}
+	if apiHarnessErrors(step.apply.Diagnostics) == "" {
+		apiHarnessAssertApplied(t, h.types[name], step.plan.PlannedState, step.apply.NewState)
+	}
+	return step
+}
+
+func apiAccessMustApply(t *testing.T, h *apiHarness, prior *apiClientAccessModel, priorPrivate []byte, config apiClientAccessModel) apiAccessStep {
+	t.Helper()
+	step := apiAccessRun(t, h, prior, priorPrivate, config)
+	require.Empty(t, apiHarnessErrors(step.plan.Diagnostics))
+	require.NotNil(t, step.apply)
+	require.Empty(t, apiHarnessErrors(step.apply.Diagnostics))
+	require.NotNil(t, step.state)
+	return step
+}
+
+// apiAccessRefresh reads the resource as a refresh does.
+func apiAccessRefresh(t *testing.T, h *apiHarness, state *apiClientAccessModel, private []byte) (errs string, refreshed *apiClientAccessModel, newPrivate []byte) {
+	t.Helper()
+	resp := h.read("pocketid_api_client_access", apiHarnessValue(t, &apiClientAccessResource{}, state), private)
+	if m, ok := apiHarnessDecode[apiClientAccessModel](t, &apiClientAccessResource{}, h.types["pocketid_api_client_access"], resp.NewState); ok {
+		refreshed = &m
+	}
+	return apiHarnessErrors(resp.Diagnostics), refreshed, resp.Private
+}
+
+// A write whose outcome is uncertain and cannot be read back leaves state at
+// the last grant the provider confirmed, never at "no access", and marks the
+// resource: no plan or write is accepted until a read succeeds, and the
+// diagnostic names the way out. This drives the framework's protocol server,
+// so the plans are the ones Terraform would ask for after the failed apply.
+func TestAPIClientAccessUpdate_UnresolvedKeepsConfirmedState(t *testing.T) {
+	const prior, written = "user=true[read] client=true[write]", "user=true[read write] client=false[]"
+	for name, tc := range map[string]struct {
+		failure apiTestFailure
+		server  string // what the server holds afterwards
+	}{
+		"503 before the change is made":     {apiTestFailure{status: 503}, prior},
+		"503 after the change is made":      {apiTestFailure{status: 503, afterApply: true}, written},
+		"connection closed before the PUT":  {apiTestFailure{hangUp: true}, prior},
+		"connection closed after the PUT":   {apiTestFailure{hangUp: true, afterApply: true}, written},
+		"change made, response unreadable ": {apiTestFailure{status: 200, afterApply: true}, written},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, c := newAPIAccessTestPocketID(t)
+			h := newAPIHarness(t, c)
+			created := apiAccessMustApply(t, h, nil, nil, apiAccessConfig([]string{"read"}, []string{"write"}))
+			require.Equal(t, prior, apiAccessSummary(t, created.state))
+			require.False(t, apiAccessHasMarker(created.private))
+
+			// The update removes client access and adds a user permission; the
+			// PUT's outcome is unknown and the read-back fails as well.
+			f.failures["PUT grant"] = tc.failure
+			f.failures["GET grants"] = apiTestFailure{status: 403}
+			update := apiAccessConfig([]string{"read", "write"}, nil)
+			failed := apiAccessRun(t, h, created.state, created.private, update)
+			require.Empty(t, apiHarnessErrors(failed.plan.Diagnostics))
+			require.NotNil(t, failed.apply)
+			assert.Contains(t, apiHarnessErrors(failed.apply.Diagnostics), "API access result uncertain")
+			assert.Contains(t, apiHarnessErrors(failed.apply.Diagnostics), "state rm")
+			require.NotNil(t, failed.state)
+			assert.Equal(t, prior, apiAccessSummary(t, failed.state), "state keeps the last confirmed grant")
+			assert.Equal(t, created.state.ID, failed.state.ID)
+			assert.True(t, apiAccessHasMarker(failed.private), "the unresolved outcome is saved with the resource")
+
+			// A plan that does not refresh, for the same or for unchanged
+			// configuration, is refused: it would be made from state that may be
+			// stale.
+			for label, config := range map[string]apiClientAccessModel{"same change": update, "unchanged": apiAccessConfig([]string{"read"}, []string{"write"})} {
+				again := apiAccessRun(t, h, failed.state, failed.private, config)
+				errs := apiHarnessErrors(again.plan.Diagnostics)
+				assert.Contains(t, errs, "API access outcome unresolved", label)
+				assert.Contains(t, errs, "without -refresh=false", label)
+				assert.Contains(t, errs, "state rm", label)
+				assert.Contains(t, errs, apiAccessTestAPI+"/"+apiAccessTestClient, label)
+				assert.Nil(t, again.apply, label)
+			}
+
+			// Nor does a write from a plan made earlier go through.
+			before := len(f.routes())
+			stale := h.apply("pocketid_api_client_access",
+				apiHarnessValue(t, &apiClientAccessResource{}, failed.state), apiHarnessValue(t, &apiClientAccessResource{}, &update),
+				failed.plan.PlannedState, failed.private)
+			assert.Contains(t, apiHarnessErrors(stale.Diagnostics), "API access outcome unresolved")
+			assert.Equal(t, before, len(f.routes()), "no request was sent")
+
+			// A refresh that fails leaves the marker; one that succeeds shows
+			// what the server holds and clears it.
+			errs, _, private := apiAccessRefresh(t, h, failed.state, failed.private)
+			assert.NotEmpty(t, errs)
+			assert.True(t, apiAccessHasMarker(private))
+			delete(f.failures, "GET grants")
+			errs, refreshed, private := apiAccessRefresh(t, h, failed.state, failed.private)
+			require.Empty(t, errs)
+			require.NotNil(t, refreshed)
+			assert.Equal(t, tc.server, apiAccessSummary(t, refreshed))
+			assert.False(t, apiAccessHasMarker(private))
+
+			// Planning works again, and applying the configuration converges.
+			delete(f.failures, "PUT grant")
+			done := apiAccessMustApply(t, h, refreshed, private, update)
+			assert.Equal(t, written, apiAccessSummary(t, done.state))
+			assert.False(t, apiAccessHasMarker(done.private))
+		})
+	}
+}
+
+// Only a definite refusal is final; an unread result is never one, even when
+// the error also carries a client-error status.
+func TestAPIClientAccessRefused(t *testing.T) {
+	refusal := &client.HTTPError{StatusCode: 400}
+	assert.True(t, apiAccessRefused(refusal))
+	assert.True(t, apiAccessRefused(fmt.Errorf("wrapped: %w", refusal)))
+	assert.False(t, apiAccessRefused(&client.HTTPError{StatusCode: 503}))
+	assert.False(t, apiAccessRefused(&client.HTTPError{StatusCode: 408}))
+	assert.False(t, apiAccessRefused(fmt.Errorf("%w: %w", client.ErrResultUnread, refusal)))
+	assert.False(t, apiAccessRefused(fmt.Errorf("%w: %w", refusal, client.ErrResultUnread)))
+	assert.False(t, apiAccessRefused(client.ErrResultUnread))
+	assert.False(t, apiAccessRefused(errors.New("connection reset")))
+}
+
+// A destroy is never held back by an unresolved outcome: removing the grant
+// cannot widen access.
+func TestAPIClientAccessDelete_UnresolvedOutcome(t *testing.T) {
 	f, c := newAPIAccessTestPocketID(t)
-	_, prior := apiAccessTestCreate(t, c, apiAccessTestPlan(true, []string{"read"}, true, []string{"write"}))
-	require.NotNil(t, prior)
+	h := newAPIHarness(t, c)
+	created := apiAccessMustApply(t, h, nil, nil, apiAccessConfig([]string{"read"}, nil))
 	f.failures["PUT grant"] = apiTestFailure{status: 503}
 	f.failures["GET grants"] = apiTestFailure{status: 403}
+	failed := apiAccessRun(t, h, created.state, created.private, apiAccessConfig([]string{"read", "write"}, nil))
+	require.True(t, apiAccessHasMarker(failed.private))
+	f.failures = map[string]apiTestFailure{}
 
-	sr := apiAccessTestSchema(t)
-	plan := apiAccessTestPlan(true, []string{"read", "write"}, false, nil)
-	plan.ID = prior.ID
-	p := tfsdk.Plan{Schema: sr.Schema}
-	require.False(t, p.Set(ctx, &plan).HasError())
-	s := tfsdk.State{Schema: sr.Schema}
-	require.False(t, s.Set(ctx, prior).HasError())
-	resp := resource.UpdateResponse{State: tfsdk.State{Schema: sr.Schema, Raw: s.Raw.Copy()}}
-	(&apiClientAccessResource{client: c}).Update(ctx, resource.UpdateRequest{Plan: p, State: s}, &resp)
-	require.True(t, resp.Diagnostics.HasError())
-	var state apiClientAccessModel
-	require.False(t, resp.State.Get(ctx, &state).HasError())
-	assert.False(t, state.UserDelegatedAccess.ValueBool())
-	assert.False(t, state.ClientAccess.ValueBool())
-	assert.Empty(t, apiAccessTestKeys(t, state.ClientPermissions))
+	r := &apiClientAccessResource{}
+	priorValue := apiHarnessValue(t, r, failed.state)
+	null := apiHarnessValue(t, r, (*apiClientAccessModel)(nil))
+	plan := h.plan("pocketid_api_client_access", priorValue, null, null, failed.private)
+	require.Empty(t, apiHarnessErrors(plan.Diagnostics))
+	destroyed := h.apply("pocketid_api_client_access", priorValue, null, plan.PlannedState, plan.PlannedPrivate)
+	require.Empty(t, apiHarnessErrors(destroyed.Diagnostics))
+	assert.Contains(t, f.routes(), "DELETE grant")
+	assert.Nil(t, f.grant)
+}
 
-	// A refused update keeps the prior state, which is still true.
-	f.failures = map[string]apiTestFailure{"PUT grant": {status: 400}}
-	resp = resource.UpdateResponse{State: tfsdk.State{Schema: sr.Schema, Raw: s.Raw.Copy()}}
-	(&apiClientAccessResource{client: c}).Update(ctx, resource.UpdateRequest{Plan: p, State: s}, &resp)
-	require.True(t, resp.Diagnostics.HasError())
-	require.False(t, resp.State.Get(ctx, &state).HasError())
-	assert.Equal(t, []string{"write"}, apiAccessTestKeys(t, state.ClientPermissions))
+// A create whose outcome is uncertain and cannot be read back keeps the
+// pair's identity, so it can be refreshed, replaced or removed, without
+// recording what it grants: access flags and permissions are unknown (null),
+// not false or empty.
+func TestAPIClientAccessCreate_UnresolvedKeepsIdentity(t *testing.T) {
+	for name, tc := range map[string]struct {
+		failure   apiTestFailure
+		committed bool
+	}{
+		"503 before the change is made":    {apiTestFailure{status: 503}, false},
+		"503 after the change is made":     {apiTestFailure{status: 503, afterApply: true}, true},
+		"connection closed before the PUT": {apiTestFailure{hangUp: true}, false},
+		"connection closed after the PUT":  {apiTestFailure{hangUp: true, afterApply: true}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, c := newAPIAccessTestPocketID(t)
+			h := newAPIHarness(t, c)
+			f.failures["PUT grant"] = tc.failure
+			f.failures["GET grants"] = apiTestFailure{status: 403}
+			config := apiAccessConfig([]string{"read"}, nil)
+			failed := apiAccessRun(t, h, nil, nil, config)
+			require.Empty(t, apiHarnessErrors(failed.plan.Diagnostics))
+			assert.Contains(t, apiHarnessErrors(failed.apply.Diagnostics), "API access result uncertain")
+			assert.Contains(t, apiHarnessErrors(failed.apply.Diagnostics), "state rm")
+			require.NotNil(t, failed.state, "the pair's identity is kept")
+			assert.Equal(t, apiAccessTestAPI+"/"+apiAccessTestClient, failed.state.ID.ValueString())
+			assert.True(t, failed.state.UserDelegatedAccess.IsNull() && failed.state.ClientAccess.IsNull(), "access is not recorded as false")
+			assert.True(t, failed.state.UserDelegatedPermissions.IsNull() && failed.state.ClientPermissions.IsNull(), "permissions are not recorded as empty")
+			assert.True(t, apiAccessHasMarker(failed.private))
+
+			// Terraform keeps the object tainted and plans its replacement from
+			// nothing, which is not held back.
+			replace := apiAccessRun(t, h, nil, nil, config)
+			assert.Empty(t, apiHarnessErrors(replace.plan.Diagnostics))
+
+			errs, _, private := apiAccessRefresh(t, h, failed.state, failed.private)
+			assert.NotEmpty(t, errs)
+			assert.True(t, apiAccessHasMarker(private))
+			delete(f.failures, "GET grants")
+			errs, refreshed, private := apiAccessRefresh(t, h, failed.state, failed.private)
+			require.Empty(t, errs)
+			if tc.committed {
+				require.NotNil(t, refreshed)
+				assert.Equal(t, "user=true[read] client=false[]", apiAccessSummary(t, refreshed))
+				assert.False(t, apiAccessHasMarker(private))
+			} else {
+				assert.Nil(t, refreshed, "the server holds no grant, so the pair leaves state")
+			}
+		})
+	}
 }
 
 // Read names permission IDs by key and drops the pair only when the

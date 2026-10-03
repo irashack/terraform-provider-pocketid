@@ -8,6 +8,7 @@ description: |-
   This resource owns exactly one (API, client) pair and writes it with Pocket ID's per-pair endpoints, so it never touches the client's grants on other APIs or other clients' grants on this API. Do not manage the same pair with two resources.
   Before writing, the provider checks that every permission key exists on the API and that a client given client access is not public (Pocket ID silently drops both). After writing, it compares what the server stored with the configuration and fails, naming the difference, instead of recording access the server did not confirm.
   Refer to the API as pocketid_api.<name>.id so the API's permission changes are applied first. Removing a permission from the API deletes its grants; if it was the client's last permission of that kind, Pocket ID also removes that kind of access, and the next plan shows it. Deleting the API or the client removes the grant.
+  If a write ends without a confirmed result (the connection failed, or the response was lost or unreadable) and the grant cannot be read back either, the provider does not guess: state keeps the last grant it confirmed, the resource is marked unresolved, and plans and writes for it are refused until a read succeeds. Run terraform plan or terraform apply without -refresh=false to read it, or terraform state rm the resource and import it again as <api_id>/<client_id>. A grant created that way is recorded without its access flags and permissions, which are unknown until a refresh reads them.
 ---
 
 # pocketid_api_client_access (Resource)
@@ -21,6 +22,8 @@ This resource owns exactly one (API, client) pair and writes it with Pocket ID's
 Before writing, the provider checks that every permission key exists on the API and that a client given client access is not public (Pocket ID silently drops both). After writing, it compares what the server stored with the configuration and fails, naming the difference, instead of recording access the server did not confirm.
 
 Refer to the API as `pocketid_api.<name>.id` so the API's permission changes are applied first. Removing a permission from the API deletes its grants; if it was the client's last permission of that kind, Pocket ID also removes that kind of access, and the next plan shows it. Deleting the API or the client removes the grant.
+
+If a write ends without a confirmed result (the connection failed, or the response was lost or unreadable) and the grant cannot be read back either, the provider does not guess: state keeps the last grant it confirmed, the resource is marked unresolved, and plans and writes for it are refused until a read succeeds. Run `terraform plan` or `terraform apply` without `-refresh=false` to read it, or `terraform state rm` the resource and import it again as `<api_id>/<client_id>`. A grant created that way is recorded without its access flags and permissions, which are unknown until a refresh reads them.
 
 ## Example Usage
 

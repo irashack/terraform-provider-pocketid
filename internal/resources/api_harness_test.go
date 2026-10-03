@@ -2,6 +2,7 @@ package resources
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -134,6 +135,44 @@ func (h *apiHarness) apply(typeName string, prior, config tftypes.Value, planned
 	})
 	require.NoError(h.t, err)
 	return resp
+}
+
+// read runs ReadResource (a refresh) on a state with its private state.
+func (h *apiHarness) read(typeName string, current tftypes.Value, private []byte) *tfprotov6.ReadResourceResponse {
+	h.t.Helper()
+	resp, err := h.server.ReadResource(context.Background(), &tfprotov6.ReadResourceRequest{
+		TypeName:     typeName,
+		CurrentState: h.dynamic(typeName, current),
+		Private:      private,
+	})
+	require.NoError(h.t, err)
+	return resp
+}
+
+// apiHarnessAssertApplied checks what Terraform enforces after an apply
+// without errors: every value the plan knew is what the apply returned.
+func apiHarnessAssertApplied(t *testing.T, typ tftypes.Type, planned, applied *tfprotov6.DynamicValue) {
+	t.Helper()
+	plannedValue, err := planned.Unmarshal(typ)
+	require.NoError(t, err)
+	appliedValue, err := applied.Unmarshal(typ)
+	require.NoError(t, err)
+	require.NoError(t, tftypes.Walk(plannedValue, func(p *tftypes.AttributePath, v tftypes.Value) (bool, error) {
+		if !v.IsKnown() {
+			return false, nil
+		}
+		if v.Type().Is(tftypes.Object{}) || v.Type().Is(tftypes.Map{}) {
+			return true, nil
+		}
+		got, _, err := tftypes.WalkAttributePath(appliedValue, p)
+		if err != nil {
+			return false, fmt.Errorf("%s: planned but missing after apply", p)
+		}
+		if !v.Equal(got.(tftypes.Value)) {
+			return false, fmt.Errorf("%s: planned %s, applied %s", p, v, got)
+		}
+		return false, nil
+	}))
 }
 
 // apiHarnessErrors joins the error diagnostics of a protocol response.

@@ -15,7 +15,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -27,10 +26,12 @@ const apiTestNotFound = `{"error":"API not found","code":"not_found","details":{
 
 // apiTestFailure makes the fake answer one route with status. With
 // afterApply the change is made first, as when a response is lost after
-// the server committed.
+// the server committed. With hangUp (the grant fake only) the connection is
+// closed without any response instead, a transport failure.
 type apiTestFailure struct {
 	status     int
 	afterApply bool
+	hangUp     bool
 }
 
 // apiTestPocketID is an in-memory Pocket ID that follows the server's API
@@ -695,26 +696,7 @@ func apiPlanAndApply(t *testing.T, h *apiHarness, prior *apiResourceModel, confi
 	require.Empty(t, apiHarnessErrors(result.Diagnostics))
 	applied, ok := apiHarnessDecode[apiResourceModel](t, r, typ, result.NewState)
 	require.True(t, ok)
-	plannedValue, err := plan.PlannedState.Unmarshal(typ)
-	require.NoError(t, err)
-	appliedValue, err := result.NewState.Unmarshal(typ)
-	require.NoError(t, err)
-	require.NoError(t, tftypes.Walk(plannedValue, func(p *tftypes.AttributePath, v tftypes.Value) (bool, error) {
-		if !v.IsKnown() {
-			return false, nil
-		}
-		if v.Type().Is(tftypes.Object{}) || v.Type().Is(tftypes.Map{}) {
-			return true, nil
-		}
-		got, _, err := tftypes.WalkAttributePath(appliedValue, p)
-		if err != nil {
-			return false, fmt.Errorf("%s: planned but missing after apply", p)
-		}
-		if !v.Equal(got.(tftypes.Value)) {
-			return false, fmt.Errorf("%s: planned %s, applied %s", p, v, got)
-		}
-		return false, nil
-	}))
+	apiHarnessAssertApplied(t, typ, plan.PlannedState, result.NewState)
 	return planned, applied
 }
 
