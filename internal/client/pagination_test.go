@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -266,5 +268,59 @@ func TestListAll_RefusesTheReflectedKey(t *testing.T) {
 			assert.Contains(t, err.Error(), "contains the API key this provider sent", name)
 			assert.NotContains(t, err.Error(), key, name)
 		}
+	}
+}
+
+// Pocket ID accepts any static API key of 16 or more characters, so a key
+// can be all digits. A server that echoes the key it received as a number in
+// the pagination block gets nothing into the error, whichever field it uses
+// and whichever check fails; the errors keep their classification. A number
+// too large for its field fails decoding with a fixed error that quotes
+// nothing either.
+func TestListAll_PaginationErrorsQuoteNothing(t *testing.T) {
+	const (
+		key      = "4815162342108151"         // 16 digits: fits an int
+		longKey  = "481516234210815162342108" // 24 digits: too large for an int
+		oneGroup = `[{"id":"` + validUUID + `"}]`
+	)
+	cases := map[string]struct {
+		key, block string // KEY in block becomes the key the server received
+		want       string
+		wantIs     error
+	}{
+		"currentPage":           {key: key, block: `{"totalPages":1,"totalItems":1,"currentPage":KEY,"itemsPerPage":100}`, want: "refusing to guess"},
+		"totalPages":            {key: key, block: `{"totalPages":KEY,"totalItems":1,"currentPage":1,"itemsPerPage":100}`, want: "refusing to guess"},
+		"totalItems":            {key: key, block: `{"totalPages":1,"totalItems":KEY,"currentPage":1,"itemsPerPage":100}`, want: "changed while it was being read"},
+		"negative totalItems":   {key: key, block: `{"totalPages":1,"totalItems":-KEY,"currentPage":1,"itemsPerPage":100}`, want: "refusing to guess"},
+		"negative totalPages":   {key: key, block: `{"totalPages":-KEY,"totalItems":1,"currentPage":1,"itemsPerPage":100}`, want: "refusing to guess"},
+		"currentPage overflow":  {key: longKey, block: `{"totalPages":1,"totalItems":1,"currentPage":KEY,"itemsPerPage":100}`, wantIs: client.ErrUndecodableResponse},
+		"totalItems overflow":   {key: longKey, block: `{"totalPages":1,"totalItems":KEY,"currentPage":1,"itemsPerPage":100}`, wantIs: client.ErrUndecodableResponse},
+		"itemsPerPage overflow": {key: longKey, block: `{"totalPages":1,"totalItems":1,"currentPage":1,"itemsPerPage":KEY}`, wantIs: client.ErrUndecodableResponse},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				block := strings.ReplaceAll(tc.block, "KEY", r.Header.Get("X-API-KEY"))
+				_, _ = fmt.Fprintf(w, `{"data":%s,"pagination":%s}`, oneGroup, block)
+			}))
+			defer server.Close()
+			c, err := client.NewClient(server.URL, tc.key, false, 30)
+			require.NoError(t, err)
+
+			_, err = c.ListUserGroups(context.Background())
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), tc.key)
+			assert.NotContains(t, err.Error(), tc.key[:16], "not even in part")
+			if tc.wantIs != nil {
+				assert.ErrorIs(t, err, tc.wantIs)
+				assert.Equal(t, client.ErrUndecodableResponse.Error(), err.Error(), "the decoder's own text is dropped")
+			} else {
+				assert.Contains(t, err.Error(), tc.want)
+			}
+			assert.Positive(t, requests.Load())
+		})
 	}
 }

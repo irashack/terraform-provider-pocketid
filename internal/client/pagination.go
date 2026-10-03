@@ -61,6 +61,8 @@ func getPage[T any](ctx context.Context, c *Client, endpoint string, query url.V
 	if err != nil {
 		return nil, err
 	}
+	// decodeResponse returns a fixed error: a number too large for its field
+	// (which a server could make of a numeric API key) is not quoted.
 	var result PaginatedResponse[T]
 	if err := decodeResponse(body, &result); err != nil {
 		return nil, err
@@ -128,10 +130,14 @@ func walkPages[T any](ctx context.Context, c *Client, what, endpoint string, que
 		if err != nil {
 			return nil, err
 		}
+		// The errors below never print a number from the response: a static
+		// API key can be all digits, and a server could echo it in any field.
+		// Only this walk's own counts (the page asked for, the objects
+		// collected) are named.
 		info := resp.Pagination
 		if info.TotalPages <= 0 || info.TotalItems < 0 || info.CurrentPage != page {
-			return nil, fmt.Errorf("listing %s: page %d came back with an unusable pagination block (currentPage %d, totalPages %d, totalItems %d); refusing to guess whether the list is complete",
-				what, page, info.CurrentPage, info.TotalPages, info.TotalItems)
+			return nil, fmt.Errorf("listing %s: page %d came back with an unusable pagination block (missing, or its currentPage, totalPages or totalItems does not fit the request); refusing to guess whether the list is complete",
+				what, page)
 		}
 		for _, item := range resp.Data {
 			key := id(item)
@@ -149,7 +155,7 @@ func walkPages[T any](ctx context.Context, c *Client, what, endpoint string, que
 
 		if page >= info.TotalPages || len(resp.Data) == 0 {
 			if len(all) != info.TotalItems {
-				return nil, fmt.Errorf("listing %s: %w (%d collected, %d reported)", what, errListChanged, len(all), info.TotalItems)
+				return nil, fmt.Errorf("listing %s: %w (%d collected, which is not the total the server reported)", what, errListChanged, len(all))
 			}
 			return all, nil
 		}
