@@ -12,6 +12,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -80,6 +81,27 @@ func testAccImageServed(kind client.ApplicationImage, want []byte) resource.Test
 	}
 }
 
+// testAccImageContentType checks the media type Pocket ID serves at path.
+func testAccImageContentType(path, want string) resource.TestCheckFunc {
+	return func(*terraform.State) error {
+		req, err := http.NewRequest(http.MethodGet, os.Getenv("POCKETID_BASE_URL")+path, nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("X-API-KEY", os.Getenv("POCKETID_API_TOKEN"))
+		req.Header.Set("Cache-Control", "no-cache")
+		response, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("GET %s failed", path)
+		}
+		defer func() { _ = response.Body.Close() }()
+		if got := response.Header.Get("Content-Type"); got != want {
+			return fmt.Errorf("GET %s: Content-Type %q, want %q", path, got, want)
+		}
+		return nil
+	}
+}
+
 func testAccImageConfig(kind, source string) string {
 	return fmt.Sprintf(`
 resource "pocketid_application_image" "test" {
@@ -94,6 +116,7 @@ resource "pocketid_application_image" "test" {
 func TestAccResourceApplicationImage_logo(t *testing.T) {
 	resourceName := "pocketid_application_image.test"
 	source := filepath.Join(t.TempDir(), "logo.svg")
+	renamed := filepath.Join(filepath.Dir(source), "logo.png")
 	first, second, outside := testAccSVG("first-"+acctest.RandString(6)), testAccSVG("second-"+acctest.RandString(6)), testAccSVG("outside")
 	testAccWriteFile(t, source, first)
 	ctx := context.Background()
@@ -146,6 +169,17 @@ func TestAccResourceApplicationImage_logo(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr(resourceName, "sha256", testAccHash(second)),
 					testAccImageServed(client.ApplicationImageLogoDark, second),
+				),
+			},
+			{
+				// The same bytes under another extension: uploaded again,
+				// and served with the new type.
+				PreConfig: func() { testAccWriteFile(t, renamed, second) },
+				Config:    testAccImageConfig("logo_dark", renamed),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceName, "sha256", testAccHash(second)),
+					testAccImageServed(client.ApplicationImageLogoDark, second),
+					testAccImageContentType("/api/application-images/logo?light=false&default=false", "image/png"),
 				),
 			},
 			{

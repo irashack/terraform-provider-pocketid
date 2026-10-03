@@ -110,7 +110,8 @@ func (r *applicationImageResource) Schema(_ context.Context, _ resource.SchemaRe
 			},
 			"source": schema.StringAttribute{
 				MarkdownDescription: fmt.Sprintf("Path of the image file to upload. Pocket ID takes the image's type from the file "+
-					"name's extension (any case), which must be one `kind` accepts. At most %d bytes; a JPEG or PNG image may have at "+
+					"name's extension (any case), which must be one `kind` accepts. The file is uploaded again when its content "+
+					"or its extension changes; another path to the same content with the same extension is not uploaded. At most %d bytes; a JPEG or PNG image may have at "+
 					"most %d pixels.", client.MaxApplicationImageBytes, applicationImageMaxPixels),
 				Required:   true,
 				Validators: []validator.String{stringvalidator.LengthAtLeast(1)},
@@ -371,6 +372,17 @@ func (r *applicationImageResource) Read(ctx context.Context, req resource.ReadRe
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
+// applicationImageNeedsUpload reports whether an update must upload source:
+// when its content changed (or is not known yet), and when its file type did.
+// Pocket ID stores and serves an image with the type of the uploaded file
+// name, so the same bytes under another extension are a different image.
+func applicationImageNeedsUpload(plan, state *applicationImageModel) bool {
+	if plan.SHA256.IsUnknown() || !plan.SHA256.Equal(state.SHA256) {
+		return true
+	}
+	return applicationImageExtension(plan.Source.ValueString()) != applicationImageExtension(state.Source.ValueString())
+}
+
 func (r *applicationImageResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var plan, state applicationImageModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -378,7 +390,7 @@ func (r *applicationImageResource) Update(ctx context.Context, req resource.Upda
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if plan.SHA256.IsUnknown() || !plan.SHA256.Equal(state.SHA256) {
+	if applicationImageNeedsUpload(&plan, &state) {
 		uploaded, served := r.upload(ctx, &plan, &resp.Diagnostics)
 		if !uploaded {
 			return

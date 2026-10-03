@@ -53,7 +53,7 @@ resource "pocketid_application_image" "email_logo" {
   - `logo_light`: avif, gif, heic, ico, jpeg, jpg, png, svg, webp; destroying the resource removes it.
 
   Destroying a removable image does not bring back Pocket ID's bundled one: without an uploaded image, the logos fall back to Pocket ID's built-in logo (2.15.0 and later), and the background and default profile picture are absent. Changing `kind` replaces the resource.
-- `source` (String) Path of the image file to upload. Pocket ID takes the image's type from the file name's extension (any case), which must be one `kind` accepts. At most 10485760 bytes; a JPEG or PNG image may have at most 16000000 pixels.
+- `source` (String) Path of the image file to upload. Pocket ID takes the image's type from the file name's extension (any case), which must be one `kind` accepts. The file is uploaded again when its content or its extension changes; another path to the same content with the same extension is not uploaded. At most 10485760 bytes; a JPEG or PNG image may have at most 16000000 pixels.
 
 ### Read-Only
 

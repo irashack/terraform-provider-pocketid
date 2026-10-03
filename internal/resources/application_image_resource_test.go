@@ -371,3 +371,20 @@ func TestApplicationImageReadsBypassCaches(t *testing.T) {
 	}
 	assert.Len(t, gets, 3)
 }
+
+// The same bytes under another extension are uploaded again (Pocket ID
+// serves the type of the uploaded file name); another path or letter case
+// with the same content and type is not.
+func TestApplicationImageNeedsUpload(t *testing.T) {
+	hash := types.StringValue(sha256Hex([]byte("bytes")))
+	model := func(source string, sha types.String) *applicationImageModel {
+		return &applicationImageModel{Kind: types.StringValue("background"), Source: types.StringValue(source), SHA256: sha}
+	}
+	state := model("images/background.png", hash)
+	assert.True(t, applicationImageNeedsUpload(model("images/background.jpg", hash), state), "extension changed")
+	assert.False(t, applicationImageNeedsUpload(model("other/BACKGROUND.PNG", hash), state), "same content and type")
+	assert.True(t, applicationImageNeedsUpload(model("images/background.png", types.StringValue("other")), state), "content changed")
+	assert.True(t, applicationImageNeedsUpload(model("images/background.png", types.StringUnknown()), state), "content not known yet")
+	imported := &applicationImageModel{Kind: types.StringValue("background"), Source: types.StringNull(), SHA256: hash}
+	assert.True(t, applicationImageNeedsUpload(model("images/background.png", hash), imported), "imported: type not known")
+}
