@@ -43,3 +43,17 @@
   `pocketid_group_membership`, with `pocketid_user.groups`, or with a second
   `pocketid_group_members`. On Pocket ID 2.17, removing a member can sign that
   user out of group-restricted clients that have a back-channel logout URL.
+- New resource `pocketid_user_profile_picture`: sets a user's profile picture
+  from a local file (`source`), with a computed `sha256` of the file so that a
+  changed file uploads again. Destroying it restores the default picture.
+  Pocket ID turns the file into a 300x300 PNG, accepts PNG, JPEG, GIF, WebP and
+  BMP, and from 2.15 refuses more than 16 million pixels; the provider refuses
+  such an image at plan time on every version, and a missing, empty, non-image
+  or over-10-MiB file too. The server reports no hash of the stored picture,
+  so the provider records the digest of the picture the server serves right
+  after the upload (`stored_sha256`) and compares it on every refresh: a
+  picture replaced or removed outside Terraform shows as a change, and the next
+  apply uploads the file again. What it cannot detect: that the stored picture
+  came from this file rather than an identical image. After a Pocket ID upgrade
+  that changes how pictures are scaled, one extra upload can be planned. There
+  is no import.
