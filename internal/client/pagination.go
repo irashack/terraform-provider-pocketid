@@ -30,13 +30,15 @@ const (
 	maxPageSize = 100
 	// maxListPages bounds one walk: 100,000 objects at the largest page size.
 	maxListPages = 1000
-	// listAttempts is how many times a walk is repeated when the list changed
-	// under it (an object appeared twice, or the count did not add up).
+	// listAttempts is how many times a walk is made when its pages did not
+	// add up (an object appeared twice, or the count differed from the
+	// server's total).
 	listAttempts = 2
 )
 
-// errListChanged reports a walk whose pages did not add up, which happens when
-// objects are created or deleted between page requests.
+// errListChanged reports a walk whose pages did not add up: an object
+// appeared on two pages, or the number collected differed from the server's
+// total. Objects created or deleted between page requests cause it.
 var errListChanged = errors.New("the list changed while it was being read")
 
 // getPage fetches one page of a paginated list endpoint. query is copied, not
@@ -67,17 +69,28 @@ func getPage[T any](ctx context.Context, c *Client, endpoint string, query url.V
 	return &result, nil
 }
 
-// listAll returns every object of a paginated list endpoint (GET only), in
-// the order the server sorts them. query holds the endpoint's own filters
-// (for example "search"); listAll adds the page, the page size (Pocket ID's
-// maximum) and a sort by creation time, so pages do not shift between
-// requests. id returns an object's ID, used to detect overlap between pages.
+// listAll returns the objects of a paginated list endpoint (GET only) by
+// requesting every page the server reports, in the order the server sorts
+// them. query holds the endpoint's own filters (for example "search");
+// listAll adds the page, the page size (Pocket ID's maximum) and a sort by
+// creation time, so that updates to existing objects and objects created
+// during the walk (which sort last) do not shift earlier pages. id returns an
+// object's ID. what names the objects in errors, for example "user groups".
 //
-// It fails rather than return a partial list: on a pagination block that is
-// missing, inconsistent or does not advance, on more than maxListPages pages,
-// and when the pages do not add up (an object seen twice, or a total that
-// differs from what was collected) twice in a row. what names the objects in
-// errors, for example "user groups".
+// What it guarantees:
+//   - It ends: it refuses a pagination block that is missing or inconsistent,
+//     a page number the server did not honor (a server that never advances),
+//     and more than maxListPages pages.
+//   - It never returns an object twice, and never returns fewer objects than
+//     the server's total on the last page without failing: either case reads
+//     the list once more, then is an error.
+//
+// What it does not guarantee: Pocket ID's lists are offset pages with no
+// snapshot or cursor, so a walk is not atomic. When an object on an earlier
+// page is deleted while the walk is in progress, later objects move back one
+// place and the one at a page boundary is not seen; if another object is
+// created at the same time, the counts still agree and the list is returned
+// without it. A list read while nothing else changes it is complete.
 func listAll[T any](ctx context.Context, c *Client, what, endpoint string, query url.Values, id func(T) string) ([]T, error) {
 	sorted := url.Values{}
 	for key, list := range query {

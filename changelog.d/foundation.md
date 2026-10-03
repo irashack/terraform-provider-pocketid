@@ -24,10 +24,12 @@
   mistyped import ID, is refused with an error before a request is sent.
   Clients created from a Client ID Metadata Document (whose ID is a URL)
   cannot be looked up by ID.
-- Lists of users, groups and clients are read in creation order. If the list
-  changes while it is being read (objects created or deleted at the same
-  time), it is read once more and then reported as an error instead of
-  returning a list with gaps.
+- Lists of users, groups and clients are read in creation order. If the pages
+  do not add up because the list changed while it was being read (an object
+  appears twice, or the count differs from Pocket ID's total), it is read once
+  more and then reported as an error. Pocket ID offers no snapshot of a list,
+  so a list read while objects are being deleted and created at the same
+  moment can still miss one; read it again when nothing else is changing it.
 - A one-time access token response that contains no token is now reported as
   an error saying a token may have been created, instead of storing an empty
   token.
