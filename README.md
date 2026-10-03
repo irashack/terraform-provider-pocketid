@@ -182,8 +182,9 @@ The compatibility rule above is checked by the native upgrade scripts: they star
 from state written by a published release, take it over with the new build and
 require an empty plan. They are `tests/native/upgrade.py`, `client_upgrade.py`,
 `upgrade_users_groups.py` and `application_config.py`; [TESTING.md](TESTING.md)
-says what each proves and how to run it. [INSTALL.md](INSTALL.md) covers installing
-a new version into your mirror.
+says what each proves and how to run it. [INSTALL.md](INSTALL.md#upgrade-from-24104-to-300)
+has the step-by-step upgrade, the breaking changes to look for and the
+`-refresh=false` caveats.
 
 ## Development and maintenance
 
