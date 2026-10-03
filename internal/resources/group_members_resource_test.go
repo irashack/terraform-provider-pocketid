@@ -344,7 +344,7 @@ func TestGroupMembersResource_SchemaAndMetadata(t *testing.T) {
 		assert.Contains(t, sch.MarkdownDescription, claim)
 	}
 	// Refresh and destroy observe snapshots.
-	for _, claim := range []string{"observe a snapshot", "neither proves that the earlier request has finished", "not later commits", "nothing managing it"} {
+	for _, claim := range []string{"the initial snapshot", "once more to verify", "none of them proves that the earlier request has finished", "not later commits", "nothing managing it"} {
 		assert.Contains(t, sch.MarkdownDescription, claim)
 	}
 	// Replacement order is part of the contract.

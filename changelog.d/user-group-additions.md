@@ -130,10 +130,12 @@
   the new resource's state still lists. A failed update does not taint the
   resource: the corrected configuration applies in place. The description and
   the errors that keep a resource after a failed create or update say so.
-- `pocketid_group_members`: a refresh and a destroy each read the group once,
-  so they observe a snapshot and neither proves that an earlier request with an
-  unknown outcome has finished. The cleanup covers the grants visible at those
-  reads, not later commits: a request still pending when a refresh clears
+- `pocketid_group_members`: a refresh reads the group once, and a destroy reads
+  it before it writes (the initial snapshot) and, if its own removal request
+  fails without showing whether it was applied, once more to verify. None of
+  those reads proves that an earlier request with an unknown outcome has
+  finished. The cleanup covers the grants visible at those reads, not later
+  commits: a request still pending when a refresh clears
   `unresolved_user_ids`, or when destroy finishes, can be applied afterwards and
   leave the user it adds in the group with nothing managing it.
 - `pocketid_group_members`: the promise that destroy keeps members it did not
