@@ -710,3 +710,52 @@ func TestRetryArithmeticInFakeTime(t *testing.T) {
 		})
 	}
 }
+
+// The transport logs the method, the route without its query and the
+// status: never the base URL (which can carry credentials) or a query value
+// (a search term is configured text). A transport error names the route too.
+func TestTransportLogsNoURLOrQuery(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"data":[],"pagination":{"totalPages":1,"totalItems":0,"currentPage":1,"itemsPerPage":100}}`)
+	}))
+	defer server.Close()
+	base := strings.Replace(server.URL, "http://", "http://user:basic-auth-secret@", 1)
+	var logs bytes.Buffer
+	ctx := tflogtest.RootLogger(context.Background(), &logs)
+	c, err := NewClient(base, "fixture-token", false, 5)
+	require.NoError(t, err)
+	_, err = c.ListAllUsers(ctx, "configured search term")
+	require.NoError(t, err)
+	require.NotEmpty(t, logs.String())
+	assert.Contains(t, logs.String(), "/api/users")
+	for _, hidden := range []string{"basic-auth-secret", "configured", "search", server.Listener.Addr().String()} {
+		assert.NotContains(t, logs.String(), hidden)
+	}
+
+	// No response at all: the error and its log name only the route.
+	logs.Reset()
+	c, err = NewClient("http://user:basic-auth-secret@127.0.0.1:1", "fixture-token", false, 5)
+	require.NoError(t, err)
+	c.retry = retryPolicy{maxAttempts: 1, backoffUnit: time.Millisecond, maxWait: time.Second, maxElapsed: 5 * time.Second}
+	_, err = c.ListUsersPage(ctx, 0, 0, "configured search term")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "/api/users")
+	for _, hidden := range []string{"basic-auth-secret", "configured", "127.0.0.1"} {
+		assert.NotContains(t, err.Error(), hidden)
+		assert.NotContains(t, logs.String(), hidden)
+	}
+
+	// A base URL that does not form a URL with the route is reported
+	// without quoting it.
+	c, err = NewClient("http://user:basic-auth-secret@[::1", "fixture-token", false, 5)
+	require.NoError(t, err)
+	_, err = c.GetCurrentUser(ctx)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "basic-auth-secret")
+
+	// A base URL that carries the key is refused outright.
+	_, err = NewClient("https://pocketid.example.com/fixture-token", " fixture-token", false, 5)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "fixture-token")
+}

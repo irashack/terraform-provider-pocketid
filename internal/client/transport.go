@@ -39,6 +39,9 @@ func NewClient(baseURL, apiToken string, skipTLSVerify bool, timeout int64) (*Cl
 	if apiToken == "" {
 		return nil, fmt.Errorf("API token is required")
 	}
+	if TextCarriesKey(baseURL, apiToken) {
+		return nil, errBaseURLCarriesKey
+	}
 	apiToken = normalizeAPIKey(apiToken)
 	if apiToken == "" {
 		return nil, fmt.Errorf("API token is required: the configured value is only spaces and tabs")
@@ -67,6 +70,26 @@ func NewClient(baseURL, apiToken string, skipTLSVerify bool, timeout int64) (*Cl
 		},
 		retry: retry,
 	}, nil
+}
+
+// errBaseURLCarriesKey refuses a base URL that contains the API key (the two
+// values swapped or joined by mistake): it would go into every request line
+// and could reach a log or an error. The URL is never shown.
+var errBaseURLCarriesKey = errors.New("the base URL contains the API key; check that the base URL and the API token are not swapped or joined (the value is not shown)")
+
+// TextCarriesKey reports whether text contains apiToken in the form the
+// server receives it (normalizeAPIKey). The provider checks its configured
+// base URL with it before anything uses the URL.
+func TextCarriesKey(text, apiToken string) bool {
+	key := normalizeAPIKey(apiToken)
+	return key != "" && strings.Contains(text, key)
+}
+
+// routeOf returns an endpoint without its query: the path, whose segments
+// checkEndpoint has checked, is what logs and transport errors show.
+func routeOf(endpoint string) string {
+	route, _, _ := strings.Cut(endpoint, "?")
+	return route
 }
 
 // normalizeAPIKey returns the API key as it goes out on the wire. Go writes
@@ -329,12 +352,14 @@ func (c *Client) sendWith(ctx context.Context, method, endpoint, contentType str
 	logged["Accept"] = accept
 	logged["X-API-KEY"] = "[REDACTED]"
 
-	// Log request details (excluding sensitive headers)
+	// Log the request's method and route, never the base URL (it can carry
+	// credentials) or the query (its values are search terms and other
+	// configured text), and no sensitive header.
+	route := routeOf(endpoint)
 	tflog.Debug(ctx, "Pocket-ID API Request", map[string]interface{}{
-		"method":   method,
-		"url":      url,
-		"endpoint": endpoint,
-		"headers":  logged,
+		"method":  method,
+		"route":   route,
+		"headers": logged,
 	})
 
 	resp, err := c.httpClient.Do(req)
@@ -342,10 +367,9 @@ func (c *Client) sendWith(ctx context.Context, method, endpoint, contentType str
 		// The transport's error can quote what the server sent (a malformed
 		// status line or header), so only a fixed description of it is
 		// logged or returned.
-		failure := newTransportError(method, endpoint, "no response", err)
+		failure := newTransportError(method, route, "no response", err)
 		tflog.Error(ctx, "HTTP Request Failed", map[string]interface{}{
 			"error": failure.Error(),
-			"url":   url,
 		})
 		return nil, "", failure
 	}
@@ -365,9 +389,10 @@ func (c *Client) sendWith(ctx context.Context, method, endpoint, contentType str
 	// reason phrase, which can be anything (even the key it received), so
 	// only the code and its standard text are logged.
 	tflog.Debug(ctx, "Pocket-ID API Response", map[string]interface{}{
+		"method":      method,
+		"route":       route,
 		"status_code": resp.StatusCode,
 		"status":      http.StatusText(resp.StatusCode),
-		"url":         url,
 	})
 
 	if ok {
@@ -603,7 +628,9 @@ func newRequest(ctx context.Context, method, url string, payload []byte) (*http.
 	}
 	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
+		// Go's error quotes the whole URL, the base URL included, which can
+		// carry credentials: only a fixed description is returned.
+		return nil, errors.New("error creating request: the base URL and the route do not form a valid URL")
 	}
 	if len(payload) > 0 {
 		req.ContentLength = int64(len(payload))

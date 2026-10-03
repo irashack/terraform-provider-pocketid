@@ -165,7 +165,16 @@ func (p *pocketIDProvider) Configure(ctx context.Context, req provider.Configure
 		timeout = config.Timeout.ValueInt64()
 	}
 
-	ctx = tflog.SetField(ctx, "pocketid_base_url", baseURL)
+	// The base URL is never logged: it can carry credentials, or the API key
+	// by mistake, which is refused here before anything uses the URL.
+	if client.TextCarriesKey(baseURL, apiToken) {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("base_url"),
+			"Invalid Pocket-ID Base URL",
+			"The base URL contains the API key. Check that the base URL and the API token are not swapped or joined. The value is not shown.",
+		)
+		return
+	}
 	ctx = tflog.SetField(ctx, "pocketid_skip_tls_verify", skipTLSVerify)
 	ctx = tflog.SetField(ctx, "pocketid_timeout", timeout)
 	ctx = tflog.MaskFieldValuesWithFieldKeys(ctx, "pocketid_api_token")
