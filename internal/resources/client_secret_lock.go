@@ -40,6 +40,16 @@ var (
 // deadlock between resources; callers must not take it twice for the same
 // client (it is not reentrant). Changes made outside this process (another
 // apply, Pocket ID's interface) are not covered.
+//
+// Take it once, at the top of the resource operation (Create, Update or
+// Delete), never inside a helper that such an operation also calls. Nothing
+// in the client package takes it, so a holder may run any sequence of client
+// calls (generate, create, list, revoke) and helpers such as
+// pocketid_client's revokeServerCreatedSecret under it. A new client's ID,
+// the key, exists only once the POST that creates it has returned, so
+// pocketid_client takes the lock right after that POST and may release it
+// after its last secret step, before the group update and any failedCreate
+// cleanup, which touch no secret.
 func lockClientSecrets(clientID string) func() {
 	clientSecretLocksMu.Lock()
 	lock, ok := clientSecretLocks[clientID]

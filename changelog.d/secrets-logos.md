@@ -10,6 +10,13 @@
   ID's maximum of 20 secrets, and lists the client's secrets (IDs and
   prefixes) if a create fails with an uncertain outcome. Import with
   `<client_id>/<secret_id>`; the value of an imported secret is unknown.
+  Answers from Pocket ID that do not fit its format (a secret list with an
+  entry that has no usable ID, a prefix that is not the first four characters
+  of the value) are refused with a fixed message rather than stored, printed
+  or taken as proof that a secret is gone. This includes the secret list that
+  `pocketid_client` reads when it revokes the secret Pocket ID 2.17 creates
+  with a client: if revoking that secret cannot be confirmed because the list
+  is unusable, the client's own secret is not generated beside it.
 - New resource `pocketid_client_logo`: the light or dark logo of an OIDC
   client (`variant = "light"` or `"dark"`), uploaded from a local file
   (`source`, with a computed `sha256`). The file is uploaded again when its
