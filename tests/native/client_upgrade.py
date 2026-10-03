@@ -10,7 +10,9 @@ client_id, launch_url, prevent_destroy, and allowed_user_groups written as a
 sorted list; plus a public restricted client and one with a generated ID.
 The new build then takes over the same state, with the same configuration:
 
-- the refreshed plan is empty (list-to-set, client_id, the new computed
+- the refreshed plan is empty, also for a public client that kept the
+  secret stored while it was confidential, whose secret is never revoked
+  (list-to-set, client_id, the new computed
   attributes, generate_secret and client_secret_id are filled without a
   planned change), and refresh records client_secret_id for the secret the
   released provider stored;
@@ -46,7 +48,7 @@ released = re.fullmatch(r"terraform-provider-pocketid_(\d+\.\d+\.\d+)_(\w+_\w+)\
 assert released, "released archive must keep its published file name"
 released_version, platform = released.groups()
 suffix = uuid.uuid4().hex[:10]
-HOMELAB, PUBLIC = "upg-home-" + suffix, "upg-pub-" + suffix
+HOMELAB, PUBLIC, FLIPPED = "upg-home-" + suffix, "upg-pub-" + suffix, "upg-flip-" + suffix
 
 
 def api(path):
@@ -84,7 +86,7 @@ with tempfile.TemporaryDirectory(prefix="pocketid-client-upgrade-") as tmp:
         if key.startswith("TF_LOG") or key in ("TF_PLUGIN_CACHE_DIR", "TF_REATTACH_PROVIDERS"):
             del env[key]
 
-    def config(version, home_extra="", public_groups="[pocketid_group.a.id]", home_id=HOMELAB, protect=True, generated_name="Generated ID"):
+    def config(version, home_extra="", public_groups="[pocketid_group.a.id]", home_id=HOMELAB, protect=True, generated_name="Generated ID", flipped_public=True):
         lifecycle = "\n lifecycle {\n  prevent_destroy = true\n }\n" if protect else ""
         groups = "" if public_groups is None else " allowed_user_groups = " + public_groups + "\n"
         (work / "main.tf").write_text('''terraform {
@@ -120,6 +122,12 @@ resource "pocketid_client" "public" {
  is_public = true
  pkce_enabled = true
 ''' + groups + lifecycle + '''}
+resource "pocketid_client" "flipped" {
+ name = "Made public under 2.4"
+ client_id = "''' + FLIPPED + '''"
+ callback_urls = ["https://flipped.example.invalid/callback"]
+ is_public = ''' + ("true" if flipped_public else "false") + '''
+''' + lifecycle + '''}
 resource "pocketid_client" "generated" {
  name = "''' + generated_name + '''"
  callback_urls = ["https://generated.example.invalid/callback"]
@@ -141,11 +149,18 @@ resource "pocketid_client" "generated" {
         client = api("/api/oidc/clients/" + cid)
         return client["isGroupRestricted"], sorted(g["id"] for g in client.get("allowedUserGroups") or [])
 
-    # 1. The released provider creates the clients.
-    config(released_version)
+    # 1. The released provider creates the clients, then makes one
+    #    confidential client public: it kept the stored secret in state, and
+    #    Pocket ID kept the secret.
+    config(released_version, flipped_public=False)
     run("init", "-input=false")
     run("apply", "-auto-approve", "-input=false")
+    config(released_version)
+    run("apply", "-auto-approve", "-input=false")
     old = state()
+    assert old["flipped"]["is_public"] is True and old["flipped"]["client_secret"], "the released provider did not keep the secret"
+    flipped_secrets = sorted(s["id"] for s in secrets_of(FLIPPED))
+    assert flipped_secrets, "Pocket ID did not keep the public client's secret"
     secret = old["home"]["client_secret"]
     assert secret and "client_secret_id" not in old["home"] and "is_group_restricted" not in old["home"], "released state is not the expected shape"
     assert isinstance(old["home"]["allowed_user_groups"], list) and len(old["home"]["allowed_user_groups"]) == 2
@@ -161,6 +176,7 @@ resource "pocketid_client" "generated" {
     config(DEV_VERSION)
     run("init", "-upgrade", "-input=false")
     run("plan", "-detailed-exitcode", "-input=false")
+    assert sorted(s["id"] for s in secrets_of(FLIPPED)) == flipped_secrets
 
     # 3. Without a refresh, while state still predates client_secret_id and
     #    is_group_restricted, generate_secret = false revokes exactly the
@@ -174,6 +190,8 @@ resource "pocketid_client" "generated" {
     current = state()
     assert current["home"]["id"] == HOMELAB and current["home"]["client_secret"] is None and current["home"]["client_secret_id"] is None
     assert api("/api/oidc/clients/" + HOMELAB).get("launchURL") == "https://home.example.invalid"
+    assert sorted(s["id"] for s in secrets_of(FLIPPED)) == flipped_secrets, "the public client's secret was revoked"
+    assert current["flipped"]["client_secret"] == old["flipped"]["client_secret"]
     run("plan", "-detailed-exitcode", "-input=false")
 
     # 4. generate_secret = true generates a new secret in place; refresh
@@ -218,6 +236,7 @@ resource "pocketid_client" "generated" {
     refused = run("plan", "-input=false", ok=(1,))
     assert b"prevent_destroy" in refused.stderr, "the plan failed for another reason than prevent_destroy"
 
+    assert sorted(s["id"] for s in secrets_of(FLIPPED)) == flipped_secrets, "the public client's secret was revoked"
     config(DEV_VERSION, public_groups=None, protect=False, generated_name="Generated ID renamed")
     run("destroy", "-auto-approve", "-input=false")
-    print("PASS native " + tool + " client upgrade " + released_version + " -> new build: empty refreshed plan; unrefreshed generate_secret=false revoked only the stored secret by prefix; regenerated in place; groups removal kept the restriction; an unrefreshed update refused to open a client restricted outside Terraform; client_id change refused by prevent_destroy; secrets after the released create: " + str(len(released_secrets)))
+    print("PASS native " + tool + " client upgrade " + released_version + " -> new build: empty refreshed plan; a public client's kept secret left alone; unrefreshed generate_secret=false revoked only the stored secret by prefix; regenerated in place; groups removal kept the restriction; an unrefreshed update refused to open a client restricted outside Terraform; client_id change refused by prevent_destroy; secrets after the released create: " + str(len(released_secrets)))

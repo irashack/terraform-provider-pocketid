@@ -317,7 +317,7 @@ func TestClientUpdateRestrictionNotApplied(t *testing.T) {
 	assert.False(t, after.GenerateSecret.ValueBool(), "the next plan generates the secret")
 	next := after
 	next.GenerateSecret = types.BoolValue(true)
-	action, _ := planSecretAction(after, next)
+	action, _ := planSecretAction(after, next, false)
 	assert.Equal(t, secretGenerate, action)
 }
 

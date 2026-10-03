@@ -65,7 +65,10 @@
   that becomes confidential gets a secret generated (with
   `generate_secret = true`), and one that becomes public has the secret this
   resource generated revoked. Before, a client made confidential had no
-  usable secret.
+  usable secret. A client that was made public with an earlier provider
+  version, and still has the secret that version kept in state, keeps it:
+  upgrading plans no change. A revocation that fails is retried by the next
+  apply.
 - `pocketid_client` refuses to import or manage a client registered from a
   Client ID Metadata Document (`client_type = "cimd"`, whose ID is the
   document's URL): that document owns its registration. The

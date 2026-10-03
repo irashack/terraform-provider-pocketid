@@ -788,7 +788,14 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 	}
 	// A secret to revoke is identified before anything changes: if it cannot
 	// be told apart from the client's other secrets, nothing is changed.
-	secretAction, _ := planSecretAction(state, plan)
+	pendingRevocation := privateFlag(ctx, req.Private, pendingRevocationKey)
+	secretAction, _ := planSecretAction(state, plan, pendingRevocation)
+	// recordPending keeps or clears a revocation still due, for the next plan.
+	recordPending := func(pending bool) {
+		if resp.Private != nil {
+			resp.Diagnostics.Append(setPrivateFlag(ctx, resp.Private, pendingRevocationKey, pending)...)
+		}
+	}
 	var revokeID string
 	revokeGone := false
 	if secretAction == secretRevoke {
@@ -873,14 +880,16 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 		plan.AllowedUserGroups = groupSetFromServer(clientResp.AllowedUserGroups, plan.AllowedUserGroups)
 		resp.Diagnostics.AddAttributeError(path.Root("is_group_restricted"), "Group restriction not applied",
 			fmt.Sprintf("Pocket ID reports is_group_restricted = %t with %d allowed groups after the update, which is not what was planned. State records what it reports; no further change was made.", clientResp.IsGroupRestricted, len(clientResp.AllowedUserGroups)))
-		skipSecretAction(secretAction, state, &plan)
+		recordPending(skipSecretAction(secretAction, state, &plan))
 		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 		return
 	}
 
-	if err := r.applySecretAction(ctx, secretAction, revokeID, revokeGone, state, &plan); err != nil {
+	pending, err := r.applySecretAction(ctx, secretAction, revokeID, revokeGone, state, &plan)
+	if err != nil {
 		resp.Diagnostics.AddError("Error updating the client secret", "The client itself was updated. "+err.Error())
 	}
+	recordPending(pending)
 
 	// Set the state
 	diags = resp.State.Set(ctx, &plan)
@@ -904,7 +913,7 @@ func (r *clientResource) ModifyPlan(ctx context.Context, req resource.ModifyPlan
 		return
 	}
 
-	planSecretAttributes(state, &plan)
+	planSecretAttributes(state, &plan, privateFlag(ctx, req.Private, pendingRevocationKey))
 	planGroupRestriction(state, config, &plan)
 	planPkceSupported(state, &plan)
 	warnOnOpening(state, plan, &resp.Diagnostics)

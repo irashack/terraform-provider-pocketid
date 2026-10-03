@@ -52,6 +52,20 @@ func generatesSecret(generate types.Bool) bool {
 	return generate.IsNull() || generate.ValueBool()
 }
 
+// pendingRevocationKey is the private-state key that marks a secret this
+// resource generated and must still revoke: a revocation that failed or was
+// not reached after the client itself changed. It keeps the revocation in
+// the next plan even when the state no longer shows a transition (the client
+// is already public, or generate_secret is already false).
+const pendingRevocationKey = "pending_secret_revocation"
+
+// holdingMode reports whether a model asks this resource to hold a secret: a
+// confidential client with generate_secret true (null in state written before
+// the attribute existed).
+func holdingMode(m clientResourceModel) bool {
+	return generatesSecret(m.GenerateSecret) && !m.IsPublic.ValueBool()
+}
+
 // planSecretAction decides what an update does about the resource's secret,
 // and false when the plan does not determine it yet.
 //
@@ -61,16 +75,24 @@ func generatesSecret(generate types.Bool) bool {
 // A confidential client in state without a secret (imported, or created
 // before Terraform managed it) keeps having none, so upgrading the provider
 // or importing a client never creates a secret behind the user's back.
-// Leaving it (generate_secret to false, or is_public to true) revokes the
-// secret this resource generated.
-func planSecretAction(state, plan clientResourceModel) (secretAction, bool) {
+//
+// A secret in state is revoked only on a requested transition out of it (the
+// client becomes public, or generate_secret turns false) or when a revocation
+// is pending from an earlier apply. A public client that kept the secret
+// earlier providers stored when it was confidential is left alone: nothing in
+// the plan asks for a change.
+func planSecretAction(state, plan clientResourceModel, pending bool) (secretAction, bool) {
 	if plan.GenerateSecret.IsUnknown() || plan.IsPublic.IsUnknown() {
 		return secretKeep, false
 	}
 	holds := holdsSecret(state)
-	if !plan.GenerateSecret.ValueBool() || plan.IsPublic.ValueBool() {
-		if holds {
+	if !holdingMode(plan) {
+		leaving := holdingMode(state) || (generatesSecret(state.GenerateSecret) && !plan.GenerateSecret.ValueBool())
+		switch {
+		case holds && (leaving || pending):
 			return secretRevoke, true
+		case holds:
+			return secretKeep, true
 		}
 		return secretNone, true
 	}
@@ -239,10 +261,10 @@ func (r *clientResource) generateHeldSecret(ctx context.Context, model *clientRe
 // applySecretAction carries out an update's secret action after the client
 // itself was written, and records the outcome in model. prior is the state
 // before the update. When it fails, model holds what is confirmed: a secret
-// whose revocation was not confirmed stays in state, and after a failed
-// generation generate_secret is recorded as false so that the next plan shows
-// the generation again.
-func (r *clientResource) applySecretAction(ctx context.Context, action secretAction, revokeID string, gone bool, prior clientResourceModel, model *clientResourceModel) error {
+// whose revocation was not confirmed stays in state and pending reports that
+// its revocation is still due; after a failed generation generate_secret is
+// recorded as false so that the next plan shows the generation again.
+func (r *clientResource) applySecretAction(ctx context.Context, action secretAction, revokeID string, gone bool, prior clientResourceModel, model *clientResourceModel) (pending bool, err error) {
 	switch action {
 	case secretKeep:
 		model.ClientSecret, model.ClientSecretID = prior.ClientSecret, prior.ClientSecretID
@@ -252,7 +274,7 @@ func (r *clientResource) applySecretAction(ctx context.Context, action secretAct
 			if err := r.revokeClientSecret(ctx, model.ID.ValueString(), revokeID); err != nil {
 				model.ClientSecret = prior.ClientSecret
 				model.ClientSecretID = types.StringValue(revokeID)
-				return err
+				return true, err
 			}
 		}
 		model.ClientSecret, model.ClientSecretID = types.StringNull(), types.StringNull()
@@ -260,17 +282,17 @@ func (r *clientResource) applySecretAction(ctx context.Context, action secretAct
 		tflog.Debug(ctx, "Generating the client secret this resource holds", map[string]any{"id": model.ID.ValueString()})
 		if err := r.generateHeldSecret(ctx, model); err != nil {
 			model.GenerateSecret = types.BoolValue(false)
-			return err
+			return false, err
 		}
 	default:
 		model.ClientSecret, model.ClientSecretID = types.StringNull(), types.StringNull()
 	}
-	return nil
+	return false, nil
 }
 
 // planSecretAttributes plans client_secret and client_secret_id. state is nil
 // when the client is being created.
-func planSecretAttributes(state *clientResourceModel, plan *clientResourceModel) {
+func planSecretAttributes(state *clientResourceModel, plan *clientResourceModel, pending bool) {
 	unknown := func() { plan.ClientSecret, plan.ClientSecretID = types.StringUnknown(), types.StringUnknown() }
 	null := func() { plan.ClientSecret, plan.ClientSecretID = types.StringNull(), types.StringNull() }
 	if state == nil {
@@ -284,7 +306,7 @@ func planSecretAttributes(state *clientResourceModel, plan *clientResourceModel)
 		}
 		return
 	}
-	action, known := planSecretAction(*state, *plan)
+	action, known := planSecretAction(*state, *plan, pending)
 	switch {
 	case !known || action == secretGenerate:
 		unknown()
@@ -296,11 +318,14 @@ func planSecretAttributes(state *clientResourceModel, plan *clientResourceModel)
 }
 
 // skipSecretAction records in model that an update stopped before its secret
-// action, so that the next plan shows the action again: the secret in state
-// stays, and a generation still to do leaves generate_secret false.
-func skipSecretAction(action secretAction, prior clientResourceModel, model *clientResourceModel) {
+// action, possibly after changing the client, so that the next plan shows
+// the action again: the secret in state stays, a generation still to do
+// leaves generate_secret false, and a revocation still to do is reported as
+// pending.
+func skipSecretAction(action secretAction, prior clientResourceModel, model *clientResourceModel) (pending bool) {
 	model.ClientSecret, model.ClientSecretID = prior.ClientSecret, prior.ClientSecretID
 	if action == secretGenerate {
 		model.GenerateSecret = types.BoolValue(false)
 	}
+	return action == secretRevoke
 }

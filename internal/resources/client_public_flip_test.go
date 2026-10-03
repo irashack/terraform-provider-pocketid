@@ -15,22 +15,32 @@ func TestPlanSecretActionOnPublicChange(t *testing.T) {
 	public.ClientSecret, public.ClientSecretID = types.StringNull(), types.StringNull()
 	publicNoGenerate := public
 	publicNoGenerate.GenerateSecret = types.BoolValue(false)
+	// A public client that kept the secret a 2.4.x provider stored while it
+	// was confidential (that provider and the server both kept it).
+	legacyPublic := managedModel()
+	legacyPublic.IsPublic, legacyPublic.GenerateSecret, legacyPublic.ClientSecretID = types.BoolValue(true), types.BoolNull(), types.StringNull()
 	for name, tc := range map[string]struct {
 		prior       clientResourceModel
 		public, gen bool
+		pending     bool
 		want        secretAction
 	}{
-		"becomes public: revoke":                     {confidential, true, true, secretRevoke},
-		"becomes confidential: generate":             {public, false, true, secretGenerate},
-		"becomes confidential without a secret":      {public, false, false, secretNone},
-		"becomes confidential and generate turns on": {publicNoGenerate, false, true, secretGenerate},
-		"stays public":                               {public, true, true, secretNone},
-		"stays confidential":                         {confidential, false, true, secretKeep},
+		"legacy public client keeps its secret":      {legacyPublic, true, true, false, secretKeep},
+		"legacy public client, generate_secret off":  {legacyPublic, true, false, false, secretRevoke},
+		"legacy public client becomes confidential":  {legacyPublic, false, true, false, secretKeep},
+		"public with a pending revocation":           {legacyPublic, true, true, true, secretRevoke},
+		"pending revocation, back to confidential":   {legacyPublic, false, true, true, secretKeep},
+		"becomes public: revoke":                     {confidential, true, true, false, secretRevoke},
+		"becomes confidential: generate":             {public, false, true, false, secretGenerate},
+		"becomes confidential without a secret":      {public, false, false, false, secretNone},
+		"becomes confidential and generate turns on": {publicNoGenerate, false, true, false, secretGenerate},
+		"stays public":       {public, true, true, false, secretNone},
+		"stays confidential": {confidential, false, true, false, secretKeep},
 	} {
 		t.Run(name, func(t *testing.T) {
 			planned := tc.prior
 			planned.IsPublic, planned.GenerateSecret = types.BoolValue(tc.public), types.BoolValue(tc.gen)
-			action, known := planSecretAction(tc.prior, planned)
+			action, known := planSecretAction(tc.prior, planned, tc.pending)
 			require.True(t, known)
 			assert.Equal(t, tc.want, action)
 		})
@@ -77,19 +87,31 @@ func TestClientUpdatePublicFlip(t *testing.T) {
 	t.Run("confidential to public, revoke unconfirmed", func(t *testing.T) {
 		fake := managedFake(t, "2.17.0")
 		fake.fail["DELETE /api/oidc/clients/c1/secrets/00000000-0000-4000-8000-000000000000"] = 503
-		r := &clientResource{client: fake.start()}
+		h := newProtoHarness(t, fake.start())
 		prior := managedModel()
-		planned := prior
-		planned.IsPublic = types.BoolValue(true)
-		planned.ClientSecret, planned.ClientSecretID = types.StringNull(), types.StringNull()
-		resp, after := runUpdate(t, r, prior, planned, configOf(planned))
-		require.True(t, resp.Diagnostics.HasError())
-		requireNoSecret(t, resp.Diagnostics)
-		assert.True(t, after.IsPublic.ValueBool(), "the client update is recorded")
-		assert.Equal(t, prior.ClientSecret, after.ClientSecret, "the unconfirmed secret stays in state")
-		// The next plan revokes it again.
-		action, _ := planSecretAction(after, after)
-		assert.Equal(t, secretRevoke, action)
+		config := homelabConfig()
+		config.IsPublic = types.BoolValue(true)
+		p := h.plan(&prior, config, nil)
+		require.Empty(t, p.errors)
+		result := h.apply(&prior, config, p)
+		require.Contains(t, result.errors, "may still be valid")
+		assert.True(t, result.model.IsPublic.ValueBool(), "the client update is recorded")
+		assert.Equal(t, prior.ClientSecret, result.model.ClientSecret, "the unconfirmed secret stays in state")
+
+		// The revocation stays due through a refresh, and the next plan
+		// with the unchanged configuration revokes it.
+		refreshed := h.read(*result.model, result.private)
+		require.Empty(t, refreshed.errors)
+		next := h.plan(refreshed.model, config, refreshed.private)
+		require.Empty(t, next.errors)
+		assert.True(t, next.model.ClientSecret.IsNull(), "the next plan revokes the secret")
+		delete(fake.fail, "DELETE /api/oidc/clients/c1/secrets/00000000-0000-4000-8000-000000000000")
+		done := h.apply(refreshed.model, config, next)
+		require.Empty(t, done.errors)
+		assert.Empty(t, fake.secrets)
+		assert.True(t, done.model.ClientSecret.IsNull())
+		again := h.plan(done.model, config, done.private)
+		assert.True(t, h.emptyPlan(*done.model, again), "nothing left to do")
 	})
 	t.Run("public to confidential, generation refused", func(t *testing.T) {
 		fake := managedFake(t, "2.17.0")
@@ -109,7 +131,60 @@ func TestClientUpdatePublicFlip(t *testing.T) {
 		// The next plan (configuration still generate_secret = true) generates.
 		next := after
 		next.GenerateSecret = types.BoolValue(true)
-		action, _ := planSecretAction(after, next)
+		action, _ := planSecretAction(after, next, false)
 		assert.Equal(t, secretGenerate, action)
 	})
+}
+
+// A public client whose 2.4.x state kept the secret stored while it was
+// confidential (that provider and Pocket ID both kept it) upgrades to an
+// empty plan, and an unrelated update leaves the secret alone.
+func TestClientLegacyPublicClientKeepsItsSecret(t *testing.T) {
+	fake := managedFake(t, "2.17.0")
+	fake.client.IsPublic = true
+	h := newProtoHarness(t, fake.start())
+	legacy := managedModel()
+	legacy.IsPublic, legacy.GenerateSecret, legacy.ClientSecretID = types.BoolValue(true), types.BoolNull(), types.StringNull()
+	config := homelabConfig()
+	config.IsPublic = types.BoolValue(true)
+
+	refreshed := h.read(legacy, nil)
+	require.Empty(t, refreshed.errors)
+	p := h.plan(refreshed.model, config, refreshed.private)
+	require.Empty(t, p.errors)
+	assert.True(t, h.emptyPlan(*refreshed.model, p), "the upgrade plans no change")
+
+	config.Name = types.StringValue("renamed")
+	p = h.plan(refreshed.model, config, refreshed.private)
+	result := h.apply(refreshed.model, config, p)
+	require.Empty(t, result.errors)
+	assert.Len(t, fake.secrets, 1, "the secret is not revoked")
+	assert.Equal(t, refreshed.model.ClientSecret, result.model.ClientSecret)
+	assert.NotContains(t, fake.mutations(), "DELETE /api/oidc/clients/c1/secrets/00000000-0000-4000-8000-000000000000")
+}
+
+// generate_secret true to false whose revocation fails stays due: state
+// already records generate_secret = false, and the next plan still revokes.
+func TestClientPendingRevocationAfterGenerateSecretOff(t *testing.T) {
+	const held = "DELETE /api/oidc/clients/c1/secrets/00000000-0000-4000-8000-000000000000"
+	fake := managedFake(t, "2.17.0")
+	fake.fail[held] = 503
+	h := newProtoHarness(t, fake.start())
+	prior := managedModel()
+	config := homelabConfig()
+	config.GenerateSecret = types.BoolValue(false)
+	result := h.apply(&prior, config, h.plan(&prior, config, nil))
+	require.NotEmpty(t, result.errors)
+	assert.False(t, result.model.GenerateSecret.ValueBool())
+	assert.False(t, result.model.ClientSecret.IsNull())
+
+	refreshed := h.read(*result.model, result.private)
+	next := h.plan(refreshed.model, config, refreshed.private)
+	require.Empty(t, next.errors)
+	assert.True(t, next.model.ClientSecret.IsNull(), "the revocation is planned again")
+	delete(fake.fail, held)
+	done := h.apply(refreshed.model, config, next)
+	require.Empty(t, done.errors)
+	assert.Empty(t, fake.secrets)
+	assert.Equal(t, 2, fake.called(held), "one attempt per apply")
 }
