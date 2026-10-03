@@ -481,6 +481,13 @@ func (r *clientResource) Read(ctx context.Context, req resource.ReadRequest, res
 
 	// Get client from API
 	clientResp, err := r.client.GetClient(ctx, state.ID.ValueString())
+	if client.IsOIDCClientNotFound(err) {
+		// Only Pocket ID's own not-found error for the client proves it is
+		// gone; the next plan then creates it again.
+		tflog.Warn(ctx, "OIDC client no longer exists; removing it from state", map[string]any{"id": state.ID.ValueString()})
+		resp.State.RemoveResource(ctx)
+		return
+	}
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error reading OIDC client",
@@ -796,6 +803,10 @@ func (r *clientResource) Delete(ctx context.Context, req resource.DeleteRequest,
 
 	// Delete the client
 	err := r.client.DeleteClient(ctx, state.ID.ValueString())
+	if client.IsOIDCClientNotFound(err) {
+		tflog.Debug(ctx, "OIDC client was already deleted", map[string]any{"id": state.ID.ValueString()})
+		return
+	}
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error deleting OIDC client",

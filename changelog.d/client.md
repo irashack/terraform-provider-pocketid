@@ -13,3 +13,8 @@
   state it is filled in on the next refresh when the secret can be identified
   by the four-character prefix Pocket ID keeps of it; this is not a planned
   change.
+- A `pocketid_client` deleted outside Terraform is now removed from state on
+  refresh, and the next apply creates it again; destroying one that is already
+  gone succeeds. Before, every plan failed. Only Pocket ID's own "OIDC client
+  not found" answer counts: any other 404 (a wrong base URL, a proxy page)
+  remains an error.
