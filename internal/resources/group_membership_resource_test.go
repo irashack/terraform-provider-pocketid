@@ -220,9 +220,10 @@ func TestGroupMembershipResource_CreatePreservesOtherMembers(t *testing.T) {
 	plan := tfsdk.Plan{
 		Schema: sch,
 		Raw: tftypes.NewValue(sch.Type().TerraformType(ctx), map[string]tftypes.Value{
-			"id":       tftypes.NewValue(tftypes.String, nil),
-			"group_id": tftypes.NewValue(tftypes.String, "group-new"),
-			"user_id":  tftypes.NewValue(tftypes.String, "44444444-4444-4444-8444-444444444444"),
+			"id":                  tftypes.NewValue(tftypes.String, nil),
+			"group_id":            tftypes.NewValue(tftypes.String, "group-new"),
+			"user_id":             tftypes.NewValue(tftypes.String, "44444444-4444-4444-8444-444444444444"),
+			"unresolved_creation": tftypes.NewValue(tftypes.Bool, nil),
 		}),
 	}
 
@@ -252,9 +253,10 @@ func TestGroupMembershipResource_DeletePreservesOtherMembers(t *testing.T) {
 	state := tfsdk.State{
 		Schema: sch,
 		Raw: tftypes.NewValue(sch.Type().TerraformType(ctx), map[string]tftypes.Value{
-			"id":       tftypes.NewValue(tftypes.String, "group-remove/44444444-4444-4444-8444-444444444444"),
-			"group_id": tftypes.NewValue(tftypes.String, "group-remove"),
-			"user_id":  tftypes.NewValue(tftypes.String, "44444444-4444-4444-8444-444444444444"),
+			"id":                  tftypes.NewValue(tftypes.String, "group-remove/44444444-4444-4444-8444-444444444444"),
+			"group_id":            tftypes.NewValue(tftypes.String, "group-remove"),
+			"user_id":             tftypes.NewValue(tftypes.String, "44444444-4444-4444-8444-444444444444"),
+			"unresolved_creation": tftypes.NewValue(tftypes.Bool, nil),
 		}),
 	}
 
@@ -276,9 +278,10 @@ func TestGroupMembershipResource_DeleteUserAlreadyGone(t *testing.T) {
 	state := tfsdk.State{
 		Schema: sch,
 		Raw: tftypes.NewValue(sch.Type().TerraformType(ctx), map[string]tftypes.Value{
-			"id":       tftypes.NewValue(tftypes.String, "group-remove/44444444-4444-4444-8444-444444444444"),
-			"group_id": tftypes.NewValue(tftypes.String, "group-remove"),
-			"user_id":  tftypes.NewValue(tftypes.String, "44444444-4444-4444-8444-444444444444"),
+			"id":                  tftypes.NewValue(tftypes.String, "group-remove/44444444-4444-4444-8444-444444444444"),
+			"group_id":            tftypes.NewValue(tftypes.String, "group-remove"),
+			"user_id":             tftypes.NewValue(tftypes.String, "44444444-4444-4444-8444-444444444444"),
+			"unresolved_creation": tftypes.NewValue(tftypes.Bool, nil),
 		}),
 	}
 
@@ -299,9 +302,10 @@ func TestGroupMembershipResource_ReadRemovesFromStateWhenMembershipGone(t *testi
 	state := tfsdk.State{
 		Schema: sch,
 		Raw: tftypes.NewValue(sch.Type().TerraformType(ctx), map[string]tftypes.Value{
-			"id":       tftypes.NewValue(tftypes.String, "group-gone/44444444-4444-4444-8444-444444444444"),
-			"group_id": tftypes.NewValue(tftypes.String, "group-gone"),
-			"user_id":  tftypes.NewValue(tftypes.String, "44444444-4444-4444-8444-444444444444"),
+			"id":                  tftypes.NewValue(tftypes.String, "group-gone/44444444-4444-4444-8444-444444444444"),
+			"group_id":            tftypes.NewValue(tftypes.String, "group-gone"),
+			"user_id":             tftypes.NewValue(tftypes.String, "44444444-4444-4444-8444-444444444444"),
+			"unresolved_creation": tftypes.NewValue(tftypes.Bool, nil),
 		}),
 	}
 
@@ -321,9 +325,10 @@ func TestGroupMembershipResource_ReadRemovesFromStateWhenUserGone(t *testing.T) 
 	state := tfsdk.State{
 		Schema: sch,
 		Raw: tftypes.NewValue(sch.Type().TerraformType(ctx), map[string]tftypes.Value{
-			"id":       tftypes.NewValue(tftypes.String, "group-1/44444444-4444-4444-8444-444444444444"),
-			"group_id": tftypes.NewValue(tftypes.String, "group-1"),
-			"user_id":  tftypes.NewValue(tftypes.String, "44444444-4444-4444-8444-444444444444"),
+			"id":                  tftypes.NewValue(tftypes.String, "group-1/44444444-4444-4444-8444-444444444444"),
+			"group_id":            tftypes.NewValue(tftypes.String, "group-1"),
+			"user_id":             tftypes.NewValue(tftypes.String, "44444444-4444-4444-8444-444444444444"),
+			"unresolved_creation": tftypes.NewValue(tftypes.Bool, nil),
 		}),
 	}
 
@@ -383,9 +388,10 @@ func groupMembershipCreatePlan(ctx context.Context, sch schema.Schema, groupID, 
 	return tfsdk.Plan{
 		Schema: sch,
 		Raw: tftypes.NewValue(sch.Type().TerraformType(ctx), map[string]tftypes.Value{
-			"id":       tftypes.NewValue(tftypes.String, nil),
-			"group_id": tftypes.NewValue(tftypes.String, groupID),
-			"user_id":  tftypes.NewValue(tftypes.String, userID),
+			"id":                  tftypes.NewValue(tftypes.String, nil),
+			"group_id":            tftypes.NewValue(tftypes.String, groupID),
+			"user_id":             tftypes.NewValue(tftypes.String, userID),
+			"unresolved_creation": tftypes.NewValue(tftypes.Bool, nil),
 		}),
 	}
 }
@@ -396,9 +402,10 @@ func groupMembershipDeleteState(ctx context.Context, sch schema.Schema, groupID,
 	return tfsdk.State{
 		Schema: sch,
 		Raw: tftypes.NewValue(sch.Type().TerraformType(ctx), map[string]tftypes.Value{
-			"id":       tftypes.NewValue(tftypes.String, groupID+"/"+userID),
-			"group_id": tftypes.NewValue(tftypes.String, groupID),
-			"user_id":  tftypes.NewValue(tftypes.String, userID),
+			"id":                  tftypes.NewValue(tftypes.String, groupID+"/"+userID),
+			"group_id":            tftypes.NewValue(tftypes.String, groupID),
+			"user_id":             tftypes.NewValue(tftypes.String, userID),
+			"unresolved_creation": tftypes.NewValue(tftypes.Bool, nil),
 		}),
 	}
 }

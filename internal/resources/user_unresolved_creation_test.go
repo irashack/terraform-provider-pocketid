@@ -20,10 +20,13 @@ import (
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
 )
 
-// usersGroupsHarnessProvider serves only pocketid_user, configured with a
-// given API client, so tests drive the resource through the framework's
-// protocol server, private state included.
-type usersGroupsHarnessProvider struct{ api *client.Client }
+// usersGroupsHarnessProvider serves only the given resources, configured with
+// a given API client, so tests drive them through the framework's protocol
+// server, private state included.
+type usersGroupsHarnessProvider struct {
+	api       *client.Client
+	resources []func() resource.Resource
+}
 
 func (p *usersGroupsHarnessProvider) Metadata(_ context.Context, _ provider.MetadataRequest, resp *provider.MetadataResponse) {
 	resp.TypeName = "pocketid"
@@ -38,7 +41,7 @@ func (p *usersGroupsHarnessProvider) Configure(_ context.Context, _ provider.Con
 }
 
 func (p *usersGroupsHarnessProvider) Resources(context.Context) []func() resource.Resource {
-	return []func() resource.Resource{NewUserResource}
+	return p.resources
 }
 
 func (p *usersGroupsHarnessProvider) DataSources(context.Context) []func() datasource.DataSource {
@@ -54,7 +57,7 @@ type usersGroupsUserHarness struct {
 func newUsersGroupsUserHarness(t *testing.T, api *client.Client) *usersGroupsUserHarness {
 	t.Helper()
 	ctx := context.Background()
-	server := providerserver.NewProtocol6(&usersGroupsHarnessProvider{api: api})()
+	server := providerserver.NewProtocol6(&usersGroupsHarnessProvider{api: api, resources: []func() resource.Resource{NewUserResource}})()
 	schemas, err := server.GetProviderSchema(ctx, &tfprotov6.GetProviderSchemaRequest{})
 	require.NoError(t, err)
 	providerType := schemas.Provider.ValueType()
@@ -120,6 +123,17 @@ func configOf(planned *userResourceModel) *userResourceModel {
 	return &c
 }
 
+// usersGroupsWarnings joins the warning diagnostics.
+func usersGroupsWarnings(diags []*tfprotov6.Diagnostic) string {
+	var out []string
+	for _, d := range diags {
+		if d.Severity == tfprotov6.DiagnosticSeverityWarning {
+			out = append(out, d.Summary+": "+d.Detail)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
 // apply sends ApplyResourceChange; a nil planned model is a delete.
 func (h *usersGroupsUserHarness) apply(prior, planned *userResourceModel, private []byte) (*userResourceModel, []byte, string) {
 	h.t.Helper()
@@ -146,11 +160,18 @@ func (h *usersGroupsUserHarness) plan(prior, proposed *userResourceModel, privat
 
 func (h *usersGroupsUserHarness) read(current *userResourceModel, private []byte) (*userResourceModel, []byte, string) {
 	h.t.Helper()
+	state, private, errs, _ := h.readWithWarnings(current, private)
+	return state, private, errs
+}
+
+// readWithWarnings is read that also returns the warnings.
+func (h *usersGroupsUserHarness) readWithWarnings(current *userResourceModel, private []byte) (*userResourceModel, []byte, string, string) {
+	h.t.Helper()
 	resp, err := h.server.ReadResource(context.Background(), &tfprotov6.ReadResourceRequest{
 		TypeName: "pocketid_user", CurrentState: h.dynamic(current), Private: private,
 	})
 	require.NoError(h.t, err)
-	return h.decode(resp.NewState), resp.Private, usersGroupsErrors(resp.Diagnostics)
+	return h.decode(resp.NewState), resp.Private, usersGroupsErrors(resp.Diagnostics), usersGroupsWarnings(resp.Diagnostics)
 }
 
 // planFromNull sends PlanResourceChange for a resource that has no prior
@@ -329,11 +350,12 @@ func TestUserUnresolvedCreationUnconfirmedRead(t *testing.T) {
 	require.Zero(t, s.deletes)
 }
 
-// A recovery read that finds no user does not settle an uncertain create: a
-// proxy can give up before the server commits. Here the read comes before
-// the commit; the ID is still kept as an unresolved creation, and once the
-// create has committed the provider still refuses to delete the user.
-func TestUserUnresolvedCreationReadBeforeCommit(t *testing.T) {
+// A read that finds no user does not settle an uncertain create: a proxy can
+// give up before the server commits, and the create can land after any read.
+// Here the recovery read and then a refresh both come before the commit; the
+// resource stays in state with its markers and a warning, and once the create
+// has committed the provider still refuses to delete the user.
+func TestUserUnresolvedCreationRefreshBeforeCommit(t *testing.T) {
 	s := &fixedIDServer{version: "2.17.0", createStatus: http.StatusGatewayTimeout}
 	h := newUsersGroupsUserHarness(t, s.start(t))
 	state, private, errs := h.apply(nil, fixedIDPlanModel(), nil)
@@ -343,16 +365,45 @@ func TestUserUnresolvedCreationReadBeforeCommit(t *testing.T) {
 	require.Contains(t, string(private), userUnresolvedCreationKey)
 	require.Equal(t, 2, s.gets, "the preflight and the recovery read both found no user")
 
-	// The server's transaction commits after the recovery read.
+	// A refresh before the commit: Pocket ID's own "user not found" must not
+	// remove the resource.
+	state, private, errs, warnings := h.readWithWarnings(state, private)
+	require.Empty(t, errs)
+	require.NotNil(t, state, "the unresolved resource is kept")
+	require.True(t, state.UnresolvedCreation.ValueBool())
+	require.Equal(t, fixedUserID, state.ID.ValueString())
+	require.Contains(t, string(private), userUnresolvedCreationKey)
+	require.Contains(t, warnings, "User creation still unresolved")
+	require.Equal(t, 3, s.gets)
+	require.Contains(t, h.plan(state, nil, private), "User creation unresolved", "a destroy is still refused")
+	_, _, errs = h.apply(state, nil, private)
+	require.Contains(t, errs, "User creation unresolved", "and so is a delete")
+
+	// The server's transaction commits after the refresh. Nothing was
+	// forgotten, so the user it created is still tracked and protected.
 	s.mu.Lock()
 	s.existing = true
 	s.mu.Unlock()
-	state, private, errs = h.read(state, private)
+	state, private, errs, warnings = h.readWithWarnings(state, private)
 	require.Empty(t, errs)
+	require.Empty(t, warnings)
 	require.NotNil(t, state)
 	require.True(t, state.UnresolvedCreation.ValueBool())
 	require.Contains(t, string(private), userUnresolvedCreationKey)
 	_, _, errs = h.apply(state, nil, private)
 	require.Contains(t, errs, "User creation unresolved")
 	require.Zero(t, s.deletes)
+}
+
+// Without an unresolved creation, Pocket ID's "user not found" still removes
+// the user from state.
+func TestUserReadRemovesConfirmedMissingUser(t *testing.T) {
+	s := &fixedIDServer{version: "2.17.0"}
+	h := newUsersGroupsUserHarness(t, s.start(t))
+	state := fixedIDPlanModel()
+	state.DisplayName, state.UnresolvedCreation = types.StringValue("fixture"), types.BoolNull()
+	got, _, errs, warnings := h.readWithWarnings(state, nil)
+	require.Empty(t, errs)
+	require.Empty(t, warnings)
+	require.Nil(t, got, "an ordinary missing user leaves state")
 }

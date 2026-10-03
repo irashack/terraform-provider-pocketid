@@ -95,13 +95,26 @@
   user in state from an earlier provider version, which plans no change). Check
   the user, then run `terraform state rm` on the resource and either
   `terraform import` it with that ID (if it is the intended user; importing
-  clears the condition) or choose another `id`.
+  clears the condition) or choose another `id`. A refresh that finds no user
+  with that ID (Pocket ID's own "user not found") no longer removes the
+  resource while the creation is unresolved, because the create may still
+  commit; it keeps the resource and warns, and only `terraform state rm`
+  settles it. An ordinary user that is gone is still removed from state.
 - `pocketid_group_membership`: when adding the user was accepted, or may have
   been, but the result cannot be confirmed (an unreadable response and a
   failed check, a server error or a lost connection), the membership is now
   kept in state (marked for replacement) with an error saying so, so that
   removing it from the configuration still revokes it. Before, nothing was
-  recorded and such a membership could stay active unnoticed.
+  recorded and such a membership could stay active unnoticed. Because the
+  request can still take effect after a refresh that sees the old group list,
+  the pair is also marked by the new computed attribute `unresolved_creation`
+  (true then, null otherwise, including for every membership in state from an
+  earlier provider version, which plans no change): while it is set, a refresh
+  that finds the user outside the group, or the user missing, keeps the
+  resource with a warning instead of removing it, and a destroy or replacement
+  that cannot see the membership is refused instead of recorded as done. A
+  refresh that sees the user in the group clears it. To give up on the
+  membership, run `terraform state rm` on the resource.
 - Reading a user's groups (to add or remove a `pocketid_group_membership`, to
   refresh one, or to check a write whose response could not be read) now
   requires a response that names the user and lists its groups. An empty or

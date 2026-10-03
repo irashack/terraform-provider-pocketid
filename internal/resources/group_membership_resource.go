@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -81,6 +82,9 @@ type groupMembershipResourceModel struct {
 	ID      types.String `tfsdk:"id"`
 	GroupID types.String `tfsdk:"group_id"`
 	UserID  types.String `tfsdk:"user_id"`
+	// UnresolvedCreation is true while adding the user was accepted, or may
+	// have been, but the result could not be confirmed; null otherwise.
+	UnresolvedCreation types.Bool `tfsdk:"unresolved_creation"`
 }
 
 // groupMembershipID builds the composite import/state identifier for a
@@ -112,7 +116,10 @@ func (r *groupMembershipResource) Schema(_ context.Context, _ resource.SchemaReq
 			"overwritten; there is no compare-and-swap primitive that would close this window. Avoid concurrent " +
 			"writers of one user's group memberships. After the write the provider checks the user's groups: " +
 			"Pocket ID ignores a group ID that names no group, so a group that does not exist (or is deleted " +
-			"during the apply) is an error naming it, never a recorded membership.\n\n" +
+			"during the apply) is an error naming it, never a recorded membership. If adding the user is accepted, or may have been, but the result " +
+			"cannot be confirmed, the pair is kept in state as an unresolved creation (`unresolved_creation`), because the request may still take " +
+			"effect: a refresh that does not see the user in the group keeps it, with a warning, until a refresh sees the user in the group or the " +
+			"resource is removed from state with `terraform state rm`.\n\n" +
 			"~> **Do not combine with the `groups` attribute of `pocketid_user` for the same user** That " +
 			"attribute is authoritative: every apply of a `pocketid_user` resource replaces the user's entire " +
 			"group list with exactly what `groups` contains, including an empty list when `groups` is left " +
@@ -140,6 +147,14 @@ func (r *groupMembershipResource) Schema(_ context.Context, _ resource.SchemaReq
 				Required:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"unresolved_creation": schema.BoolAttribute{
+				Description:         groupMembershipUnresolvedDescription,
+				MarkdownDescription: groupMembershipUnresolvedDescription,
+				Computed:            true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
 				},
 			},
 		},
@@ -174,6 +189,8 @@ func (r *groupMembershipResource) Create(ctx context.Context, req resource.Creat
 
 	groupID := plan.GroupID.ValueString()
 	userID := plan.UserID.ValueString()
+	// A computed value must be known after the apply, whichever way it ends.
+	plan.UnresolvedCreation = types.BoolNull()
 
 	tflog.Debug(ctx, "Adding user to group", map[string]any{
 		"group_id": groupID,
@@ -194,13 +211,18 @@ func (r *groupMembershipResource) Create(ctx context.Context, req resource.Creat
 		switch {
 		case errors.Is(err, client.ErrResultUnread), !errors.As(err, &mismatch) && !client.IsDefiniteRejection(err):
 			// The addition was accepted, or may have been, but could not be
-			// verified. The pair is kept in state (marked for replacement) so
-			// that removing it from the configuration still revokes it; the
-			// next refresh drops it if the user is not in the group.
+			// verified. The pair is kept in state (marked for replacement)
+			// as an unresolved creation, so that removing it from the
+			// configuration still revokes it: the request can still take
+			// effect after a refresh that sees the user outside the group,
+			// so a refresh does not drop it (see Read).
+			plan.UnresolvedCreation = types.BoolValue(true)
 			resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 			resp.Diagnostics.AddError("Group membership result uncertain",
 				fmt.Sprintf("Adding user %s to group %s may have succeeded, but the result could not be confirmed: %s. "+
-					"The membership is kept in state so that Terraform still tracks it; the next refresh checks it.", userID, groupID, err))
+					"The membership is kept in state as an unresolved creation, so that Terraform still tracks it: the request may still take effect, "+
+					"and a refresh that does not see the user in the group does not remove it. Once a refresh sees the user in the group, the "+
+					"condition clears.", userID, groupID, err))
 		default:
 			// A definite rejection, or a group the user is confirmed not to
 			// be in (it does not exist): nothing to track.
@@ -235,6 +257,13 @@ func (r *groupMembershipResource) Read(ctx context.Context, req resource.ReadReq
 		// surface as an error rather than silently dropping the resource
 		// from state.
 		if client.IsUserNotFound(err) {
+			if state.UnresolvedCreation.ValueBool() {
+				// The addition's outcome is still unknown; the user's
+				// absence does not settle it.
+				resp.Diagnostics.AddAttributeWarning(path.Root("id"), "Group membership creation still unresolved",
+					groupMembershipUnresolvedAbsenceDetail(userID, groupID, "Pocket ID reports no such user"))
+				return
+			}
 			tflog.Debug(ctx, "User no longer exists, removing group membership from state", map[string]any{
 				"group_id": groupID,
 				"user_id":  userID,
@@ -249,6 +278,13 @@ func (r *groupMembershipResource) Read(ctx context.Context, req resource.ReadReq
 		return
 	}
 
+	if !exists && state.UnresolvedCreation.ValueBool() {
+		// An addition whose outcome is unknown may still take effect after
+		// this answer, so the old group list does not settle it.
+		resp.Diagnostics.AddAttributeWarning(path.Root("id"), "Group membership creation still unresolved",
+			groupMembershipUnresolvedAbsenceDetail(userID, groupID, "the user is not in the group"))
+		return
+	}
 	if !exists {
 		tflog.Debug(ctx, "User is no longer a member of the group, removing from state", map[string]any{
 			"group_id": groupID,
@@ -259,6 +295,9 @@ func (r *groupMembershipResource) Read(ctx context.Context, req resource.ReadReq
 	}
 
 	state.ID = types.StringValue(groupMembershipID(groupID, userID))
+	// The user is in the group: an earlier uncertain addition has taken
+	// effect, and nothing is unresolved any more.
+	state.UnresolvedCreation = types.BoolNull()
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -292,6 +331,25 @@ func (r *groupMembershipResource) Delete(ctx context.Context, req resource.Delet
 	lock := lockForUser(userID)
 	lock.Lock()
 	defer lock.Unlock()
+
+	// An unresolved addition is only removed when it is seen: a user outside
+	// the group (or a missing one) may be a request that has not landed yet,
+	// and recording the removal as done would leave it untracked.
+	if state.UnresolvedCreation.ValueBool() {
+		observed := ""
+		exists, err := r.client.UserHasGroupMembership(ctx, userID, groupID)
+		switch {
+		case err != nil:
+			observed = "whether the user is in the group could not be checked (" + err.Error() + ")"
+		case !exists:
+			observed = "the user is not in the group"
+		}
+		if observed != "" {
+			resp.Diagnostics.AddAttributeError(path.Root("id"), "Group membership creation unresolved",
+				groupMembershipUnresolvedRefusal(userID, groupID, observed))
+			return
+		}
+	}
 
 	// RemoveUserFromGroup itself only treats a positively confirmed missing
 	// user as "nothing left to remove" (including re-confirming with a GET

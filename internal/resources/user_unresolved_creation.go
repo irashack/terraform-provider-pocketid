@@ -34,7 +34,8 @@ var userUnresolvedCreationValue = []byte(`{"unresolved":true}`)
 // attribute of pocketid_user.
 const userUnresolvedCreationDescription = "True while creating this user with a chosen `id` has an unknown outcome (the create's answer was lost, or a read after it " +
 	"could not settle it), so the user Pocket ID holds under that ID may not be the one this resource created. It is null for every other user. " +
-	"While it is set the provider refuses to change, delete or replace the user. It is never cleared by a refresh: check the user in Pocket ID, " +
+	"While it is set the provider refuses to change, delete or replace the user, and a refresh that finds no user keeps the resource in state " +
+	"with a warning instead of removing it, because the create may still commit. It is never cleared by a refresh: check the user in Pocket ID, " +
 	"then run `terraform state rm` on the resource and either import the user (importing clears this) or choose another `id`."
 
 // userCreationUnresolved reports whether the user's prior state or its private
@@ -54,6 +55,15 @@ func userUnresolvedCreationDetail(id, action string) string {
 		"the intended user, run `terraform state rm` on this resource and then `terraform import` it with ID " + id + " (or use an import " +
 		"block after removing it from state); importing clears this condition. If it is not, run `terraform state rm` on this resource " +
 		"and choose another id. Nothing was changed."
+}
+
+// userUnresolvedAbsenceDetail explains why a refresh that found no user keeps
+// the resource.
+func userUnresolvedAbsenceDetail(id string) string {
+	return "Pocket ID reports no user " + id + ", but creating it had an unknown outcome in an earlier apply and may still complete: a proxy can " +
+		"give up on a request the server goes on to commit. The resource stays in state, and the provider will not change, delete or replace it. " +
+		"Refresh again later; if the user appears, check it in Pocket ID. To reconcile, run `terraform state rm` on this resource and then " +
+		"import the user if it exists and is the intended one (importing clears this condition), or apply again to create it."
 }
 
 // refuseUnresolvedUser adds an error and reports true when the user's

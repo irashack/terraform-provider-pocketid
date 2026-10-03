@@ -425,6 +425,14 @@ func (r *userResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		// Only Pocket ID's own "user not found" proves the user is gone; a
 		// proxy's or a missing route's 404 stays an error.
 		if client.IsNotFound(err, client.ResourceUser) {
+			// A create whose outcome is unknown may still commit after this
+			// answer, so absence does not settle it: keep the resource, with
+			// its markers, until it is reconciled explicitly.
+			if unresolved, d := userCreationUnresolved(ctx, req.Private, state.UnresolvedCreation); unresolved || d.HasError() {
+				resp.Diagnostics.Append(d...)
+				resp.Diagnostics.AddAttributeWarning(path.Root("id"), "User creation still unresolved", userUnresolvedAbsenceDetail(state.ID.ValueString()))
+				return
+			}
 			tflog.Warn(ctx, "User no longer exists, removing it from state", map[string]any{
 				"id": state.ID.ValueString(),
 			})
@@ -750,8 +758,8 @@ func (r *userResource) uncertainFixedIDCreate(ctx context.Context, plan *userRes
 		"Creating user "+id+" failed with an uncertain result ("+cause.Error()+"). "+found+
 			" The ID is kept in state as an unresolved creation: the provider will not change, delete or replace that user until it is resolved. "+
 			"Check the user in Pocket ID; if it is the intended user, run `terraform state rm` on this resource and `terraform import` it with ID "+id+
-			"; otherwise run `terraform state rm` and choose another id. If the next refresh finds no user with this ID, Pocket ID's answer removes it from state. "+
-			"The create was not repeated.")
+			"; otherwise run `terraform state rm` and choose another id. A refresh that finds no user with this ID does not remove the resource, "+
+			"because the create may still complete. The create was not repeated.")
 }
 
 // ldapRestrictedChanges returns the attributes the plan explicitly changes

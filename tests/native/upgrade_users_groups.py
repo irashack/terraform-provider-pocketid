@@ -157,12 +157,12 @@ resource "pocketid_one_time_access_token" "minimal" {
         run("apply", "-auto-approve", "-input=false")
         run("plan", "-detailed-exitcode", "-input=false")
         assert ids() == before, "an object's ID changed across the upgrade"
-        # The attribute the new build added to pocketid_user (an unresolved
-        # creation, see its documentation) is null in state written by
-        # 2.4.104: the empty plans
+        # The attribute the new build added to pocketid_user and
+        # pocketid_group_membership (an unresolved creation, see their
+        # documentation) is null in state written by 2.4.104: the empty plans
         # above decoded that state, and the state this apply rewrote keeps it
         # null.
-        for address in ("pocketid_user.full", "pocketid_user.minimal"):
+        for address in ("pocketid_user.full", "pocketid_user.minimal", "pocketid_group_membership.outside"):
             assert "unresolved_creation" in values()[address] and values()[address]["unresolved_creation"] is None, \
                 address + ": unresolved_creation is not null after the upgrade"
         user = [r for r in json.loads(run("show", "-json").stdout)["values"]["root_module"]["resources"]
