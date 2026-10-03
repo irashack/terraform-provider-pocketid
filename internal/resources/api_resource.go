@@ -486,7 +486,7 @@ func (r *apiResource) Create(ctx context.Context, req resource.CreateRequest, re
 		return
 	}
 
-	tflog.Debug(ctx, "Creating API", map[string]any{"resource": desired.Resource})
+	tflog.Debug(ctx, "Creating API", map[string]any{"permissions": len(desired.Permissions)})
 	created, err := r.client.CreateAPI(ctx, &client.APICreateRequest{Name: desired.Name, Resource: desired.Resource})
 	if err != nil {
 		if apiWriteRefused(err) {

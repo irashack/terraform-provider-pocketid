@@ -112,7 +112,7 @@ func resolveGroupRestriction(planned types.Bool, groups []string, currentlyRestr
 // server kept. The PUT is never retried. Dropped IDs wrap errGroupsDropped
 // and name the IDs; got is then the set the server holds.
 func (r *clientResource) writeAllowedGroups(ctx context.Context, clientID string, want []string) (got []string, err error) {
-	tflog.Debug(ctx, "Updating allowed user groups", map[string]any{"id": clientID, "groups": want})
+	tflog.Debug(ctx, "Updating allowed user groups", map[string]any{"id": clientID, "groups": len(want)})
 	got, err = r.client.UpdateClientAllowedUserGroups(ctx, clientID, want)
 	if err != nil {
 		return nil, err

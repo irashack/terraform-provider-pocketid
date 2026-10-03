@@ -132,9 +132,10 @@ func (r *groupResource) Create(ctx context.Context, req resource.CreateRequest, 
 		FriendlyName: plan.FriendlyName.ValueString(),
 	}
 
+	// Configured text never goes to the log (a value can carry the API key
+	// by mistake).
 	tflog.Debug(ctx, "Creating user group", map[string]any{
-		"name":         createReq.Name,
-		"friendlyName": createReq.FriendlyName,
+		"custom_claims": len(claims),
 	})
 
 	groupResp, err := r.client.CreateUserGroup(ctx, createReq)
@@ -267,9 +268,7 @@ func (r *groupResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		}
 
 		tflog.Debug(ctx, "Updating user group", map[string]any{
-			"id":           plan.ID.ValueString(),
-			"name":         updateReq.Name,
-			"friendlyName": updateReq.FriendlyName,
+			"id": plan.ID.ValueString(),
 		})
 
 		_, err := r.client.UpdateUserGroup(ctx, plan.ID.ValueString(), updateReq)

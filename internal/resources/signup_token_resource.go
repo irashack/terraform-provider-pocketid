@@ -269,7 +269,7 @@ func (r *signupTokenResource) Create(ctx context.Context, req resource.CreateReq
 	sort.Strings(requested)
 
 	tflog.Debug(ctx, "creating signup token", map[string]any{
-		"ttl": plan.TTL.ValueString(), "usage_limit": plan.UsageLimit.ValueInt64(), "user_groups": len(requested),
+		"usage_limit": plan.UsageLimit.ValueInt64(), "user_groups": len(requested),
 	})
 	created, err := r.client.CreateSignupToken(ctx, &client.SignupTokenCreateRequest{
 		TTL:          plan.TTL.ValueString(),

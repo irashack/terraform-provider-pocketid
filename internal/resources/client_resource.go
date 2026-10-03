@@ -469,9 +469,11 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 		createReq.ClientID = &cid
 	}
 
+	// Configured text never goes to the log (a value can carry the API key
+	// by mistake); a chosen client ID was checked above.
 	tflog.Debug(ctx, "Creating OIDC client", map[string]any{
-		"name":     createReq.Name,
-		"isPublic": createReq.IsPublic,
+		"isPublic":  createReq.IsPublic,
+		"chosen_id": createReq.ClientID != nil,
 	})
 
 	// Resolve the API contract before making any client or secret mutation.
@@ -944,8 +946,7 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 	}
 
 	tflog.Debug(ctx, "Updating OIDC client", map[string]any{
-		"id":   plan.ID.ValueString(),
-		"name": updateReq.Name,
+		"id": plan.ID.ValueString(),
 	})
 
 	updateReq.IsGroupRestricted = isGroupRestricted

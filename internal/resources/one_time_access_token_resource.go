@@ -138,7 +138,6 @@ func (r *OneTimeAccessTokenResource) Create(ctx context.Context, req resource.Cr
 
 	tflog.Debug(ctx, "creating one-time access token", map[string]interface{}{
 		"user_id": data.UserID.ValueString(),
-		"ttl":     ttlStr,
 	})
 
 	userID := data.UserID.ValueString()

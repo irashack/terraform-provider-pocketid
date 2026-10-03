@@ -220,9 +220,7 @@ func (d *userDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 		// Lookup by username. The search filter narrows the request, but
 		// matching is the server's own logic (e.g. substring), so every page
 		// of results is still fetched and filtered here for an exact match.
-		tflog.Debug(ctx, "Reading user data source by username", map[string]any{
-			"username": config.Username.ValueString(),
-		})
+		tflog.Debug(ctx, "Reading user data source by username")
 
 		users, err := d.client.ListAllUsers(ctx, config.Username.ValueString())
 		if err != nil {
@@ -252,9 +250,7 @@ func (d *userDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 		// Lookup by email. The search filter narrows the request, but
 		// matching is the server's own logic (e.g. substring), so every page
 		// of results is still fetched and filtered here for an exact match.
-		tflog.Debug(ctx, "Reading user data source by email", map[string]any{
-			"email": config.Email.ValueString(),
-		})
+		tflog.Debug(ctx, "Reading user data source by email")
 
 		users, err := d.client.ListAllUsers(ctx, config.Email.ValueString())
 		if err != nil {

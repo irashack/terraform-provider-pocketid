@@ -265,10 +265,11 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 		createReq.Locale = &locale
 	}
 
+	// Configured text never goes to the log: only validated IDs, kinds and
+	// counts do (a value can carry the API key by mistake).
 	tflog.Debug(ctx, "Creating user", map[string]any{
-		"username": createReq.Username,
-		"email":    createReq.Email,
-		"isAdmin":  createReq.IsAdmin,
+		"isAdmin": createReq.IsAdmin,
+		"groups":  len(createReq.UserGroupIDs),
 	})
 
 	if createReq.ID != "" && !r.checkFixedID(ctx, createReq.ID, resp) {
@@ -599,9 +600,7 @@ func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	}
 
 	tflog.Debug(ctx, "Updating user", map[string]any{
-		"id":       plan.ID.ValueString(),
-		"username": updateReq.Username,
-		"email":    updateReq.Email,
+		"id": plan.ID.ValueString(),
 	})
 
 	userResp, err := r.client.UpdateUser(ctx, plan.ID.ValueString(), updateReq)
@@ -650,7 +649,8 @@ func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, r
 
 		if groupsChanged {
 			tflog.Debug(ctx, "Updating user groups", map[string]any{
-				"groups": plannedGroupIDs,
+				"id":     plan.ID.ValueString(),
+				"groups": len(plannedGroupIDs),
 			})
 			unlockMembership := lockMembershipWrites()
 			held, err := r.setGroups(ctx, plan.ID.ValueString(), plannedGroupIDs)

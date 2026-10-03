@@ -151,9 +151,7 @@ func (d *groupDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 	}
 
 	tflog.Debug(ctx, "Found group", map[string]interface{}{
-		"id":            foundGroup.ID,
-		"name":          foundGroup.Name,
-		"friendly_name": foundGroup.FriendlyName,
+		"id": foundGroup.ID,
 	})
 
 	// Map response body to model

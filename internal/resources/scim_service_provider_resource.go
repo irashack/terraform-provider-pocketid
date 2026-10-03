@@ -189,9 +189,10 @@ func (r *scimServiceProviderResource) Create(ctx context.Context, req resource.C
 		OidcClientID: plan.ClientID.ValueString(),
 	}
 
+	// The endpoint is configured text and never goes to the log (it can
+	// carry the API key by mistake); the client ID was checked above.
 	tflog.Debug(ctx, "Creating SCIM service provider", map[string]any{
 		"client_id": createReq.OidcClientID,
-		"endpoint":  createReq.Endpoint,
 	})
 
 	providerResp, err := r.client.CreateScimServiceProvider(ctx, createReq)
@@ -323,7 +324,6 @@ func (r *scimServiceProviderResource) Update(ctx context.Context, req resource.U
 	tflog.Debug(ctx, "Updating SCIM service provider", map[string]any{
 		"id":        providerID,
 		"client_id": updateReq.OidcClientID,
-		"endpoint":  updateReq.Endpoint,
 	})
 
 	providerResp, err := r.client.UpdateScimServiceProvider(ctx, providerID, updateReq)

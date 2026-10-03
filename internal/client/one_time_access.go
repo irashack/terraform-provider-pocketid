@@ -29,7 +29,6 @@ func (c *Client) CreateOneTimeAccessToken(ctx context.Context, userID string, re
 	}
 	tflog.Debug(ctx, "CreateOneTimeAccessToken request", map[string]interface{}{
 		"user_id": userID,
-		"ttl":     req.TTL,
 	})
 
 	id, err := uuidSegment("user", userID)
