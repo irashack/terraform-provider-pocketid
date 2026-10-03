@@ -73,7 +73,10 @@ func NewClient(baseURL, apiToken string, skipTLSVerify bool, timeout int64) (*Cl
 
 // Retry limits for reads. Only GET is ever retried; a mutation is sent once.
 const (
-	// maxReadAttempts is the most times one GET is sent.
+	// maxReadAttempts is the most application-level attempts one GET gets.
+	// Each attempt is one request on a fresh connection (DisableKeepAlives),
+	// so it is also the most times the GET goes out on the wire: Go's
+	// transport has no reused connection to replay it on.
 	maxReadAttempts = 4
 	// maxRetryWait caps a single wait between attempts. A server asking for a
 	// longer wait (Retry-After) gets no retry: the error is returned at once.

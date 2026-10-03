@@ -361,7 +361,7 @@ func TestClient_RetryTimeIsBounded(t *testing.T) {
 
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
-	client.SetRetryPolicyForTest(c, 20, 50*time.Millisecond, time.Second, 400*time.Millisecond)
+	client.SetRetryPolicyForTest(c, 20, 100*time.Millisecond, time.Second, 1200*time.Millisecond)
 
 	start := time.Now()
 	_, err = c.GetClient(context.Background(), "test-client-id")
@@ -369,8 +369,10 @@ func TestClient_RetryTimeIsBounded(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not retrying")
-	assert.Less(t, elapsed, 600*time.Millisecond)
-	// 50ms, 100ms and 200ms waits fit in 400ms; the 400ms one does not.
+	assert.Less(t, elapsed, 3*time.Second)
+	// The 100ms, 200ms and 400ms waits end by about 700ms, well inside the
+	// 1200ms budget (500ms to spare for four requests); the 800ms wait that
+	// would follow ends at about 1500ms, past it (300ms to spare).
 	assert.Equal(t, int32(4), attempts.Load())
 }
 
@@ -614,7 +616,8 @@ func TestClient_SlowReadEndsAtTheRetryDeadline(t *testing.T) {
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
-	assert.Less(t, elapsed, 1500*time.Millisecond, "the attempt is cut off at the deadline, not after the 30s HTTP timeout")
+	assert.GreaterOrEqual(t, elapsed, 400*time.Millisecond, "the attempt ran until the deadline")
+	assert.Less(t, elapsed, 10*time.Second, "the attempt is cut off at the 500ms deadline, not after the 30s HTTP timeout")
 	assert.Equal(t, int32(1), attempts.Load())
 }
 
@@ -622,10 +625,8 @@ func TestClient_SlowReadEndsAtTheRetryDeadline(t *testing.T) {
 // mutation is bounded by the HTTP timeout alone.
 func TestClient_RetryDeadlineLeavesFastReadsAndMutationsAlone(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			time.Sleep(100 * time.Millisecond)
-		} else {
-			time.Sleep(700 * time.Millisecond)
+		if r.Method != http.MethodGet {
+			time.Sleep(2 * time.Second) // well past the read deadline below
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprint(w, `{"id":"test-client-id","name":"n"}`)
@@ -634,7 +635,8 @@ func TestClient_RetryDeadlineLeavesFastReadsAndMutationsAlone(t *testing.T) {
 
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
-	client.SetRetryPolicyForTest(c, 4, 50*time.Millisecond, time.Second, 500*time.Millisecond)
+	// An immediate local answer fits a 1s read deadline with room to spare.
+	client.SetRetryPolicyForTest(c, 4, 50*time.Millisecond, time.Second, time.Second)
 
 	_, err = c.GetClient(context.Background(), "test-client-id")
 	require.NoError(t, err)

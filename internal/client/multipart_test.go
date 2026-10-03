@@ -16,6 +16,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-log/tflogtest"
 	"github.com/stretchr/testify/assert"
@@ -212,8 +213,12 @@ func TestUpload_ErrorsAndRedaction(t *testing.T) {
 // and closes the connection without answering: the stale kept-alive
 // connection Go's transport would replay a replayable request on. It counts
 // connections and requests.
-func staleConnectionServer(t *testing.T) (string, *atomic.Int32, *atomic.Int32) {
+func staleConnectionServer(t *testing.T, statusLine ...string) (string, *atomic.Int32, *atomic.Int32) {
 	t.Helper()
+	status := "HTTP/1.1 204 No Content"
+	if len(statusLine) > 0 {
+		status = statusLine[0]
+	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = listener.Close() })
@@ -238,7 +243,7 @@ func staleConnectionServer(t *testing.T) (string, *atomic.Int32, *atomic.Int32) 
 					if served > 0 {
 						return // close without an answer
 					}
-					_, _ = io.WriteString(conn, "HTTP/1.1 204 No Content\r\n\r\n")
+					_, _ = io.WriteString(conn, status+"\r\nContent-Length: 0\r\n\r\n")
 				}
 			}()
 		}
@@ -378,4 +383,35 @@ func TestSend_BodyFraming(t *testing.T) {
 	assert.Empty(t, length, "a GET without a body declares no length")
 	assert.Empty(t, encoding)
 	assert.Zero(t, n)
+}
+
+// Four attempts are four requests on the wire. The server answers 503 on a
+// connection's first request and closes it without an answer if a second
+// request arrives on it, which a client reusing connections meets and then
+// silently replays (a GET without a body is replayable): about seven wire
+// requests for four attempts. With a fresh connection per attempt there is
+// nothing to replay.
+func TestRetriedReadIsSentOncePerAttempt(t *testing.T) {
+	url, connections, requests := staleConnectionServer(t, "HTTP/1.1 503 Service Unavailable")
+	c, err := NewClient(url, "test-token", false, 5)
+	require.NoError(t, err)
+	c.retry = retryPolicy{maxAttempts: 4, backoffUnit: time.Millisecond, maxWait: time.Second, maxElapsed: 10 * time.Second}
+
+	_, err = c.doRequest(context.Background(), http.MethodGet, "/api/x", nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "after 4 attempts")
+	assert.Equal(t, int32(4), requests.Load(), "four attempts, four requests")
+	assert.Equal(t, int32(4), connections.Load(), "each on its own connection")
+}
+
+// No request with a body can be replayed by Go's transport: newRequest never
+// gives it a GetBody to replay from, whatever the method, and declares its
+// exact length.
+func TestNewRequest_BodyIsOneShot(t *testing.T) {
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete} {
+		req, err := newRequest(context.Background(), method, "http://127.0.0.1:1/api/x", []byte(`{"a":1}`))
+		require.NoError(t, err)
+		assert.Nil(t, req.GetBody, method)
+		assert.Equal(t, int64(7), req.ContentLength, method)
+	}
 }

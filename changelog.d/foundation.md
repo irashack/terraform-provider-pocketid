@@ -15,7 +15,8 @@
   `timeout` setting, whichever is longer, even if an attempt is still waiting
   for the server. Reads that fail with a rate limit or a server error are
   retried within that time, never waiting more than 10 seconds between
-  attempts; if the server asks the provider to wait longer, the error is
+  attempts (at most four attempts, each a single request on a fresh
+  connection); if the server asks the provider to wait longer, the error is
   returned at once. Changes (create, update, delete) are sent once and are
   bounded by the `timeout` setting alone.
 - **Breaking:** IDs of users, groups, client secrets and SCIM service
