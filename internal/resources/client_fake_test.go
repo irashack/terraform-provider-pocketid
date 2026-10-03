@@ -65,6 +65,8 @@ type fakePocketID struct {
 	// fail answers "METHOD path" with this status instead of handling it.
 	fail       map[string]int
 	nextSecret int
+	// ignoreRestriction makes client writes ignore isGroupRestricted.
+	ignoreRestriction bool
 }
 
 func newFakePocketID(t *testing.T, version string, c *fakeClient) *fakePocketID {
@@ -285,7 +287,9 @@ func (f *fakePocketID) applyUpdate(in map[string]any) {
 	c.PAR = boolean("requiresPushedAuthorizationRequests")
 	c.SkipConsent = boolean("skipConsent")
 	c.LaunchURL = str("launchURL")
-	c.Restricted = boolean("isGroupRestricted")
+	if !f.ignoreRestriction {
+		c.Restricted = boolean("isGroupRestricted")
+	}
 	c.AccessMinutes = minutes("accessTokenDurationMinutes", 60)
 	c.RefreshMinutes = minutes("refreshTokenDurationMinutes", 43200)
 	if !c.Restricted {

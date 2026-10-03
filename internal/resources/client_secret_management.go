@@ -294,3 +294,13 @@ func planSecretAttributes(state *clientResourceModel, plan *clientResourceModel)
 		null()
 	}
 }
+
+// skipSecretAction records in model that an update stopped before its secret
+// action, so that the next plan shows the action again: the secret in state
+// stays, and a generation still to do leaves generate_secret false.
+func skipSecretAction(action secretAction, prior clientResourceModel, model *clientResourceModel) {
+	model.ClientSecret, model.ClientSecretID = prior.ClientSecret, prior.ClientSecretID
+	if action == secretGenerate {
+		model.GenerateSecret = types.BoolValue(false)
+	}
+}

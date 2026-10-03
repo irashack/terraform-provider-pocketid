@@ -862,7 +862,10 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 		plan.IsGroupRestricted = types.BoolValue(clientResp.IsGroupRestricted)
 		plan.AllowedUserGroups = groupSetFromServer(clientResp.AllowedUserGroups, plan.AllowedUserGroups)
 		resp.Diagnostics.AddAttributeError(path.Root("is_group_restricted"), "Group restriction not applied",
-			fmt.Sprintf("Pocket ID reports is_group_restricted = %t with %d allowed groups after the update, which is not what was planned. State records what it reports.", clientResp.IsGroupRestricted, len(clientResp.AllowedUserGroups)))
+			fmt.Sprintf("Pocket ID reports is_group_restricted = %t with %d allowed groups after the update, which is not what was planned. State records what it reports; no further change was made.", clientResp.IsGroupRestricted, len(clientResp.AllowedUserGroups)))
+		skipSecretAction(secretAction, state, &plan)
+		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+		return
 	}
 
 	if err := r.applySecretAction(ctx, secretAction, revokeID, revokeGone, state, &plan); err != nil {

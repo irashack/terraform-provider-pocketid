@@ -296,3 +296,30 @@ func TestClientReadGroupRestriction(t *testing.T) {
 	assert.Equal(t, types.BoolValue(true), after.IsGroupRestricted)
 	assert.True(t, after.AllowedUserGroups.IsNull(), "restricted to nobody")
 }
+
+// When the server reports a different restriction after the update, the
+// apply stops: state records what the server reports, and a planned secret
+// generation is left for the next plan.
+func TestClientUpdateRestrictionNotApplied(t *testing.T) {
+	fake := groupFake(t, false)
+	fake.client.IsPublic, fake.secrets = true, nil
+	r := &clientResource{client: fake.start()}
+	// A server that ignores the restriction.
+	fake.ignoreRestriction = true
+	prior := managedModel()
+	prior.IsPublic = types.BoolValue(true)
+	prior.ClientSecret, prior.ClientSecretID = types.StringNull(), types.StringNull()
+	planned := prior
+	planned.IsPublic = types.BoolValue(false)
+	planned.IsGroupRestricted = types.BoolValue(true)
+	planned.ClientSecret, planned.ClientSecretID = types.StringUnknown(), types.StringUnknown()
+	resp, after := runUpdate(t, r, prior, planned, configOf(planned))
+	require.True(t, resp.Diagnostics.HasError())
+	assert.Zero(t, fake.called("POST /api/oidc/clients/c1/secrets"), "no further change")
+	assert.False(t, after.IsGroupRestricted.ValueBool(), "state records what the server reports")
+	assert.False(t, after.GenerateSecret.ValueBool(), "the next plan generates the secret")
+	next := after
+	next.GenerateSecret = types.BoolValue(true)
+	action, _ := planSecretAction(after, next)
+	assert.Equal(t, secretGenerate, action)
+}
