@@ -31,3 +31,15 @@
   transports and authenticator model), oldest first. It is read-only and reports
   no credential material. Pocket ID records no time of last use, so none is
   shown. There is deliberately no resource to create or delete passkeys.
+- New resource `pocketid_group_members`: owns the whole membership of one group.
+  The users in `user_ids` are exactly the group's members; a user added outside
+  Terraform shows as a difference and is removed by the next apply. It checks
+  what the server holds afterwards, so an ID that names no user is an error
+  (Pocket ID would silently skip it). It never removes members the plan did
+  not show: creating it for a group that already has other members, or applying
+  after someone joined since the plan, fails and changes nothing; import the
+  group first (`terraform import pocketid_group_members.x <group_id>`) to see
+  them in the plan. Do not combine it for one group with
+  `pocketid_group_membership`, with `pocketid_user.groups`, or with a second
+  `pocketid_group_members`. On Pocket ID 2.17, removing a member can sign that
+  user out of group-restricted clients that have a back-channel logout URL.
