@@ -44,18 +44,51 @@ func assertRefused(t *testing.T, err error, returned, why string) {
 }
 
 // A read addressed by ID (GET /users/{id}) must answer with that object: a
-// response carrying another object's ID, or the same ID in another case, is
-// refused, so it can never replace the ID in state.
+// response carrying another object's ID is refused, so it can never replace
+// the ID in state. What counts as the same ID depends on the kind. A UUID is
+// compared as a UUID: on PostgreSQL, where users, groups and SCIM providers
+// live in native UUID columns, a request for an upper-case UUID finds the
+// object and the answer spells its ID in lower case. An OIDC client ID is
+// text, so a case variant names another client (or none).
 func TestCheckReturnedID_WrongIDOnARead(t *testing.T) {
 	c := newCheckingClient(t, "test-token")
-	require.NoError(t, c.checkReturnedID("user", userA, userA))
+	upperA := strings.ToUpper(userA)
+	for _, tc := range []struct{ addressed, returned string }{
+		{userA, userA},
+		{upperA, userA}, // PostgreSQL: upper-case request, canonical answer
+		{userA, upperA},
+		{upperA, upperA},
+	} {
+		assert.NoError(t, c.checkReturnedID("user", tc.addressed, tc.returned), "%q answered with %q", tc.addressed, tc.returned)
+		assert.NoError(t, c.checkReturnedID("SCIM service provider", tc.addressed, tc.returned))
+	}
 
-	for _, returned := range []string{userB, strings.ToUpper(userA), "", userA + " ", "other"} {
-		err := c.checkReturnedID("user", userA, returned)
+	for _, returned := range []string{userB, strings.ToUpper(userB), "", userA + " ", " " + userA, "{" + userA + "}", "other"} {
+		err := c.checkReturnedID("user", upperA, returned)
 		assertRefused(t, err, returned, "the user ID in the response is not the one requested")
 	}
-	err := c.checkReturnedID(kindOIDCClient, "my-app", "MY-APP")
-	assertRefused(t, err, "MY-APP", "the OIDC client ID in the response is not the one requested")
+	// Not a UUID on the request side either: nothing to compare as a UUID.
+	assertRefused(t, c.checkReturnedID("user group", "not-a-uuid", "NOT-A-UUID"), "NOT-A-UUID", "is not the one requested")
+
+	// OIDC client IDs stay byte for byte, even when they look like UUIDs.
+	for _, tc := range []struct{ addressed, returned string }{
+		{"my-app", "MY-APP"},
+		{upperA, userA},
+		{userA, upperA},
+	} {
+		err := c.checkReturnedID(kindOIDCClient, tc.addressed, tc.returned)
+		assertRefused(t, err, tc.returned, "the OIDC client ID in the response is not the one requested")
+	}
+	require.NoError(t, c.checkReturnedID(kindOIDCClient, upperA, upperA))
+}
+
+// The key check comes before the comparison, whatever the case: an
+// addressed ID that is the key in upper case does not let its lower-case
+// echo through.
+func TestCheckReturnedID_KeyBeforeCaselessComparison(t *testing.T) {
+	c := newCheckingClient(t, syntheticKey)
+	err := c.checkReturnedID("user", strings.ToUpper(syntheticKey), syntheticKey)
+	assertRefused(t, err, syntheticKey, "contains the API key this provider sent")
 }
 
 // A nested object must belong to the parent the call named: a SCIM provider

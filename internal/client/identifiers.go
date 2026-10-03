@@ -181,10 +181,16 @@ const kindOIDCClient = "OIDC client"
 //   - No ID may contain the API key this client sends (see checkCreatedID
 //     for why a UUID-shaped key matters). This is checked first.
 //   - addressed is the ID the call named, in its path or as the parent the
-//     object must belong to; the returned ID must then be exactly it, not
-//     another object's and not a case variant. Pass "" when the call named
-//     none: a list item, an object looked up through its parent, a nested
-//     object.
+//     object must belong to; the returned ID must then be the same ID, not
+//     another object's. For a UUID kind that means the same UUID: both must
+//     be UUIDs, compared without regard to case, because PostgreSQL keeps
+//     users, groups and SCIM providers in native UUID columns (id UUID in
+//     backend/resources/migrations/postgres) and answers a request for
+//     "ABC..." with "abc...". An OIDC client ID is text and must come back
+//     byte for byte. A caller that sends a later request for the object uses
+//     the ID the server returned, not its own spelling. Pass "" when the call
+//     named none: a list item, an object looked up through its parent, a
+//     nested object.
 //   - An ID the call did not name must have a form the server itself can
 //     give that kind: a UUID, which Pocket ID generates for every object
 //     (model.Base.BeforeCreate), except for kindOIDCClient, which takes any
@@ -202,26 +208,47 @@ const kindOIDCClient = "OIDC client"
 // object in the error, which wraps ErrInvalidIdentifier and never includes
 // the returned value.
 func (c *Client) checkReturnedID(kind, addressed, returned string) error {
-	form := isUUID
+	rule := uuidIDs
 	if kind == kindOIDCClient {
-		form = isReturnedClientID
+		rule = clientIDs
 	}
-	return c.checkResponseID(kind, form, addressed, returned)
+	return c.checkResponseID(kind, rule, addressed, returned)
 }
 
-// checkResponseID is checkReturnedID with the form of an unaddressed ID
-// given explicitly. listAll uses it with isReturnedClientID, which accepts
-// every form a Pocket ID object ID can take, because it serves lists of every
-// kind.
-func (c *Client) checkResponseID(kind string, form func(string) bool, addressed, returned string) error {
+// idRule is what checkResponseID needs to know about a kind of ID: the forms
+// the server can give it, and how two spellings of one ID compare.
+type idRule struct {
+	valid func(string) bool
+	// sameID reports whether returned names the object addressed named.
+	sameID func(addressed, returned string) bool
+}
+
+var (
+	// uuidIDs: a UUID, compared as a UUID (without regard to case).
+	uuidIDs = idRule{valid: isUUID, sameID: sameUUID}
+	// clientIDs: an OIDC client ID, compared byte for byte. Every UUID is
+	// one too, so listAll uses this rule for lists of every kind.
+	clientIDs = idRule{valid: isReturnedClientID, sameID: func(addressed, returned string) bool { return returned == addressed }}
+)
+
+// sameUUID reports whether two strings are the same UUID: both valid UUIDs
+// that differ at most in the case of their hexadecimal digits.
+func sameUUID(addressed, returned string) bool {
+	return isUUID(addressed) && isUUID(returned) && strings.EqualFold(addressed, returned)
+}
+
+// checkResponseID is checkReturnedID with the rule for the kind given
+// explicitly. listAll uses clientIDs, which accepts every form a Pocket ID
+// object ID can take, because it serves lists of every kind.
+func (c *Client) checkResponseID(kind string, rule idRule, addressed, returned string) error {
 	switch {
 	case c.reflectsKey(returned):
 		return fmt.Errorf("%w: the %s ID in the response contains the API key this provider sent", ErrInvalidIdentifier, kind)
 	case addressed != "":
-		if returned != addressed {
+		if !rule.sameID(addressed, returned) {
 			return fmt.Errorf("%w: the %s ID in the response is not the one requested", ErrInvalidIdentifier, kind)
 		}
-	case !form(returned):
+	case !rule.valid(returned):
 		return fmt.Errorf("%w: the %s ID in the response is not a valid %s ID", ErrInvalidIdentifier, kind, kind)
 	}
 	return nil
