@@ -253,11 +253,54 @@ func (c *Client) writeUserGroups(ctx context.Context, userID string, groupIDs []
 	if !errors.Is(err, ErrResultUnread) {
 		return nil, err
 	}
-	user, readErr := c.GetUser(ctx, userID)
+	held, readErr := c.readUserGroupIDs(ctx, userID)
 	if readErr != nil {
 		return nil, fmt.Errorf("groups of user %s: %w; reading them back failed: %w", userID, ErrResultUnread, readErr)
 	}
-	return user.GroupIDs(), nil
+	return held, nil
+}
+
+// errUserGroupsUnlisted marks a user response that does not show which groups
+// the user is in.
+var errUserGroupsUnlisted = errors.New("the response did not list the user's groups")
+
+// readUserGroupIDs reads the groups a user is in. Unlike GetUser it accepts
+// only a response that shows them: one naming the requested user (its id)
+// and holding a decodable userGroups field, where null means none (UserDto
+// has no omitempty). An absent field, {}, null or another user's record is
+// no evidence of anything and gives an error wrapping errUserGroupsUnlisted.
+// Errors from the request itself are returned unchanged, so IsUserNotFound
+// still applies to them.
+func (c *Client) readUserGroupIDs(ctx context.Context, userID string) ([]string, error) {
+	id, err := uuidSegment("user", userID)
+	if err != nil {
+		return nil, err
+	}
+	body, err := c.doRequest(ctx, "GET", "/api/users/"+id, nil)
+	if err != nil {
+		return nil, err
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(body, &fields) != nil || fields == nil {
+		return nil, fmt.Errorf("user %s: %w", userID, errUserGroupsUnlisted)
+	}
+	var gotID string
+	if raw, ok := fields["id"]; !ok || json.Unmarshal(raw, &gotID) != nil || gotID != userID {
+		return nil, fmt.Errorf("user %s: %w: it did not name the user", userID, errUserGroupsUnlisted)
+	}
+	raw, ok := fields["userGroups"]
+	var groups []UserGroup
+	if !ok || json.Unmarshal(raw, &groups) != nil {
+		return nil, fmt.Errorf("user %s: %w", userID, errUserGroupsUnlisted)
+	}
+	ids := make([]string, 0, len(groups))
+	for _, group := range groups {
+		if group.ID == "" {
+			return nil, fmt.Errorf("user %s: %w: a group had no ID", userID, errUserGroupsUnlisted)
+		}
+		ids = append(ids, group.ID)
+	}
+	return ids, nil
 }
 
 // CheckUserGroups compares the groups a user is in (held) with the ones
@@ -307,20 +350,17 @@ func (c *Client) SetUserGroups(ctx context.Context, userID string, groupIDs []st
 // change silently overwritten; there is no compare-and-swap primitive that
 // would close this window.
 func (c *Client) AddUserToGroup(ctx context.Context, userID, groupID string) error {
-	user, err := c.GetUser(ctx, userID)
+	// The write replaces the whole list, so it is built only from a response
+	// that shows the user's groups (an empty one would drop them all).
+	current, err := c.readUserGroupIDs(ctx, userID)
 	if err != nil {
 		return err
 	}
-
-	groupIDs := make([]string, 0, len(user.UserGroups)+1)
-	for _, group := range user.UserGroups {
-		groupIDs = append(groupIDs, group.ID)
-		if group.ID == groupID {
-			// Already a member; nothing to do.
-			return nil
-		}
+	if slices.Contains(current, groupID) {
+		// Already a member; nothing to do.
+		return nil
 	}
-	groupIDs = append(groupIDs, groupID)
+	groupIDs := append(current, groupID)
 
 	held, err := c.writeUserGroups(ctx, userID, groupIDs)
 	if err != nil {
@@ -342,7 +382,7 @@ func (c *Client) AddUserToGroup(ctx context.Context, userID, groupID string) err
 // AddUserToGroup for the read-modify-write mechanism this relies on and the
 // race window it leaves.
 func (c *Client) RemoveUserFromGroup(ctx context.Context, userID, groupID string) error {
-	user, err := c.GetUser(ctx, userID)
+	current, err := c.readUserGroupIDs(ctx, userID)
 	if err != nil {
 		if IsUserNotFound(err) {
 			return nil
@@ -351,13 +391,13 @@ func (c *Client) RemoveUserFromGroup(ctx context.Context, userID, groupID string
 	}
 
 	found := false
-	groupIDs := make([]string, 0, len(user.UserGroups))
-	for _, group := range user.UserGroups {
-		if group.ID == groupID {
+	groupIDs := make([]string, 0, len(current))
+	for _, id := range current {
+		if id == groupID {
 			found = true
 			continue
 		}
-		groupIDs = append(groupIDs, group.ID)
+		groupIDs = append(groupIDs, id)
 	}
 	if !found {
 		// Already not a member; nothing to do.
@@ -385,20 +425,15 @@ func (c *Client) RemoveUserFromGroup(ctx context.Context, userID, groupID string
 }
 
 // UserHasGroupMembership reports whether userID currently belongs to groupID.
-// It returns the error from GetUser unchanged, so callers can use
-// IsUserNotFound to distinguish a confirmed-missing user from any other
-// error (including a merely-generic 404) and from the user simply not
-// belonging to the group.
+// A response that does not show the user's groups is an error, never "not a
+// member" (see readUserGroupIDs). Errors from the request are returned
+// unchanged, so callers can use IsUserNotFound to distinguish a
+// confirmed-missing user from any other error (including a merely-generic
+// 404) and from the user simply not belonging to the group.
 func (c *Client) UserHasGroupMembership(ctx context.Context, userID, groupID string) (bool, error) {
-	user, err := c.GetUser(ctx, userID)
+	current, err := c.readUserGroupIDs(ctx, userID)
 	if err != nil {
 		return false, err
 	}
-
-	for _, group := range user.UserGroups {
-		if group.ID == groupID {
-			return true, nil
-		}
-	}
-	return false, nil
+	return slices.Contains(current, groupID), nil
 }

@@ -139,7 +139,7 @@ func groupMembershipTestServer(t *testing.T, userID string, initialGroups []stri
 			}
 			mu.Unlock()
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(client.User{ID: userID, UserGroups: groups})
+			_ = json.NewEncoder(w).Encode(usersGroupsFakeUserBody(userID, groups))
 		case r.Method == http.MethodPut && r.URL.Path == "/api/users/"+userID+"/user-groups":
 			var req client.UpdateUserGroupsRequest
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
@@ -605,10 +605,7 @@ func TestGroupMembershipResource_Delete_PUT404_UserStillPresent_ReturnsError(t *
 		switch r.Method {
 		case http.MethodGet:
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(client.User{
-				ID:         "44444444-4444-4444-8444-444444444444",
-				UserGroups: []client.UserGroup{{ID: "group-1"}},
-			})
+			_ = json.NewEncoder(w).Encode(usersGroupsFakeUserBody("44444444-4444-4444-8444-444444444444", []client.UserGroup{{ID: "group-1"}}))
 		case http.MethodPut:
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"error": "Not Found"}`))
@@ -643,10 +640,7 @@ func TestGroupMembershipResource_Delete_PUT404_UserConfirmedGone_Succeeds(t *tes
 			getCount++
 			if getCount == 1 {
 				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(client.User{
-					ID:         "44444444-4444-4444-8444-444444444444",
-					UserGroups: []client.UserGroup{{ID: "group-1"}},
-				})
+				_ = json.NewEncoder(w).Encode(usersGroupsFakeUserBody("44444444-4444-4444-8444-444444444444", []client.UserGroup{{ID: "group-1"}}))
 				return
 			}
 			w.WriteHeader(http.StatusNotFound)
@@ -670,4 +664,11 @@ func TestGroupMembershipResource_Delete_PUT404_UserConfirmedGone_Succeeds(t *tes
 	r.Delete(ctx, resource.DeleteRequest{State: state}, deleteResp)
 
 	assert.False(t, deleteResp.Diagnostics.HasError(), "%v", deleteResp.Diagnostics)
+}
+
+// usersGroupsFakeUserBody is a user as Pocket ID's GET and user-groups PUT answer it: userGroups
+// is always present (null when the user is in no group), unlike client.User's
+// omitempty encoding.
+func usersGroupsFakeUserBody(id string, groups []client.UserGroup) map[string]any {
+	return map[string]any{"id": id, "userGroups": groups}
 }

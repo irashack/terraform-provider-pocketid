@@ -32,7 +32,13 @@ type usersGroupsVerifyServer struct {
 	// failGetsFrom, when positive, makes the GET with that number and every
 	// later one fail.
 	failGetsFrom int
-	puts, gets   int
+	// getBody, when set, is the raw body of every GET of the user from the
+	// GET numbered getBodyFrom on (from the first when 0).
+	getBody     string
+	getBodyFrom int
+	// putBody, when set, is the raw body of every PUT's response.
+	putBody    string
+	puts, gets int
 }
 
 func (s *usersGroupsVerifyServer) start(t *testing.T) *client.Client {
@@ -53,6 +59,10 @@ func (s *usersGroupsVerifyServer) start(t *testing.T) *client.Client {
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
+			if s.getBody != "" && s.gets >= s.getBodyFrom {
+				_, _ = w.Write([]byte(s.getBody))
+				return
+			}
 			userJSON()
 		case "PUT /api/users/" + verifyUserID + "/user-groups":
 			s.puts++
@@ -66,6 +76,10 @@ func (s *usersGroupsVerifyServer) start(t *testing.T) *client.Client {
 			}
 			s.current = append(s.current, s.extraHeld...)
 			if s.unreadablePut {
+				return
+			}
+			if s.putBody != "" {
+				_, _ = w.Write([]byte(s.putBody))
 				return
 			}
 			userJSON()
@@ -175,4 +189,69 @@ func TestClient_GroupMembershipChangesAreVerified(t *testing.T) {
 		require.NoError(t, s.start(t).RemoveUserFromGroup(ctx, verifyUserID, "g2"))
 		assert.Equal(t, []string{"g1"}, s.current)
 	})
+}
+
+// usersGroupsMalformedUserBodies are GET answers that do not show which
+// groups the user is in. Explicit "userGroups": null does (none).
+var usersGroupsMalformedUserBodies = map[string]string{
+	"empty_object":     `{}`,
+	"null":             `null`,
+	"not_json":         `<html>ok</html>`,
+	"no_user_groups":   `{"id":"` + verifyUserID + `"}`,
+	"other_user":       `{"id":"88888888-8888-4888-8888-888888888888","userGroups":[]}`,
+	"no_id":            `{"userGroups":[]}`,
+	"groups_not_list":  `{"id":"` + verifyUserID + `","userGroups":"g1"}`,
+	"group_without_id": `{"id":"` + verifyUserID + `","userGroups":[{"name":"g1"}]}`,
+}
+
+// A read-back after an unreadable PUT response is evidence only when it shows
+// the user's groups; anything else leaves the result unknown, never an empty
+// set that would make a removal or a clearing look done.
+func TestClient_UserGroupsReadBackRequiresListedGroups(t *testing.T) {
+	ctx := context.Background()
+	for name, body := range usersGroupsMalformedUserBodies {
+		t.Run("set_"+name, func(t *testing.T) {
+			s := &usersGroupsVerifyServer{existing: []string{"g1"}, current: []string{"g1"}, unreadablePut: true, getBody: body}
+			_, err := s.start(t).SetUserGroups(ctx, verifyUserID, nil)
+			require.ErrorIs(t, err, client.ErrResultUnread)
+			assert.Equal(t, 1, s.puts)
+		})
+		t.Run("remove_"+name, func(t *testing.T) {
+			// The first GET (the snapshot) is a proper answer; the read-back
+			// after the unreadable PUT is not.
+			s := &usersGroupsVerifyServer{existing: []string{"g1"}, current: []string{"g1"}, unreadablePut: true, getBody: body, getBodyFrom: 2}
+			err := s.start(t).RemoveUserFromGroup(ctx, verifyUserID, "g1")
+			require.ErrorIs(t, err, client.ErrResultUnread, "a removal is not reported done without evidence")
+		})
+		t.Run("snapshot_"+name, func(t *testing.T) {
+			// The list written is built from the snapshot; one that does not
+			// show the groups must not become a write that drops them.
+			s := &usersGroupsVerifyServer{existing: []string{"g1", "g2"}, current: []string{"g1"}, getBody: body}
+			require.Error(t, s.start(t).AddUserToGroup(ctx, verifyUserID, "g2"))
+			assert.Zero(t, s.puts, "nothing is written")
+			assert.Equal(t, []string{"g1"}, s.current)
+		})
+		t.Run("membership_read_"+name, func(t *testing.T) {
+			s := &usersGroupsVerifyServer{getBody: body}
+			_, err := s.start(t).UserHasGroupMembership(ctx, verifyUserID, "g1")
+			require.Error(t, err)
+		})
+	}
+	t.Run("explicit_null_is_none", func(t *testing.T) {
+		s := &usersGroupsVerifyServer{existing: []string{"g1"}, current: []string{"g1"}, unreadablePut: true,
+			getBody: `{"id":"` + verifyUserID + `","userGroups":null}`}
+		held, err := s.start(t).SetUserGroups(ctx, verifyUserID, nil)
+		require.NoError(t, err)
+		assert.Empty(t, held)
+	})
+	// A PUT response that does not list the groups is followed by a read.
+	for name, body := range map[string]string{"empty_object": `{}`, "groups_not_list": `{"userGroups":"g1"}`, "not_json": `<html>ok</html>`} {
+		t.Run("put_"+name, func(t *testing.T) {
+			s := &usersGroupsVerifyServer{existing: []string{"g1"}, putBody: body}
+			held, err := s.start(t).SetUserGroups(ctx, verifyUserID, []string{"g1"})
+			require.NoError(t, err)
+			assert.Equal(t, []string{"g1"}, held)
+			assert.Equal(t, 1, s.gets, "the result was read back")
+		})
+	}
 }

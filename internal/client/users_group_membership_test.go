@@ -30,7 +30,7 @@ func newGroupMembershipTestServer(t *testing.T, userID string, initialGroups []s
 				groups = append(groups, client.UserGroup{ID: id})
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(client.User{ID: userID, UserGroups: groups})
+			_ = json.NewEncoder(w).Encode(usersGroupsFakeUser(userID, groups))
 		case r.Method == http.MethodPut && r.URL.Path == "/api/users/"+userID+"/user-groups":
 			var req client.UpdateUserGroupsRequest
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
@@ -141,10 +141,7 @@ func TestClient_RemoveUserFromGroup_PUT404_UserStillPresent_ReturnsError(t *test
 		case http.MethodGet:
 			getCount++
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(client.User{
-				ID:         "44444444-4444-4444-8444-444444444444",
-				UserGroups: []client.UserGroup{{ID: "group-remove"}},
-			})
+			_ = json.NewEncoder(w).Encode(usersGroupsFakeUser("44444444-4444-4444-8444-444444444444", []client.UserGroup{{ID: "group-remove"}}))
 		case http.MethodPut:
 			// Some unrelated cause returns 404 for the update itself (for
 			// example, a load balancer's own not-found page for a transient
@@ -179,10 +176,7 @@ func TestClient_RemoveUserFromGroup_PUT404_UserConfirmedGoneOnReGet_ReturnsNil(t
 			getCount++
 			if getCount == 1 {
 				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(client.User{
-					ID:         "44444444-4444-4444-8444-444444444444",
-					UserGroups: []client.UserGroup{{ID: "group-remove"}},
-				})
+				_ = json.NewEncoder(w).Encode(usersGroupsFakeUser("44444444-4444-4444-8444-444444444444", []client.UserGroup{{ID: "group-remove"}}))
 				return
 			}
 			w.WriteHeader(http.StatusNotFound)
@@ -214,10 +208,7 @@ func TestClient_RemoveUserFromGroup_PUT500_NoReGetAttempted(t *testing.T) {
 		case http.MethodGet:
 			getCount++
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(client.User{
-				ID:         "44444444-4444-4444-8444-444444444444",
-				UserGroups: []client.UserGroup{{ID: "group-remove"}},
-			})
+			_ = json.NewEncoder(w).Encode(usersGroupsFakeUser("44444444-4444-4444-8444-444444444444", []client.UserGroup{{ID: "group-remove"}}))
 		case http.MethodPut:
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(w, `{"error": "Internal server error"}`)
@@ -320,4 +311,11 @@ func TestClient_UserHasGroupMembership_GenericNotFound(t *testing.T) {
 	require.ErrorAs(t, err, &status)
 	assert.Empty(t, status.Code)
 	assert.False(t, client.IsUserNotFound(err))
+}
+
+// usersGroupsFakeUser is a user as Pocket ID's GET and user-groups PUT answer it: userGroups
+// is always present (null when the user is in no group), unlike client.User's
+// omitempty encoding.
+func usersGroupsFakeUser(id string, groups []client.UserGroup) map[string]any {
+	return map[string]any{"id": id, "userGroups": groups}
 }

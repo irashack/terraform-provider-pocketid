@@ -85,3 +85,9 @@
   kept in state (marked for replacement) with an error saying so, so that
   removing it from the configuration still revokes it. Before, nothing was
   recorded and such a membership could stay active unnoticed.
+- Reading a user's groups (to add or remove a `pocketid_group_membership`, to
+  refresh one, or to check a write whose response could not be read) now
+  requires a response that names the user and lists its groups. An empty or
+  malformed answer is an error instead of "no groups", which could have made a
+  removal look done, dropped a membership from state, or rebuilt the user's
+  group list without the groups it had.
