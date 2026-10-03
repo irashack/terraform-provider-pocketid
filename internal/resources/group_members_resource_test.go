@@ -49,6 +49,11 @@ type gmServer struct {
 	// putInterrupted applies every PUT and then breaks the connection in the
 	// middle of the response body.
 	putInterrupted bool
+	// putHeld answers every PUT with 502 without applying it and remembers
+	// what it asked for; releasePut then applies it, the way a request that a
+	// proxy gave up on is committed late.
+	putHeld        bool
+	pendingMembers []string
 	// failGetsAfterPut answers every GET of the group with 403 once a PUT was
 	// received.
 	failGetsAfterPut bool
@@ -133,6 +138,11 @@ func (s *gmServer) serve(w http.ResponseWriter, r *http.Request) {
 				seen[id] = true
 			}
 		}
+		if s.putHeld {
+			s.pendingMembers = kept
+			gmReply(w, http.StatusBadGateway, map[string]any{"error": "bad gateway"})
+			return
+		}
 		s.members = kept
 		if s.putAppliesThenFails != 0 {
 			gmReply(w, s.putAppliesThenFails, map[string]any{"error": "boom"})
@@ -156,6 +166,20 @@ func (s *gmServer) serve(w http.ResponseWriter, r *http.Request) {
 		s.t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		gmReply(w, 404, map[string]any{"error": "API endpoint not found"})
 	}
+}
+
+// releasePut applies the request putHeld kept back.
+func (s *gmServer) releasePut() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.members, s.putHeld = s.pendingMembers, false
+}
+
+// stopFailingGets lets reads succeed again after failGetsAfterPut.
+func (s *gmServer) stopFailingGets() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failGetsAfterPut = false
 }
 
 func (s *gmServer) memberSet() []string {
@@ -185,18 +209,32 @@ func gmResource(t *testing.T, c *client.Client) (resource.Resource, schema.Schem
 }
 
 func gmObject(ctx context.Context, sch schema.Schema, id, groupID string, ids []string) tftypes.Value {
-	elements := make([]tftypes.Value, 0, len(ids))
-	for _, i := range ids {
-		elements = append(elements, tftypes.NewValue(tftypes.String, i))
+	return gmObjectUnresolved(ctx, sch, id, groupID, ids, nil)
+}
+
+// gmObjectUnresolved builds a resource value with unresolved_user_ids set to
+// the given users; nil is null, an empty slice an empty set.
+func gmObjectUnresolved(ctx context.Context, sch schema.Schema, id, groupID string, ids, unresolved []string) tftypes.Value {
+	setOf := func(values []string) tftypes.Value {
+		elements := make([]tftypes.Value, 0, len(values))
+		for _, v := range values {
+			elements = append(elements, tftypes.NewValue(tftypes.String, v))
+		}
+		return tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, elements)
 	}
 	idValue := tftypes.NewValue(tftypes.String, nil)
 	if id != "" {
 		idValue = tftypes.NewValue(tftypes.String, id)
 	}
+	unresolvedValue := tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, nil)
+	if unresolved != nil {
+		unresolvedValue = setOf(unresolved)
+	}
 	return tftypes.NewValue(sch.Type().TerraformType(ctx), map[string]tftypes.Value{
-		"id":       idValue,
-		"group_id": tftypes.NewValue(tftypes.String, groupID),
-		"user_ids": tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, elements),
+		"id":                  idValue,
+		"group_id":            tftypes.NewValue(tftypes.String, groupID),
+		"user_ids":            setOf(ids),
+		"unresolved_user_ids": unresolvedValue,
 	})
 }
 
@@ -222,8 +260,13 @@ func gmUpdate(t *testing.T, r resource.Resource, sch schema.Schema, groupID stri
 
 func gmDelete(t *testing.T, r resource.Resource, sch schema.Schema, groupID string, managed []string) *resource.DeleteResponse {
 	t.Helper()
+	return gmDeleteUnresolved(t, r, sch, groupID, managed, nil)
+}
+
+func gmDeleteUnresolved(t *testing.T, r resource.Resource, sch schema.Schema, groupID string, managed, unresolved []string) *resource.DeleteResponse {
+	t.Helper()
 	ctx := context.Background()
-	state := tfsdk.State{Schema: sch, Raw: gmObject(ctx, sch, groupID, groupID, managed)}
+	state := tfsdk.State{Schema: sch, Raw: gmObjectUnresolved(ctx, sch, groupID, groupID, managed, unresolved)}
 	resp := &resource.DeleteResponse{State: state}
 	r.Delete(ctx, resource.DeleteRequest{State: state}, resp)
 	return resp
@@ -231,11 +274,32 @@ func gmDelete(t *testing.T, r resource.Resource, sch schema.Schema, groupID stri
 
 func gmRead(t *testing.T, r resource.Resource, sch schema.Schema, groupID string, prior []string) *resource.ReadResponse {
 	t.Helper()
+	return gmReadUnresolved(t, r, sch, groupID, prior, nil)
+}
+
+func gmReadUnresolved(t *testing.T, r resource.Resource, sch schema.Schema, groupID string, prior, unresolved []string) *resource.ReadResponse {
+	t.Helper()
 	ctx := context.Background()
-	state := tfsdk.State{Schema: sch, Raw: gmObject(ctx, sch, groupID, groupID, prior)}
+	state := tfsdk.State{Schema: sch, Raw: gmObjectUnresolved(ctx, sch, groupID, groupID, prior, unresolved)}
 	resp := &resource.ReadResponse{State: state}
 	r.Read(ctx, resource.ReadRequest{State: state}, resp)
 	return resp
+}
+
+// gmStateUnresolved returns unresolved_user_ids of a state, and whether it is
+// null.
+func gmStateUnresolved(t *testing.T, state tfsdk.State) (ids []string, null bool) {
+	t.Helper()
+	var set types.Set
+	require.False(t, state.GetAttribute(context.Background(), path.Root("unresolved_user_ids"), &set).HasError())
+	if set.IsNull() {
+		return nil, true
+	}
+	for _, e := range set.Elements() {
+		ids = append(ids, strings.Trim(e.String(), `"`))
+	}
+	sort.Strings(ids)
+	return ids, false
 }
 
 func gmStateIDs(t *testing.T, state tfsdk.State) []string {
@@ -270,6 +334,14 @@ func TestGroupMembersResource_SchemaAndMetadata(t *testing.T) {
 	assert.Contains(t, sch.MarkdownDescription, "pocketid_group_membership")
 	assert.Contains(t, sch.MarkdownDescription, "pocketid_user")
 	assert.Contains(t, sch.MarkdownDescription, "back-channel logout")
+	// The requests whose outcome is unknown, and what clears the record of them.
+	for _, claim := range []string{"unresolved_user_ids", "may yet take effect", "plans for the resource are refused", "destroy stops with an error", "terraform state rm"} {
+		assert.Contains(t, sch.MarkdownDescription, claim)
+	}
+	unresolved, ok := sch.Attributes["unresolved_user_ids"].(schema.SetAttribute)
+	require.True(t, ok)
+	assert.True(t, unresolved.Computed)
+	assert.False(t, unresolved.Optional || unresolved.Required)
 	// The window between the provider's read and its write cannot be closed, and
 	// the description says so for all three writes.
 	for _, claim := range []string{"after the read and before the write", "cannot be protected", "create and update refuse", "destroy keeps"} {
@@ -413,8 +485,10 @@ func TestGroupMembersResource_FailureAfterTheChangeIsReconciledByReading(t *test
 }
 
 // The change may have been made but the group cannot be read afterwards either:
-// the resource keeps its identity, with the members read before the request, so
-// that a refresh can reconcile it.
+// the resource keeps its identity, with the members read before the request and
+// the users the request named as candidates to clean up. Destroying it without
+// a refresh in between must remove the user the request granted, which the
+// members read before the request do not mention.
 func TestGroupMembersResource_UnknownOutcomeKeepsTheIdentity(t *testing.T) {
 	s, c := newGMServer(t)
 	s.putAppliesThenFails = http.StatusInternalServerError
@@ -426,19 +500,167 @@ func TestGroupMembersResource_UnknownOutcomeKeepsTheIdentity(t *testing.T) {
 	assert.Equal(t, "Group members may have changed", resp.Diagnostics.Errors()[0].Summary())
 	require.False(t, resp.State.Raw.IsNull(), "an unknown outcome keeps the resource so that it can be reconciled")
 	assert.Empty(t, gmStateIDs(t, resp.State), "the members last read, before the request")
+	candidates, null := gmStateUnresolved(t, resp.State)
+	assert.False(t, null)
+	assert.Equal(t, []string{gmUUID(101)}, candidates, "the requested users are recorded separately from the members")
 	assert.Equal(t, 1, s.putCount())
+	assert.Equal(t, []string{gmUUID(101)}, s.memberSet(), "the request did take effect")
+
+	// While the group still cannot be read, destroy stops with an error and the
+	// resource stays: it must not be forgotten on the strength of the empty
+	// snapshot from before the write.
+	failed := gmDeleteUnresolved(t, r, sch, s.groupID, nil, candidates)
+	require.True(t, failed.Diagnostics.HasError())
+	assert.False(t, failed.State.Raw.IsNull(), "the resource stays in state")
+	assert.Equal(t, []string{gmUUID(101)}, s.memberSet())
+	assert.Equal(t, 1, s.putCount(), "nothing was written")
+
+	// Once it can be read, destroy, with no refresh in between, removes the user.
+	s.stopFailingGets()
+	deleted := gmDeleteUnresolved(t, r, sch, s.groupID, gmStateIDs(t, resp.State), candidates)
+	require.False(t, deleted.Diagnostics.HasError(), "%v", deleted.Diagnostics)
+	assert.Empty(t, s.memberSet(), "the user the unknown request granted is removed")
 }
 
-// A failure after which the group provably holds what it held records nothing.
-func TestGroupMembersResource_FailureThatChangedNothingIsNotRecorded(t *testing.T) {
+// A request that fails without proving it was refused, and after which the group
+// is read and shows its old members, is still unsettled: a request that timed
+// out upstream can be applied afterwards. The resource keeps its identity and
+// records the requested users, and a destroy that comes after the late commit,
+// with no refresh in between, removes them.
+func TestGroupMembersResource_UnchangedGroupAfterAnUncertainFailureKeepsTheIdentity(t *testing.T) {
+	cases := map[string]func(s *gmServer){
+		"server error":         func(s *gmServer) { s.putStatus = http.StatusInternalServerError },
+		"timeout status":       func(s *gmServer) { s.putStatus = http.StatusRequestTimeout },
+		"held, committed late": func(s *gmServer) { s.putHeld = true },
+	}
+	for name, configure := range cases {
+		t.Run(name, func(t *testing.T) {
+			s, c := newGMServer(t)
+			configure(s)
+			r, sch := gmResource(t, c)
+
+			resp := gmCreate(t, r, sch, s.groupID, []string{gmUUID(101), gmUUID(102)})
+			require.True(t, resp.Diagnostics.HasError())
+			assert.Equal(t, "Group members may have changed", resp.Diagnostics.Errors()[0].Summary())
+			require.False(t, resp.State.Raw.IsNull(), "the re-read shows nothing, which does not settle it")
+			assert.Empty(t, gmStateIDs(t, resp.State), "what the group held when it was read")
+			candidates, null := gmStateUnresolved(t, resp.State)
+			require.False(t, null)
+			assert.Equal(t, []string{gmUUID(101), gmUUID(102)}, candidates)
+			assert.Equal(t, 1, s.putCount(), "never sent twice")
+
+			// The request commits late.
+			s.mu.Lock()
+			held := s.putHeld
+			s.mu.Unlock()
+			if held {
+				s.releasePut()
+			} else {
+				// The server recovers, and the request it seemed to refuse turns
+				// out to have been applied.
+				s.mu.Lock()
+				s.putStatus = 0
+				s.members = []string{gmUUID(101), gmUUID(102)}
+				s.mu.Unlock()
+			}
+
+			deleted := gmDeleteUnresolved(t, r, sch, s.groupID, gmStateIDs(t, resp.State), candidates)
+			require.False(t, deleted.Diagnostics.HasError(), "%v", deleted.Diagnostics)
+			assert.Empty(t, s.memberSet(), "the users the request granted late are removed")
+		})
+	}
+}
+
+// A request the server refused outright (a 4xx other than a timeout) proves it
+// changed nothing: no state, no candidates.
+func TestGroupMembersResource_DefiniteRejectionIsNotRecorded(t *testing.T) {
 	s, c := newGMServer(t)
-	s.putStatus = http.StatusInternalServerError
+	s.putStatus = http.StatusForbidden
 	r, sch := gmResource(t, c)
 
 	resp := gmCreate(t, r, sch, s.groupID, []string{gmUUID(101)})
 	require.True(t, resp.Diagnostics.HasError())
-	assert.True(t, resp.State.Raw.IsNull(), "the re-read shows the group unchanged")
+	assert.True(t, resp.State.Raw.IsNull())
 	assert.Equal(t, 1, s.putCount())
+}
+
+// Update records the same: the members the group holds, the requested users as
+// candidates, and the plan's user_ids is not what the state keeps.
+func TestGroupMembersResource_Update_UncertainOutcomeRecordsCandidates(t *testing.T) {
+	s, c := newGMServer(t, gmUUID(101))
+	s.putHeld = true
+	r, sch := gmResource(t, c)
+
+	resp := gmUpdate(t, r, sch, s.groupID, []string{gmUUID(101)}, []string{gmUUID(101), gmUUID(102)})
+	require.True(t, resp.Diagnostics.HasError())
+	assert.Equal(t, []string{gmUUID(101)}, gmStateIDs(t, resp.State), "what the group holds, not the plan")
+	candidates, null := gmStateUnresolved(t, resp.State)
+	require.False(t, null)
+	assert.Equal(t, []string{gmUUID(101), gmUUID(102)}, candidates)
+
+	s.releasePut()
+	deleted := gmDeleteUnresolved(t, r, sch, s.groupID, gmStateIDs(t, resp.State), candidates)
+	require.False(t, deleted.Diagnostics.HasError(), "%v", deleted.Diagnostics)
+	assert.Empty(t, s.memberSet())
+}
+
+// A change applied to an unresolved resource is refused: the members to protect
+// are not in the plan.
+func TestGroupMembersResource_Update_RefusesWhileUnresolved(t *testing.T) {
+	s, c := newGMServer(t)
+	r, sch := gmResource(t, c)
+	ctx := context.Background()
+	state := tfsdk.State{Schema: sch, Raw: gmObjectUnresolved(ctx, sch, s.groupID, s.groupID, nil, []string{gmUUID(101)})}
+	resp := &resource.UpdateResponse{State: state}
+	r.Update(ctx, resource.UpdateRequest{
+		Plan:  tfsdk.Plan{Schema: sch, Raw: gmObject(ctx, sch, s.groupID, s.groupID, []string{gmUUID(102)})},
+		State: state,
+	}, resp)
+	require.True(t, resp.Diagnostics.HasError())
+	assert.Equal(t, "Group members have an unresolved change", resp.Diagnostics.Errors()[0].Summary())
+	assert.Empty(t, s.log, "no request was made")
+}
+
+// Reading a resource with candidates reads the group and resolves them: the
+// members the group holds are recorded, the candidates cleared.
+func TestGroupMembersResource_Read_ResolvesCandidates(t *testing.T) {
+	s, c := newGMServer(t, gmUUID(101), gmUUID(103))
+	r, sch := gmResource(t, c)
+
+	resp := gmReadUnresolved(t, r, sch, s.groupID, nil, []string{gmUUID(101), gmUUID(102)})
+	require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
+	assert.Equal(t, []string{gmUUID(101), gmUUID(103)}, gmStateIDs(t, resp.State), "what the group holds now")
+	_, null := gmStateUnresolved(t, resp.State)
+	assert.True(t, null, "the candidates are cleared")
+
+	// Destroying from the state the read left removes the candidate that did
+	// become a member, and the member the read recorded.
+	deleted := &resource.DeleteResponse{State: resp.State}
+	r.Delete(context.Background(), resource.DeleteRequest{State: resp.State}, deleted)
+	require.False(t, deleted.Diagnostics.HasError(), "%v", deleted.Diagnostics)
+	assert.Empty(t, s.memberSet())
+}
+
+// A read that fails leaves the candidates in place; a group that no longer
+// exists ends the resource.
+func TestGroupMembersResource_Read_UnresolvedKeepsCandidatesUntilTheGroupIsRead(t *testing.T) {
+	s, c := newGMServer(t)
+	s.getStatus, s.getBody = http.StatusServiceUnavailable, map[string]any{"error": "down"}
+	r, sch := gmResource(t, c)
+
+	failed := gmReadUnresolved(t, r, sch, s.groupID, nil, []string{gmUUID(101)})
+	require.True(t, failed.Diagnostics.HasError())
+	candidates, null := gmStateUnresolved(t, failed.State)
+	assert.False(t, null, "the candidates stay")
+	assert.Equal(t, []string{gmUUID(101)}, candidates)
+
+	s.mu.Lock()
+	s.getStatus = 0
+	s.exists = false
+	s.mu.Unlock()
+	gone := gmReadUnresolved(t, r, sch, s.groupID, nil, []string{gmUUID(101)})
+	require.False(t, gone.Diagnostics.HasError(), "%v", gone.Diagnostics)
+	assert.True(t, gone.State.Raw.IsNull(), "a group that does not exist has no members to clean up")
 }
 
 // A success response that does not list the users is read back with a GET.

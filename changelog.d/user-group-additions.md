@@ -61,8 +61,9 @@
   request is only partly applied (for example when `user_ids` names a user that
   does not exist, the others are still added): it reports the error and records
   the group's real members, so destroying the resource removes them. When a
-  request fails without showing whether it was applied, the group is read once
-  and what it holds is recorded. It also refuses a group record that lacks its
+  request fails without showing whether it was applied, the group is read once;
+  if it holds the requested members that is recorded, and otherwise see
+  `unresolved_user_ids` below. It also refuses a group record that lacks its
   users instead of reading it as an empty group, and takes the same
   provider-wide lock as the other membership writers.
 - `pocketid_user_profile_picture` reads the stored picture past any cache
@@ -91,3 +92,17 @@
   but cut-short or damaged image data is refused with an error before anything
   is uploaded, where before the plan passed and Pocket ID refused the upload
   during the apply.
+- New computed attribute `unresolved_user_ids` on `pocketid_group_members`, null
+  for a normal resource. When a request to set the members fails without
+  showing whether it was applied (a lost or unreadable answer, a server or proxy
+  error, a timeout) and the group then does not show the requested members, or
+  cannot be read, the request may still take effect later. The resource now
+  keeps its identity, records the members it read, and lists the requested users
+  in `unresolved_user_ids`. Plans for it are refused until a refresh reads the
+  group and clears the list; destroy reads the group first and removes the
+  listed users that are members, or stops with an error and keeps the resource if
+  the group cannot be read. Before, such a failure could leave a user that the
+  late request added in the group with nothing managing it, or let destroy
+  succeed without removing that user. Existing state needs no change and an
+  unchanged configuration still plans empty. To give up on a group without
+  changing it, run `terraform state rm`.

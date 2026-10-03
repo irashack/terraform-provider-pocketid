@@ -2,8 +2,10 @@ package resources
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -28,6 +30,7 @@ var (
 	_ resource.Resource                = &groupMembersResource{}
 	_ resource.ResourceWithConfigure   = &groupMembersResource{}
 	_ resource.ResourceWithImportState = &groupMembersResource{}
+	_ resource.ResourceWithModifyPlan  = &groupMembersResource{}
 )
 
 func init() { register(NewGroupMembersResource) }
@@ -43,9 +46,10 @@ type groupMembersResource struct {
 }
 
 type groupMembersResourceModel struct {
-	ID      types.String `tfsdk:"id"`
-	GroupID types.String `tfsdk:"group_id"`
-	UserIDs types.Set    `tfsdk:"user_ids"`
+	ID                types.String `tfsdk:"id"`
+	GroupID           types.String `tfsdk:"group_id"`
+	UserIDs           types.Set    `tfsdk:"user_ids"`
+	UnresolvedUserIDs types.Set    `tfsdk:"unresolved_user_ids"`
 }
 
 var groupMembersUUIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
@@ -74,8 +78,11 @@ func (r *groupMembersResource) Schema(_ context.Context, _ resource.SchemaReques
 			"Those checks cover what the group held at that read only. A user added by something else (the Pocket ID admin interface, another Terraform run, an onboarding service) after the read and before the write, an instant later, cannot be protected: the write removes them, no check can prevent it, and the provider cannot tell afterwards that it happened. " +
 			"Within one Terraform run the provider serializes every write of user-group relations, so this resource, `pocketid_group_membership` and `pocketid_user` do not overwrite each other.\n\n" +
 			"~> **LDAP groups** A group synchronized from LDAP gets its membership rewritten by the next LDAP synchronization. Do not manage its members with this resource.\n\n" +
-			"**Partial results.** If Pocket ID applies only part of a request (it skips an ID that names no user), the resource reports the error and still records the members the group actually holds, so that Terraform marks it tainted and destroying it removes those members; nothing is left unmanaged. " +
-			"When a request fails in a way that does not show whether it was applied, the group is read once and what it holds is recorded; if that read fails too, the members last read are kept and a refresh reconciles them.\n\n" +
+			"**Partial results.** If Pocket ID applies only part of a request (it skips an ID that names no user), the resource reports the error and still records the members the group actually holds, so that Terraform marks it tainted and destroying it removes those members; nothing is left unmanaged.\n\n" +
+			"**Requests whose outcome is unknown.** When a request fails in a way that does not show whether it was applied (the answer was lost or could not be read, or a server or proxy error), the provider reads the group once. If the group then holds what was asked for, that is recorded. " +
+			"Otherwise, whether the group still shows its old members or the read fails too, the request may yet take effect (a proxy can give up on a request the server goes on to commit), so the resource keeps its identity, records the members it read, and lists the users that were requested in `unresolved_user_ids`. " +
+			"While that is set, plans for the resource are refused, naming the recovery. A refresh reads the group again and clears it, recording the members then held. Destroying the resource first reads the group and removes the requested users that are members, together with the members it had recorded, so a request that committed late is cleaned up too; if the group cannot be read, destroy stops with an error and keeps the resource in state. " +
+			"To stop managing the group without changing it, run `terraform state rm` for the resource.\n\n" +
 			"**Destroying** the resource removes the users in `user_ids` from the group. Members added outside Terraform since the last refresh stay. The group itself is not deleted.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -94,6 +101,11 @@ func (r *groupMembersResource) Schema(_ context.Context, _ resource.SchemaReques
 				Validators: []validator.String{
 					stringvalidator.RegexMatches(groupMembersUUIDPattern, "must be a UUID"),
 				},
+			},
+			"unresolved_user_ids": schema.SetAttribute{
+				Description: "The users this resource asked Pocket ID to make members when the outcome of that request is unknown (the answer was lost or unreadable, and the group then still showed its old members or could not be read), so they may become members later. Null for every other resource. While it is set, plans for the resource are refused; a refresh reads the group and clears it, and destroy removes the users listed here that are members, or stops with an error if the group cannot be read. `terraform state rm` gives up management without changing the group.",
+				Computed:    true,
+				ElementType: types.StringType,
 			},
 			"user_ids": schema.SetAttribute{
 				Description: "The IDs of the users (UUIDs) that are the group's members, no more and no fewer. An empty set means the group has no members. An ID that names no user is an error, not skipped.",
@@ -175,6 +187,11 @@ type groupMembersPut struct {
 	// Err is why the request itself failed, or nil. A failure that does not
 	// prove the change was not applied is still followed by a read.
 	Err error
+	// Uncertain: the request failed without proving that it was refused (a
+	// server or proxy error, a broken connection, an unusable answer). Even a
+	// read that shows nothing changed does not settle it: a request that
+	// timed out upstream can still commit afterwards.
+	Uncertain bool
 }
 
 // put replaces the group's members with ids and finds out what the group holds
@@ -198,11 +215,11 @@ func (r *groupMembersResource) put(ctx context.Context, groupID string, ids, bef
 	reread, readErr := r.client.GetUserGroupDetail(ctx, groupID)
 	switch {
 	case readErr == nil:
-		return groupMembersPut{Changed: !groupMembersSame(reread.MemberIDs, before), Observed: reread.MemberIDs, ObservedKnown: true, Err: err}
+		return groupMembersPut{Changed: !groupMembersSame(reread.MemberIDs, before), Observed: reread.MemberIDs, ObservedKnown: true, Err: err, Uncertain: true}
 	case client.IsNotFound(readErr, client.ResourceUserGroup):
 		return groupMembersPut{Gone: true, Err: err}
 	default:
-		return groupMembersPut{Changed: true, Err: err}
+		return groupMembersPut{Changed: true, Err: err, Uncertain: true}
 	}
 }
 
@@ -210,13 +227,19 @@ func (r *groupMembersResource) put(ctx context.Context, groupID string, ids, bef
 type groupMembersWrite struct {
 	// OK: the group now holds exactly the requested members.
 	OK bool
-	// Changed: the group's members may have been changed by this call even
-	// though it did not succeed, so the resource must stay in state to be able
-	// to reconcile or undo that.
+	// Changed: the group's members were changed by this call even though it
+	// did not succeed (a request that named an unknown user still added the
+	// others), so the resource must stay in state to be able to undo that.
 	Changed bool
-	// Members is what to record in state when Changed and not OK: the
-	// membership observed after the request, or, when that could not be read,
-	// the one read before it.
+	// Unresolved: the request's outcome is unknown and stays unknown even after
+	// the group was read, so it may still take effect. The resource must stay
+	// in state with Candidates recorded as users it may have to remove.
+	Unresolved bool
+	// Candidates are the users that were requested, when Unresolved.
+	Candidates []string
+	// Members is what to record in state when Changed or Unresolved and not
+	// OK: the membership observed after the request, or, when that could not be
+	// read, the one read before it.
 	Members []string
 }
 
@@ -254,17 +277,17 @@ func (r *groupMembersResource) write(ctx context.Context, groupID string, known,
 	case result.Gone:
 		diags.AddError("Group not found", fmt.Sprintf("Group %s does not exist (any longer). Nothing was changed.", groupID))
 		return groupMembersWrite{}
-	case result.Err != nil && !result.Changed && !result.ObservedKnown:
+	case result.Err != nil && !result.Uncertain:
 		// Refused outright.
 		diags.AddError("Error setting group members", fmt.Sprintf("Pocket ID refused to set the members of group %s: %s. Nothing was changed.", groupID, result.Err))
 		return groupMembersWrite{}
 	case !result.ObservedKnown:
 		diags.AddError(
 			"Group members may have changed",
-			fmt.Sprintf("The request to set the members of group %s failed (%s) and reading the group afterwards failed too, so it is not known whether the members changed. "+
-				"The resource keeps the members last read; refresh and plan again to see what the group holds.", groupID, result.Err),
+			fmt.Sprintf("The request to set the members of group %s failed (%s) and reading the group afterwards failed too, so it is not known whether the members changed or will change. "+
+				"The resource keeps the members last read and lists the requested users in unresolved_user_ids; refresh to see what the group holds, or run terraform state rm to give up management.", groupID, result.Err),
 		)
-		return groupMembersWrite{Changed: true, Members: current.MemberIDs}
+		return groupMembersWrite{Changed: true, Unresolved: true, Candidates: want, Members: current.MemberIDs}
 	}
 
 	if groupMembersSame(result.Observed, want) {
@@ -273,6 +296,17 @@ func (r *groupMembersResource) write(ctx context.Context, groupID string, known,
 				fmt.Sprintf("The request to set the members of group %s failed (%s), but reading the group afterwards shows the requested members, so the change is recorded.", groupID, result.Err))
 		}
 		return groupMembersWrite{OK: true, Changed: true}
+	}
+	if result.Uncertain {
+		// The request failed without proving it was refused, and the group does
+		// not hold what was asked: still unsettled, whether it shows the old
+		// members or a mixture, because the request may yet be applied.
+		diags.AddError(
+			"Group members may have changed",
+			fmt.Sprintf("The request to set the members of group %s failed (%s) and reading the group afterwards does not show the requested members. That does not prove the request had no effect: a request that timed out can still be applied afterwards. "+
+				"The resource keeps the members the group holds now and lists the requested users in unresolved_user_ids; refresh to see what the group holds then, or run terraform state rm to give up management.", groupID, result.Err),
+		)
+		return groupMembersWrite{Changed: result.Changed, Unresolved: true, Candidates: want, Members: result.Observed}
 	}
 	groupMembersReportDifference(groupID, want, result.Observed, result.Err, diags)
 	return groupMembersWrite{Changed: result.Changed, Members: result.Observed}
@@ -300,6 +334,128 @@ func groupMembersReportDifference(groupID string, want, got []string, requestErr
 	)
 }
 
+// The unresolved candidates are recorded twice: in the computed
+// unresolved_user_ids attribute and in private state. Terraform taints a
+// resource whose create returned an error and plans its replacement from a
+// null prior state with no private state; the destroy half of that replacement
+// runs Delete with the replacement plan's private data, which has no marker,
+// and with the tainted resource's prior state. The attribute is therefore what
+// protects the users. The private marker covers a state that has it.
+const groupMembersUnresolvedKey = "unresolved_members"
+
+// groupMembersPrivateReader and groupMembersPrivateWriter are the parts of the
+// framework's private state this file uses: requests offer GetKey, responses
+// both.
+type groupMembersPrivateReader interface {
+	GetKey(ctx context.Context, key string) ([]byte, diag.Diagnostics)
+}
+
+type groupMembersPrivateWriter interface {
+	groupMembersPrivateReader
+	SetKey(ctx context.Context, key string, value []byte) diag.Diagnostics
+}
+
+// groupMembersPrivateAvailable reports whether private state can be written.
+// The framework always supplies it; a direct call from a test may not.
+func groupMembersPrivateAvailable(private groupMembersPrivateWriter) bool {
+	if private == nil {
+		return false
+	}
+	value := reflect.ValueOf(private)
+	return value.Kind() != reflect.Ptr || !value.IsNil()
+}
+
+// groupMembersUnresolved returns the candidates recorded by an earlier write
+// whose outcome was unknown, from the resource's state and its private state,
+// and whether there are any.
+func groupMembersUnresolved(ctx context.Context, attribute types.Set, private groupMembersPrivateReader, diags *diag.Diagnostics) ([]string, bool) {
+	unresolved := false
+	var candidates []string
+	if !attribute.IsNull() && !attribute.IsUnknown() {
+		unresolved = true
+		diags.Append(attribute.ElementsAs(ctx, &candidates, false)...)
+	}
+	if private != nil {
+		value, d := private.GetKey(ctx, groupMembersUnresolvedKey)
+		diags.Append(d...)
+		if len(value) > 0 {
+			unresolved = true
+			var recorded struct {
+				UserIDs []string `json:"user_ids"`
+			}
+			if err := json.Unmarshal(value, &recorded); err == nil {
+				candidates = append(candidates, recorded.UserIDs...)
+			}
+		}
+	}
+	candidates = groupMembersDiff(candidates, nil) // sorted copy
+	return groupMembersUnique(candidates), unresolved
+}
+
+// groupMembersUnique drops repeats from a sorted list.
+func groupMembersUnique(sorted []string) []string {
+	var out []string
+	for i, id := range sorted {
+		if i == 0 || id != sorted[i-1] {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// groupMembersSetUnresolved records or clears the private marker.
+func groupMembersSetUnresolved(ctx context.Context, private groupMembersPrivateWriter, candidates []string, diags *diag.Diagnostics) {
+	if !groupMembersPrivateAvailable(private) {
+		return
+	}
+	if candidates == nil {
+		// Clear only what is there: there is nothing to remove otherwise.
+		if value, _ := private.GetKey(ctx, groupMembersUnresolvedKey); len(value) > 0 {
+			diags.Append(private.SetKey(ctx, groupMembersUnresolvedKey, nil)...)
+		}
+		return
+	}
+	value, err := json.Marshal(struct {
+		UserIDs []string `json:"user_ids"`
+	}{UserIDs: candidates})
+	if err != nil {
+		diags.AddError("Error recording the unresolved members", err.Error())
+		return
+	}
+	diags.Append(private.SetKey(ctx, groupMembersUnresolvedKey, value)...)
+}
+
+// groupMembersUnresolvedDetail explains the recovery when a plan is refused.
+func groupMembersUnresolvedDetail(groupID string, candidates []string) string {
+	return fmt.Sprintf("An earlier change to the members of group %s had an unknown outcome, so it may still take effect: the resource lists %d requested user(s) in unresolved_user_ids (%s). "+
+		"Nothing was changed. Refresh (run the plan without -refresh=false) so that the provider reads the group and records what it holds, then plan again; "+
+		"or run terraform state rm for this resource to stop managing the group without changing it.", groupID, len(candidates), groupMembersList(candidates))
+}
+
+// ModifyPlan keeps unresolved_user_ids null in every plan and refuses to plan a
+// change for a resource that has unresolved candidates recorded: the plan would
+// not show what the unknown request may still do. A destroy is not refused,
+// because Delete reconciles the candidates before it removes anything. Terraform
+// plans the replacement of a tainted resource from a null prior state, which
+// this cannot see; Delete is where that case is protected.
+func (r *groupMembersResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() {
+		return
+	}
+	if !req.State.Raw.IsNull() {
+		var state groupMembersResourceModel
+		resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		if candidates, unresolved := groupMembersUnresolved(ctx, state.UnresolvedUserIDs, req.Private, &resp.Diagnostics); unresolved {
+			resp.Diagnostics.AddError("Group members have an unresolved change", groupMembersUnresolvedDetail(state.GroupID.ValueString(), candidates))
+			return
+		}
+	}
+	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("unresolved_user_ids"), types.SetNull(types.StringType))...)
+}
+
 // Create replaces the group's membership with user_ids.
 func (r *groupMembersResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan groupMembersResourceModel
@@ -321,34 +477,57 @@ func (r *groupMembersResource) Create(ctx context.Context, req resource.CreateRe
 	// want.
 	outcome := r.write(ctx, groupID, nil, want, &resp.Diagnostics)
 	if !outcome.OK {
-		if outcome.Changed {
+		if outcome.Changed || outcome.Unresolved {
 			// The group's members changed (for example the valid users of a
-			// request that also named a user that does not exist were added).
-			// Keep the resource, with the members the group actually holds, so
-			// that destroying it removes them and a refresh sees them; the
-			// error stays, so Terraform marks the resource tainted.
-			r.keep(ctx, &plan, outcome.Members, &resp.State, &resp.Diagnostics)
+			// request that also named a user that does not exist were added),
+			// or may still change (the request's outcome is unknown). Keep the
+			// resource, with the members the group actually holds and any
+			// candidates to clean up, so that destroying it removes them and a
+			// refresh sees them; the error stays, so Terraform marks the
+			// resource tainted.
+			r.keep(ctx, &plan, outcome, &resp.State, resp.Private, &resp.Diagnostics)
 		}
 		return
 	}
 	plan.ID = types.StringValue(groupID)
+	plan.UnresolvedUserIDs = types.SetNull(types.StringType)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	groupMembersSetUnresolved(ctx, resp.Private, nil, &resp.Diagnostics)
 }
 
-// keep records the resource with the given members, after a write that failed
-// but may have changed the group.
-func (r *groupMembersResource) keep(ctx context.Context, model *groupMembersResourceModel, members []string, state *tfsdk.State, diags *diag.Diagnostics) {
-	set, setDiags := ugIDSetValueResource(ctx, members)
+// keep records the resource after a write that failed but changed the group or
+// may still change it: with the members the group holds (or held before the
+// request, when it could not be read), and, when the outcome is unknown, the
+// requested users as candidates to clean up.
+func (r *groupMembersResource) keep(ctx context.Context, model *groupMembersResourceModel, outcome groupMembersWrite, state *tfsdk.State, private groupMembersPrivateWriter, diags *diag.Diagnostics) {
+	set, setDiags := ugIDSetValueResource(ctx, outcome.Members)
 	diags.Append(setDiags...)
 	if setDiags.HasError() {
 		return
 	}
 	model.ID = types.StringValue(model.GroupID.ValueString())
 	model.UserIDs = set
+	model.UnresolvedUserIDs = types.SetNull(types.StringType)
+	var candidates []string
+	if outcome.Unresolved {
+		candidates = groupMembersUnique(groupMembersDiff(outcome.Candidates, nil))
+		if candidates == nil {
+			candidates = []string{}
+		}
+		recorded, d := ugIDSetValueResource(ctx, candidates)
+		diags.Append(d...)
+		if d.HasError() {
+			return
+		}
+		model.UnresolvedUserIDs = recorded
+	}
 	diags.Append(state.Set(ctx, model)...)
+	groupMembersSetUnresolved(ctx, private, candidates, diags)
 }
 
-// Read refreshes the state with the group's actual members.
+// Read refreshes the state with the group's actual members. A resource with
+// unresolved candidates is resolved by this read: the members the group holds
+// are recorded, the candidates cleared.
 func (r *groupMembersResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var state groupMembersResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
@@ -359,7 +538,8 @@ func (r *groupMembersResource) Read(ctx context.Context, req resource.ReadReques
 	group, err := r.client.GetUserGroupDetail(ctx, state.GroupID.ValueString())
 	if err != nil {
 		// Only Pocket ID's own "no such group" means the group is gone; any
-		// other failure (a wrong URL, a proxy's 404, an outage) is an error.
+		// other failure (a wrong URL, a proxy's 404, an outage) is an error,
+		// and an unresolved resource stays as it is.
 		if client.IsNotFound(err, client.ResourceUserGroup) {
 			resp.State.RemoveResource(ctx)
 			return
@@ -375,7 +555,9 @@ func (r *groupMembersResource) Read(ctx context.Context, req resource.ReadReques
 	}
 	state.ID = types.StringValue(state.GroupID.ValueString())
 	state.UserIDs = members
+	state.UnresolvedUserIDs = types.SetNull(types.StringType)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+	groupMembersSetUnresolved(ctx, resp.Private, nil, &resp.Diagnostics)
 }
 
 // ugIDSetValueResource converts IDs to a set of strings, empty rather than
@@ -396,6 +578,12 @@ func (r *groupMembersResource) Update(ctx context.Context, req resource.UpdateRe
 		return
 	}
 	groupID := plan.GroupID.ValueString()
+	// ModifyPlan refuses to plan a change for an unresolved resource; refuse
+	// again here, because the members to protect are not in the plan.
+	if candidates, unresolved := groupMembersUnresolved(ctx, state.UnresolvedUserIDs, req.Private, &resp.Diagnostics); unresolved {
+		resp.Diagnostics.AddError("Group members have an unresolved change", groupMembersUnresolvedDetail(groupID, candidates))
+		return
+	}
 	want := groupMembersIDs(ctx, plan.UserIDs, &resp.Diagnostics)
 	known := groupMembersIDs(ctx, state.UserIDs, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
@@ -408,20 +596,29 @@ func (r *groupMembersResource) Update(ctx context.Context, req resource.UpdateRe
 
 	outcome := r.write(ctx, groupID, known, want, &resp.Diagnostics)
 	if !outcome.OK {
-		if outcome.Changed {
+		if outcome.Changed || outcome.Unresolved {
 			// Record what the group actually holds, not the prior members and
-			// not the plan; the error stays.
-			r.keep(ctx, &plan, outcome.Members, &resp.State, &resp.Diagnostics)
+			// not the plan, and any candidates to clean up; the error stays.
+			r.keep(ctx, &plan, outcome, &resp.State, resp.Private, &resp.Diagnostics)
 		}
 		return
 	}
 	plan.ID = types.StringValue(groupID)
+	plan.UnresolvedUserIDs = types.SetNull(types.StringType)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	groupMembersSetUnresolved(ctx, resp.Private, nil, &resp.Diagnostics)
 }
 
 // Delete removes the users the resource manages from the group. Members added
 // since the last refresh stay, and a group that is already gone is nothing to
 // do.
+//
+// The users managed are the ones in state, and, when an earlier write left its
+// outcome unknown, the users that request named: they are read from the group
+// here, now, and a member among them is removed, so that a request that
+// committed late is cleaned up and not left as unmanaged access. If the group
+// cannot be read the resource stays in state with an error; it is never
+// forgotten on the strength of the snapshot from before the write.
 func (r *groupMembersResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var state groupMembersResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
@@ -430,9 +627,11 @@ func (r *groupMembersResource) Delete(ctx context.Context, req resource.DeleteRe
 	}
 	groupID := state.GroupID.ValueString()
 	managed := groupMembersIDs(ctx, state.UserIDs, &resp.Diagnostics)
+	candidates, _ := groupMembersUnresolved(ctx, state.UnresolvedUserIDs, req.Private, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	managed = groupMembersUnique(groupMembersDiff(append(managed, candidates...), nil))
 
 	// The shared lock, held across the whole read, write and verify sequence;
 	// see lockMembershipWrites.
@@ -443,7 +642,7 @@ func (r *groupMembersResource) Delete(ctx context.Context, req resource.DeleteRe
 		if client.IsNotFound(err, client.ResourceUserGroup) {
 			return
 		}
-		resp.Diagnostics.AddError("Error reading group", fmt.Sprintf("Could not read group %s before removing its members: %s", groupID, err))
+		resp.Diagnostics.AddError("Error reading group", fmt.Sprintf("Could not read group %s before removing its members: %s. Nothing was removed and the resource stays in state; destroy again once the group can be read.", groupID, err))
 		return
 	}
 	remaining := groupMembersDiff(current.MemberIDs, managed)
