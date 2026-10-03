@@ -237,29 +237,60 @@ func isRetryableError(err error) bool {
 // its size limit and classified. Neither the request nor the response body is
 // logged, and errors carry only the status and Pocket ID's error code.
 func (c *Client) send(ctx context.Context, method, endpoint, contentType string, payload []byte) ([]byte, error) {
+	body, _, err := c.sendWith(ctx, method, endpoint, contentType, payload, sendOptions{})
+	return body, err
+}
+
+// sendOptions adjusts one send. The zero value is the JSON exchange every
+// API method uses.
+type sendOptions struct {
+	// accept is the Accept header; empty means application/json.
+	accept string
+	// headers are extra request headers. They cannot replace Content-Type,
+	// Accept or X-API-KEY.
+	headers http.Header
+	// maxBody limits a 2xx body; 0 means maxResponseBodyBytes.
+	maxBody int64
+}
+
+// sendWith is send with options, and also returns the response's
+// Content-Type header (server-controlled: compare it, do not log it).
+func (c *Client) sendWith(ctx context.Context, method, endpoint, contentType string, payload []byte, options sendOptions) ([]byte, string, error) {
 	url := fmt.Sprintf("%s%s", c.baseURL, endpoint)
 	req, err := newRequest(ctx, method, url, payload)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	// Set headers
-	req.Header.Set("Content-Type", contentType)
-	req.Header.Set("Accept", "application/json")
+	accept := options.accept
+	if accept == "" {
+		accept = "application/json"
+	}
+	logged := map[string]string{}
+	for name, values := range options.headers {
+		for _, value := range values {
+			req.Header.Add(name, value)
+		}
+		logged[http.CanonicalHeaderKey(name)] = req.Header.Get(name)
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	req.Header.Set("Accept", accept)
 	req.Header.Set("X-API-KEY", c.apiToken) // Note: Using X-API-KEY header, not Authorization Bearer
 	// Ask the server to close the connection too (see newTransport).
 	req.Close = true
+	logged["Content-Type"] = req.Header.Get("Content-Type")
+	logged["Accept"] = accept
+	logged["X-API-KEY"] = "[REDACTED]"
 
 	// Log request details (excluding sensitive headers)
 	tflog.Debug(ctx, "Pocket-ID API Request", map[string]interface{}{
 		"method":   method,
 		"url":      url,
 		"endpoint": endpoint,
-		"headers": map[string]string{
-			"Content-Type": req.Header.Get("Content-Type"),
-			"Accept":       req.Header.Get("Accept"),
-			"X-API-KEY":    "[REDACTED]",
-		},
+		"headers":  logged,
 	})
 
 	resp, err := c.httpClient.Do(req)
@@ -272,7 +303,7 @@ func (c *Client) send(ctx context.Context, method, endpoint, contentType string,
 			"error": failure.Error(),
 			"url":   url,
 		})
-		return nil, failure
+		return nil, "", failure
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -280,6 +311,9 @@ func (c *Client) send(ctx context.Context, method, endpoint, contentType string,
 	limit := int64(maxErrorBodyBytes)
 	if ok {
 		limit = maxResponseBodyBytes
+		if options.maxBody > 0 {
+			limit = options.maxBody
+		}
 	}
 	respBody, readErr := readBounded(resp, limit)
 
@@ -297,22 +331,22 @@ func (c *Client) send(ctx context.Context, method, endpoint, contentType string,
 			// A 2xx to a mutation means the server accepted it: only its
 			// result is unknown, and the request must not be repeated.
 			readErr.Accepted = method != http.MethodGet && method != http.MethodHead
-			return nil, readErr
+			return nil, "", readErr
 		}
-		return respBody, nil
+		return respBody, resp.Header.Get("Content-Type"), nil
 	}
 
 	// Error bodies can echo tokens or secrets. Preserve status, never their
 	// contents. A body that could not be read in full is not parsed, so it
 	// can never be taken for one of Pocket ID's structured errors.
 	if resp.StatusCode == http.StatusTooManyRequests {
-		return nil, &RateLimitError{
+		return nil, "", &RateLimitError{
 			StatusCode: http.StatusTooManyRequests,
 			Message:    http.StatusText(http.StatusTooManyRequests),
 			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
 		}
 	}
-	return nil, classifyError(resp.StatusCode, respBody, readErr == nil)
+	return nil, "", classifyError(resp.StatusCode, respBody, readErr == nil)
 }
 
 var (
