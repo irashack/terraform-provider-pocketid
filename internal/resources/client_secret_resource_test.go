@@ -536,6 +536,32 @@ func TestClientSecretResource_ModifyPlan(t *testing.T) {
 	expired.ExpiresAt = types.StringValue("2020-01-01T00:00:00Z")
 	resp, _ := run(expired)
 	assert.True(t, resp.Diagnostics.HasError())
+
+	// secret_wo unknown while planning (decided during the apply): secret
+	// stays unknown, and either outcome at apply fits that plan.
+	undecided := clientSecretPlanned()
+	undecided.SecretWO = types.StringUnknown()
+	undecided.SecretWOVersion = types.StringUnknown()
+	_, got = run(undecided)
+	assert.True(t, got.Secret.IsUnknown(), "presence of secret_wo is not known yet")
+
+	t.Run("unknown then null: a generated value", func(t *testing.T) {
+		fake := clientSecretFake{version: "2.17.0", postStatus: http.StatusCreated,
+			postBody: `{"id":"` + clientSecretTestID + `","prefix":"GENE","createdAt":"2026-10-02T10:00:00Z","isActive":true,"secret":"` + clientSecretTestGen + `"}`}
+		resp, state := clientSecretCreate(t, fake.serve(t), clientSecretPlanned())
+		require.False(t, resp.Diagnostics.HasError(), clientSecretDiagText(resp.Diagnostics))
+		assert.Equal(t, clientSecretTestGen, state.Secret.ValueString(), "a known value fills the unknown planned secret")
+	})
+	t.Run("unknown then supplied: no value stored", func(t *testing.T) {
+		fake := clientSecretFake{version: "2.17.0", postStatus: http.StatusCreated,
+			postBody: `{"id":"` + clientSecretTestID + `","prefix":"wo-v","createdAt":"2026-10-02T10:00:00Z","isActive":true,"secret":"` + clientSecretTestValue + `"}`}
+		config := clientSecretPlanned()
+		config.SecretWO = types.StringValue(clientSecretTestValue)
+		config.SecretWOVersion = types.StringValue("1")
+		resp, state := clientSecretCreate(t, fake.serve(t), config)
+		require.False(t, resp.Diagnostics.HasError(), clientSecretDiagText(resp.Diagnostics))
+		assert.True(t, state.Secret.IsNull(), "null fills the unknown planned secret")
+	})
 }
 
 // A create response naming a secret the client already held is not taken as

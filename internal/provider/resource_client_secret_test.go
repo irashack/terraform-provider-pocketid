@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 	"github.com/hashicorp/terraform-plugin-testing/tfversion"
 	"github.com/stretchr/testify/require"
 
@@ -620,6 +621,59 @@ resource "pocketid_client_secret" "app" {
 			{
 				Config: testAccProviderConfig(),
 				Check:  count(0),
+			},
+		},
+	})
+}
+
+// secret_wo decided only during the apply (a conditional on a value unknown
+// while planning): the plan leaves `secret` unknown, and both outcomes
+// apply without an inconsistent result.
+func TestAccResourceClientSecret_writeOnlyDecidedAtApply(t *testing.T) {
+	const supplied = "late-decided-supplied-value-01"
+	name := "tf-acc-secret-late-" + acctest.RandString(6)
+	config := testAccClientSecretResConfig(name, fmt.Sprintf(`
+resource "terraform_data" "generated_mode" {
+  input = "generated"
+}
+
+resource "terraform_data" "supplied_mode" {
+  input = "supplied"
+}
+
+resource "pocketid_client_secret" "generated" {
+  client_id         = pocketid_client.app.id
+  secret_wo         = terraform_data.generated_mode.output == "supplied" ? %[1]q : null
+  secret_wo_version = terraform_data.generated_mode.output == "supplied" ? "1" : null
+}
+
+resource "pocketid_client_secret" "supplied" {
+  client_id         = pocketid_client.app.id
+  secret_wo         = terraform_data.supplied_mode.output == "supplied" ? %[1]q : null
+  secret_wo_version = terraform_data.supplied_mode.output == "supplied" ? "1" : null
+}
+`, supplied))
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		TerraformVersionChecks:   []tfversion.TerraformVersionCheck{tfversion.SkipBelow(tfversion.Version1_11_0)},
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectUnknownValue("pocketid_client_secret.generated", tfjsonpath.New("secret")),
+						plancheck.ExpectUnknownValue("pocketid_client_secret.supplied", tfjsonpath.New("secret")),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestMatchResourceAttr("pocketid_client_secret.generated", "secret", regexp.MustCompile(`^[A-Za-z0-9]{32}$`)),
+					resource.TestCheckNoResourceAttr("pocketid_client_secret.generated", "secret_wo_version"),
+					resource.TestCheckNoResourceAttr("pocketid_client_secret.supplied", "secret"),
+					resource.TestCheckResourceAttr("pocketid_client_secret.supplied", "secret_wo_version", "1"),
+					resource.TestCheckResourceAttr("pocketid_client_secret.supplied", "prefix", supplied[:4]),
+				),
 			},
 		},
 	})

@@ -194,7 +194,7 @@ func (r *clientSecretResource) Configure(_ context.Context, req resource.Configu
 
 // ModifyPlan refuses, while planning a new secret, an expiry that is not in
 // the future (Pocket ID would refuse it), and plans `secret` as null when
-// the value comes from secret_wo.
+// the value is known to come from secret_wo.
 func (r *clientSecretResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	if req.Plan.Raw.IsNull() || !req.State.Raw.IsNull() {
 		return
@@ -211,7 +211,11 @@ func (r *clientSecretResource) ModifyPlan(ctx context.Context, req resource.Modi
 				"A new secret's expires_at must be in the future; Pocket ID refuses any other.")
 		}
 	}
-	if !config.SecretWO.IsNull() {
+	// Only a value known to be supplied rules out a generated one. An
+	// unknown secret_wo (say, a conditional decided during the apply) may
+	// still turn out null, and then Pocket ID generates the value, so
+	// secret stays unknown.
+	if !config.SecretWO.IsNull() && !config.SecretWO.IsUnknown() {
 		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("secret"), types.StringNull())...)
 	}
 }
