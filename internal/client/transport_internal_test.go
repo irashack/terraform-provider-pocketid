@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -568,4 +569,42 @@ func TestTransportErrorsKeepTheirErrno(t *testing.T) {
 		assert.ErrorIs(t, err, syscall.ETIMEDOUT)
 		assert.False(t, isRetryableError(err), "an expired deadline is not retried")
 	})
+}
+
+// The Winsock codes Windows reports get the same descriptions and retry
+// decisions as their POSIX counterparts. The mapping is checked by number,
+// so it runs on every platform; on Windows classifyTransportError applies it
+// and keeps the bare errno as a cause.
+func TestWinsockClass(t *testing.T) {
+	cases := map[uintptr]struct {
+		reason    string
+		retryable bool
+	}{
+		10061: {"connection refused", true},
+		10054: {"connection reset by peer", true},
+		10060: {"network timeout", true},
+		10051: {"network unreachable", false},
+		10065: {"host unreachable", false},
+	}
+	for code, want := range cases {
+		reason, retryable, ok := winsockClass(code)
+		assert.True(t, ok, "%d", code)
+		assert.Equal(t, want.reason, reason, "%d", code)
+		assert.Equal(t, want.retryable, retryable, "%d", code)
+	}
+	for _, code := range []uintptr{0, 111, 104, 10053, 10064} {
+		_, _, ok := winsockClass(code)
+		assert.False(t, ok, "%d is not mapped", code)
+	}
+	if runtime.GOOS != "windows" {
+		_, _, ok := nativeErrnoClass(syscall.Errno(10061))
+		assert.False(t, ok, "only Windows applies the Winsock mapping")
+	} else {
+		raw := &url.Error{Op: "Get", URL: "http://192.0.2.7/api/x", Err: &net.OpError{
+			Op: "dial", Net: "tcp", Err: os.NewSyscallError("connectex", syscall.Errno(10061)),
+		}}
+		err := newTransportError(http.MethodGet, "/api/x", "no response", raw)
+		assert.ErrorIs(t, err, syscall.Errno(10061))
+		assert.True(t, isRetryableError(err))
+	}
 }

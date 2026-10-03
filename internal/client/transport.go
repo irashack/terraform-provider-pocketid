@@ -534,6 +534,12 @@ func newTransportError(method, endpoint, stage string, err error) *TransportErro
 	return &TransportError{Method: method, Endpoint: endpoint, Reason: stage + ": " + reason, causes: causes, retryable: retryable}
 }
 
+// isNativeErrno reports whether nativeErrnoClass knows errno.
+func isNativeErrno(errno syscall.Errno) bool {
+	_, _, ok := nativeErrnoClass(errno)
+	return ok
+}
+
 // classifyTransportError maps a client or connection error to a fixed
 // description, the errors it may wrap, and whether a GET may be retried after
 // it. The wrapped errors are only sentinels whose text is fixed: a context
@@ -565,6 +571,9 @@ func classifyTransportError(err error) (string, []error, bool) {
 		return "timed out (context deadline exceeded)", causes, false
 	case errors.As(err, &dnsErr) && dnsErr.IsNotFound:
 		return "no such host", causes, true
+	case errno != 0 && isNativeErrno(errno):
+		reason, retryable, _ := nativeErrnoClass(errno)
+		return reason, causes, retryable
 	case errors.As(err, &netErr) && netErr.Timeout():
 		return "network timeout", causes, true
 	case errors.Is(err, syscall.ECONNREFUSED):
