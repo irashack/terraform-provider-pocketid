@@ -93,6 +93,101 @@ func (c *Client) checkCreatedID(kind, requested, returned string) error {
 	return nil
 }
 
+// kindOIDCClient is the kind to pass checkReturnedID for an OIDC client's ID.
+// It is the one kind whose IDs are not all UUIDs: a client ID may be chosen
+// at creation (ValidateClientID's rule), and a client registered from a
+// Client ID Metadata Document has an https URL as its ID.
+const kindOIDCClient = "OIDC client"
+
+// maxCIMDClientIDLength bounds the https URL accepted as a CIMD client's ID.
+// Pocket ID sets no limit of its own; this one only keeps an absurd value
+// out of state.
+const maxCIMDClientIDLength = 2048
+
+// checkReturnedID decides whether an object ID that a response carries may be
+// used: kept in state, logged, compared, or put into a later request. Every
+// method that returns an object ID passes each one through it before
+// returning, nested IDs included (a user's groups, a client's allowed
+// groups, the client a SCIM provider belongs to, every item of a list); a
+// create response's own ID goes through checkCreatedID instead.
+//
+//   - No ID may contain the API key this client sends (see checkCreatedID
+//     for why a UUID-shaped key matters).
+//   - addressed is the ID the call named, in its path or as the parent the
+//     object must belong to; the returned ID must then be exactly it, not
+//     another object's and not a case variant. Pass "" when the call named
+//     none: a list item, an object looked up through its parent, a nested
+//     object.
+//   - An ID the call did not name must have its kind's form: a UUID, which
+//     Pocket ID generates for every object (model.Base.BeforeCreate), except
+//     for kindOIDCClient, whose ID is one ValidateClientID accepts (UUIDs
+//     included) or a CIMD client's https URL.
+//
+// An empty ID is refused like any other; a caller whose response may
+// legitimately omit an object checks for its presence first. kind names the
+// object in the error, which wraps ErrInvalidIdentifier and never includes
+// the returned value.
+func (c *Client) checkReturnedID(kind, addressed, returned string) error {
+	form := isUUID
+	if kind == kindOIDCClient {
+		form = isOIDCClientID
+	}
+	return c.checkResponseID(kind, form, addressed, returned)
+}
+
+// checkResponseID is checkReturnedID with the form of an unaddressed ID
+// given explicitly. listAll uses it with isOIDCClientID, which accepts every
+// form a Pocket ID object ID can take, because it serves lists of every kind.
+func (c *Client) checkResponseID(kind string, form func(string) bool, addressed, returned string) error {
+	switch {
+	case c.reflectsKey(returned):
+		return fmt.Errorf("%w: the %s ID in the response contains the API key this provider sent", ErrInvalidIdentifier, kind)
+	case addressed != "":
+		if returned != addressed {
+			return fmt.Errorf("%w: the %s ID in the response is not the one requested", ErrInvalidIdentifier, kind)
+		}
+	case !form(returned):
+		return fmt.Errorf("%w: the %s ID in the response is not a valid %s ID", ErrInvalidIdentifier, kind, kind)
+	}
+	return nil
+}
+
+func isUUID(id string) bool { return uuidPattern.MatchString(id) }
+
+// isOIDCClientID reports whether id is an ID Pocket ID can give an OIDC
+// client: one ValidateClientID accepts, or a CIMD client's URL. Every UUID is
+// one, so this is also the widest form any object ID takes.
+func isOIDCClientID(id string) bool {
+	return ValidateClientID(id) == nil || isCIMDClientID(id)
+}
+
+// isCIMDClientID applies the rules Pocket ID's OIDC library sets for a client
+// ID that is a metadata document URL (ParseCIMDURL in
+// github.com/pocket-id/fosite v1.3.0, which 2.14.0 to 2.17.0 use): https, a
+// host, a path without "." or ".." segments, and no user information, query
+// or fragment. It also requires printable ASCII without spaces and at most
+// maxCIMDClientIDLength bytes.
+func isCIMDClientID(id string) bool {
+	if len(id) > maxCIMDClientIDLength || strings.ContainsAny(id, "#?") {
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		if id[i] <= ' ' || id[i] > '~' {
+			return false
+		}
+	}
+	u, err := url.Parse(id)
+	if err != nil || !strings.EqualFold(u.Scheme, "https") || u.Hostname() == "" || u.User != nil || u.Path == "" {
+		return false
+	}
+	for _, segment := range strings.Split(u.Path, "/") {
+		if segment == "." || segment == ".." {
+			return false
+		}
+	}
+	return true
+}
+
 // reflectsKey reports whether value contains the API key this client sends,
 // in the form the server receives it (see normalizeAPIKey).
 func (c *Client) reflectsKey(value string) bool {

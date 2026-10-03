@@ -77,6 +77,12 @@ func getPage[T any](ctx context.Context, c *Client, endpoint string, query url.V
 // object's ID. what names the objects in errors, for example "user groups".
 //
 // What it guarantees:
+//   - Every object's ID (as id returns it) passes checkReturnedID's rules
+//     before anything is returned: it does not contain the API key, and it
+//     has a form a Pocket ID object ID takes (a UUID, a client ID or a CIMD
+//     client's URL; listAll does not know which kind it lists). Any other ID
+//     fails the whole list. IDs nested inside the objects are the caller's
+//     to check.
 //   - It ends: it refuses a pagination block that is missing or inconsistent,
 //     a page number the server did not honor (a server that never advances),
 //     and more than maxListPages pages.
@@ -129,6 +135,11 @@ func walkPages[T any](ctx context.Context, c *Client, what, endpoint string, que
 		}
 		for _, item := range resp.Data {
 			key := id(item)
+			// Every object ID goes through checkReturnedID's rules; a list
+			// can hold any kind, so any form an object ID takes is accepted.
+			if err := c.checkResponseID("object", isOIDCClientID, "", key); err != nil {
+				return nil, fmt.Errorf("listing %s: %w", what, err)
+			}
 			if _, dup := seen[key]; dup {
 				return nil, fmt.Errorf("listing %s: %w (an object appeared on two pages)", what, errListChanged)
 			}

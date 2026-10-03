@@ -48,3 +48,8 @@
   of reusing one. This keeps anything a server sends outside a response out of
   the logs, and makes each attempt exactly one request; the cost is one TCP
   (and TLS) handshake per request, which is small next to a Terraform run.
+- An object ID in any Pocket ID response is checked before the provider uses
+  it: it must be the ID the request named (when it named one), otherwise a
+  valid ID for its kind, and it must never contain the API key. A list that
+  holds an ID no Pocket ID object can have fails as a whole. Such a response
+  is reported as an error that does not include the value.

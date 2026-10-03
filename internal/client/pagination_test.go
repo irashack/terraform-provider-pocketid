@@ -217,3 +217,54 @@ func TestListAll_StopsAtPageCeiling(t *testing.T) {
 	assert.Contains(t, err.Error(), "did not end after 1000 pages")
 	assert.Len(t, s.queries, 1000)
 }
+
+// Every listed object's ID goes through the returned-ID rules before the
+// list is returned: one ID that is not a form any Pocket ID object ID takes
+// fails the whole list, on whichever page it appears, and is not quoted.
+// IDs of every legitimate form pass, CIMD clients' URLs included.
+func TestListAll_ChecksEveryID(t *testing.T) {
+	for _, bad := range []string{"", "a/b", "..", "a b", "https://client.example.com/m?x=1", "unsafeéid"} {
+		s := &pagedServer{ids: makeIDs(150)}
+		s.ids[120] = bad
+		_, err := s.start(t, "/api/user-groups").ListUserGroups(context.Background())
+		require.ErrorIs(t, err, client.ErrInvalidIdentifier, "%q", bad)
+		assert.Contains(t, err.Error(), "listing user groups: ")
+		assert.Contains(t, err.Error(), "is not a valid object ID")
+		if len(bad) >= 8 {
+			assert.NotContains(t, err.Error(), bad)
+		}
+		assert.Len(t, s.queries, 2, "the walk stops at the page that held it, and is not repeated")
+	}
+
+	s := &pagedServer{ids: []string{validUUID, "my-app", "https://client.example.com/oauth/metadata.json"}}
+	clients, err := s.start(t, "/api/oidc/clients").ListClients(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, s.ids, clientIDs(clients))
+}
+
+// A listed ID that contains the API key, as the server received it, fails
+// the list without the key in the error. A UUID-shaped key would pass the
+// form check on its own.
+func TestListAll_RefusesTheReflectedKey(t *testing.T) {
+	const key = "7d3f9a12-4c8e-4b6a-9f21-0e5d8c7b6a43"
+	for _, configured := range []string{key, " \t" + key + " "} {
+		for name, embed := range map[string]func(string) string{
+			"as the ID":     func(k string) string { return k },
+			"inside an ID":  func(k string) string { return "app-" + k },
+			"inside a CIMD": func(k string) string { return "https://client.example.com/" + k },
+		} {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprintf(w, `{"data":[{"id":%q},{"id":%q}],"pagination":{"totalPages":1,"totalItems":2,"currentPage":1,"itemsPerPage":100}}`,
+					validUUID, embed(r.Header.Get("X-API-KEY")))
+			}))
+			c, err := client.NewClient(server.URL, configured, false, 30)
+			require.NoError(t, err)
+			_, err = c.ListClients(context.Background())
+			server.Close()
+			require.ErrorIs(t, err, client.ErrInvalidIdentifier, name)
+			assert.Contains(t, err.Error(), "contains the API key this provider sent", name)
+			assert.NotContains(t, err.Error(), key, name)
+		}
+	}
+}
