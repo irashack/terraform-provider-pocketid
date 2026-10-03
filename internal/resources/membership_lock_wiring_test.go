@@ -34,10 +34,9 @@ func membershipLockHeld() bool {
 // writes behave like Pocket ID's, which records every request in order with
 // whether the membership lock was held while the server handled it.
 type membershipLockServer struct {
-	mu      sync.Mutex
-	groups  []string
-	created bool
-	events  []membershipLockEvent
+	mu     sync.Mutex
+	groups []string
+	events []membershipLockEvent
 }
 
 type membershipLockEvent struct {
