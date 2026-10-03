@@ -2,6 +2,7 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -397,6 +398,14 @@ func (r *apiResource) apiFindByResource(ctx context.Context, resource string) (*
 	return nil, nil
 }
 
+// apiWriteRefused reports whether a failed write was definitely refused, so
+// that it changed nothing. A result that could not be read means the write may
+// have been applied, whatever else the error says, so that is checked first.
+// Every write of the API resources classifies its error with it.
+func apiWriteRefused(err error) bool {
+	return !errors.Is(err, client.ErrResultUnread) && client.IsDefiniteRejection(err)
+}
+
 // apiWriteStep runs one write against an existing API and checks that the
 // response names that API. A response that does not is treated as an
 // unreadable result: the write may have been applied.
@@ -443,7 +452,7 @@ func (r *apiResource) Create(ctx context.Context, req resource.CreateRequest, re
 	tflog.Debug(ctx, "Creating API", map[string]any{"resource": desired.Resource})
 	created, err := r.client.CreateAPI(ctx, &client.APICreateRequest{Name: desired.Name, Resource: desired.Resource})
 	if err != nil {
-		if client.IsDefiniteRejection(err) {
+		if apiWriteRefused(err) {
 			resp.Diagnostics.AddError("Error creating API", "Pocket ID refused to create the API: "+err.Error())
 			return
 		}

@@ -2,7 +2,6 @@ package resources
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -471,7 +470,7 @@ func (r *apiClientAccessResource) apiAccessWrite(ctx context.Context, apiID, cli
 		ClientPermissionIDs:        clientIDs,
 	})
 	if err != nil {
-		if apiAccessRefused(err) {
+		if apiWriteRefused(err) {
 			diags.AddError("Error granting API access", fmt.Sprintf("Pocket ID refused the grant of API %s to client %s: %s", apiID, clientID, err))
 			return apiAccessOutcome{}
 		}
@@ -492,13 +491,6 @@ func (r *apiClientAccessResource) apiAccessWrite(ctx context.Context, apiID, cli
 			fmt.Sprintf("The grant of API %s to client %s differs from the configuration: %s. State shows the grant the server holds.", apiID, clientID, strings.Join(diffs, "; ")))
 	}
 	return apiAccessOutcome{stored: &stored}
-}
-
-// apiAccessRefused reports whether a failed write was definitely refused, so
-// that it changed nothing. A result that could not be read means the write may
-// have been applied, whatever else the error says, so that is checked first.
-func apiAccessRefused(err error) bool {
-	return !errors.Is(err, client.ErrResultUnread) && client.IsDefiniteRejection(err)
 }
 
 // apiAccessRecoverUncertain handles a write that failed without a definite

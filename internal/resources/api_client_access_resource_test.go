@@ -546,16 +546,16 @@ func TestAPIClientAccessUpdate_UnresolvedKeepsConfirmedState(t *testing.T) {
 
 // Only a definite refusal is final; an unread result is never one, even when
 // the error also carries a client-error status.
-func TestAPIClientAccessRefused(t *testing.T) {
+func TestAPIWriteRefused(t *testing.T) {
 	refusal := &client.HTTPError{StatusCode: 400}
-	assert.True(t, apiAccessRefused(refusal))
-	assert.True(t, apiAccessRefused(fmt.Errorf("wrapped: %w", refusal)))
-	assert.False(t, apiAccessRefused(&client.HTTPError{StatusCode: 503}))
-	assert.False(t, apiAccessRefused(&client.HTTPError{StatusCode: 408}))
-	assert.False(t, apiAccessRefused(fmt.Errorf("%w: %w", client.ErrResultUnread, refusal)))
-	assert.False(t, apiAccessRefused(fmt.Errorf("%w: %w", refusal, client.ErrResultUnread)))
-	assert.False(t, apiAccessRefused(client.ErrResultUnread))
-	assert.False(t, apiAccessRefused(errors.New("connection reset")))
+	assert.True(t, apiWriteRefused(refusal))
+	assert.True(t, apiWriteRefused(fmt.Errorf("wrapped: %w", refusal)))
+	assert.False(t, apiWriteRefused(&client.HTTPError{StatusCode: 503}))
+	assert.False(t, apiWriteRefused(&client.HTTPError{StatusCode: 408}))
+	assert.False(t, apiWriteRefused(fmt.Errorf("%w: %w", client.ErrResultUnread, refusal)))
+	assert.False(t, apiWriteRefused(fmt.Errorf("%w: %w", refusal, client.ErrResultUnread)))
+	assert.False(t, apiWriteRefused(client.ErrResultUnread))
+	assert.False(t, apiWriteRefused(errors.New("connection reset")))
 }
 
 // A successful answer to the grant PUT that does not describe a grant (null,
