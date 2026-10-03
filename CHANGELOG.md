@@ -271,7 +271,8 @@ go-playground/validator and the URL-pattern libraries.
   with a client: if revoking that secret cannot be confirmed because the list
   is unusable, the client's own secret is not generated beside it.
   Within one apply, `pocketid_client_secret` and `pocketid_client` take turns
-  on a client's secrets, so an uncertain create never names the other
+  on a client's secrets (creating, revoking, refreshing, and deleting or
+  cleaning up the client), so an uncertain create never names the other
   resource's secret as its own; another apply or a change in Pocket ID's
   interface at the same moment is not covered.
 - New resource `pocketid_client_logo`: the light or dark logo of an OIDC

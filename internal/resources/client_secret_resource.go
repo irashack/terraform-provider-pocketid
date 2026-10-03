@@ -474,6 +474,11 @@ func (r *clientSecretResource) Read(ctx context.Context, req resource.ReadReques
 	}
 	clientID, secretID := state.ClientID.ValueString(), state.ID.ValueString()
 
+	// The list is interpreted (is this secret still there?), so no other
+	// secret change of this process may run on the client meanwhile
+	// (client_secret_lock.go).
+	defer lockClientSecrets(clientID)()
+
 	secrets, err := r.client.ListClientSecrets(ctx, clientID)
 	if err != nil {
 		if client.IsNotFound(err, client.ResourceOIDCClient) {

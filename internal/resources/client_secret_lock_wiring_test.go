@@ -326,15 +326,21 @@ func clientSecretLockHeld(clientID string) bool {
 // client c1's secret lock was held while the server handled it.
 func lockObservingServer(t *testing.T, fake *fakePocketID) (*client.Client, func() map[string][]bool) {
 	t.Helper()
+	return lockObservingHandler(t, "c1", fake.serve)
+}
+
+// lockObservingHandler is lockObservingServer for any handler and client.
+func lockObservingHandler(t *testing.T, clientID string, serve http.HandlerFunc) (*client.Client, func() map[string][]bool) {
+	t.Helper()
 	var mu sync.Mutex
 	held := map[string][]bool{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		locked := clientSecretLockHeld("c1")
+		locked := clientSecretLockHeld(clientID)
 		mu.Lock()
 		call := r.Method + " " + r.URL.Path
 		held[call] = append(held[call], locked)
 		mu.Unlock()
-		fake.serve(w, r)
+		serve(w, r)
 	}))
 	t.Cleanup(server.Close)
 	c, err := client.NewClient(server.URL, "synthetic-token", false, 5)
@@ -439,4 +445,134 @@ func TestClientSecretResource_UncertainCreateCountsSecretsAsUUIDs(t *testing.T) 
 			assert.NotContains(t, line, "[new since this attempt]", "the secret listed before is not new")
 		}
 	}
+}
+
+// requireLocked fails unless every request in calls (from index from on) ran
+// under the secret lock, and at least one did.
+func requireLocked(t *testing.T, held map[string][]bool, from int, call string) {
+	t.Helper()
+	require.Greater(t, len(held[call]), from, "%s was requested", call)
+	for _, locked := range held[call][from:] {
+		assert.True(t, locked, "%s runs under the secret lock", call)
+	}
+}
+
+// Every other sequence that reads a client's secrets and interprets them, or
+// deletes them with the client, holds the client's secret lock too: a
+// refresh identifying the stored secret or reconciling a pending
+// revocation, pocketid_client_secret's refresh, the client's Delete and the
+// cleanup of a failed create. Each releases it when done.
+func TestClientSecretLock_ReadsDeletesAndCleanup(t *testing.T) {
+	const heldSecret = "00000000-0000-4000-8000-000000000000"
+	secretsList := "GET /api/oidc/clients/c1/secrets"
+
+	t.Run("client refresh identifying the stored secret", func(t *testing.T) {
+		fake := managedFake(t, "2.17.0")
+		c, held := lockObservingServer(t, fake)
+		prior := managedModel()
+		prior.ClientSecretID = types.StringNull()
+		resp, after := runRead(t, &clientResource{client: c}, prior)
+		require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
+		assert.Equal(t, heldSecret, after.ClientSecretID.ValueString())
+		requireLocked(t, held(), 0, secretsList)
+		for _, locked := range held()["GET /api/oidc/clients/c1"] {
+			assert.False(t, locked, "the client's own GET runs without the secret lock")
+		}
+		assert.False(t, clientSecretLockHeld("c1"))
+	})
+
+	t.Run("client refresh reconciling a pending revocation", func(t *testing.T) {
+		revoke := "DELETE /api/oidc/clients/c1/secrets/" + heldSecret
+		fake := managedFake(t, "2.17.0")
+		fake.fail[revoke] = 503
+		c, held := lockObservingServer(t, fake)
+		h := newProtoHarness(t, c)
+		prior := managedModel()
+		config := homelabConfig()
+		config.GenerateSecret = types.BoolValue(false)
+		result := h.apply(&prior, config, h.plan(&prior, config, nil))
+		require.NotEmpty(t, result.errors, "the revocation stays pending")
+
+		before := len(held()[secretsList])
+		refreshed := h.read(*result.model, result.private)
+		require.Empty(t, refreshed.errors)
+		requireLocked(t, held(), before, secretsList)
+		assert.False(t, clientSecretLockHeld("c1"))
+	})
+
+	t.Run("client delete", func(t *testing.T) {
+		fake := managedFake(t, "2.17.0")
+		c, held := lockObservingServer(t, fake)
+		ctx := context.Background()
+		s := clientSchema(t).Schema
+		state := tfsdk.State{Schema: s}
+		prior := managedModel()
+		require.False(t, state.Set(ctx, &prior).HasError())
+		resp := resource.DeleteResponse{State: state}
+		(&clientResource{client: c}).Delete(ctx, resource.DeleteRequest{State: state}, &resp)
+		require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
+		requireLocked(t, held(), 0, "DELETE /api/oidc/clients/c1")
+		assert.False(t, clientSecretLockHeld("c1"))
+	})
+
+	for name, setup := range map[string]struct {
+		version string
+		fail    string
+		groups  bool
+	}{
+		"cleanup after a failed generation":                 {"2.16.0", "POST /secrets", false},
+		"cleanup after a failed revocation of the server's": {"2.17.0", "DELETE /secrets/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", false},
+		"cleanup after a failed group write":                {"2.17.0", "PUT /allowed-user-groups", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			method, suffix, _ := strings.Cut(setup.fail, " ")
+			failed := method + " /api/oidc/clients/" + generatedClientID + suffix
+			fake := newFakePocketID(t, setup.version, &fakeClient{ID: generatedClientID})
+			fake.fail[failed] = 400
+			fake.groups[groupA] = true
+			c, held := lockObservingHandler(t, generatedClientID, fake.serve)
+			ctx := context.Background()
+			s := clientSchema(t).Schema
+			model := lifecycleModel()
+			if setup.groups {
+				model.IsGroupRestricted = types.BoolValue(true)
+				model.AllowedUserGroups = stringSet(groupA)
+			}
+			plan := tfsdk.Plan{Schema: s}
+			require.False(t, plan.Set(ctx, &model).HasError())
+			resp := resource.CreateResponse{State: tfsdk.State{Schema: s}}
+			(&clientResource{client: c}).Create(ctx, resource.CreateRequest{Plan: plan}, &resp)
+			require.True(t, resp.Diagnostics.HasError())
+			require.Equal(t, 1, fake.called(failed))
+			requireLocked(t, held(), 0, "DELETE /api/oidc/clients/"+generatedClientID)
+			if setup.groups {
+				for _, locked := range held()[failed] {
+					assert.False(t, locked, "the group write runs without the secret lock")
+				}
+			}
+			assert.False(t, clientSecretLockHeld(generatedClientID))
+		})
+	}
+
+	t.Run("pocketid_client_secret refresh", func(t *testing.T) {
+		c, held := lockObservingHandler(t, "app", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch r.Method + " " + r.URL.Path {
+			case "GET /api/version/current":
+				_, _ = fmt.Fprint(w, `{"currentVersion":"2.17.0"}`)
+			case "GET /api/oidc/clients/app":
+				_, _ = fmt.Fprint(w, `{"id":"app","name":"app","callbackURLs":[],"isPublic":false,"allowedUserGroups":[]}`)
+			case "GET /api/oidc/clients/app/secrets":
+				_, _ = fmt.Fprint(w, "["+clientSecretObject(clientSecretTestID, "GENE")+"]")
+			default:
+				t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+				w.WriteHeader(http.StatusTeapot)
+			}
+		})
+		resp, got := clientSecretRead(t, c, clientSecretStored())
+		require.False(t, resp.Diagnostics.HasError(), clientSecretDiagText(resp.Diagnostics))
+		require.NotNil(t, got)
+		requireLocked(t, held(), 0, "GET /api/oidc/clients/app/secrets")
+		assert.False(t, clientSecretLockHeld("app"))
+	})
 }

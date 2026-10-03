@@ -31,13 +31,17 @@ var (
 //   - pocketid_client_secret: Create (the list before, the POST, the list
 //     after an uncertain result) and Delete (the DELETE and its confirming
 //     list);
+//   - pocketid_client_secret: also Read (the list it interprets);
 //   - pocketid_client: on create, from revoking the secret Pocket ID 2.17
-//     creates with a client (with its confirming list) to generating its own;
-//     on update, the reads that decide a secret change (a pending
-//     revocation's check, an unresolved generation's check, identifying the
-//     secret to revoke) and, separately, the generation or revocation itself.
-//     The client's own PUT and its group write run between those two and
-//     hold no lock.
+//     creates with a client (with its confirming list) to generating its own,
+//     and the cleanup of a failed create step (deleting the client deletes
+//     its secrets), taken again for a cleanup after the group write; on
+//     update, the reads that decide a secret change (a pending revocation's
+//     check, an unresolved generation's check, identifying the secret to
+//     revoke) and, separately, the generation or revocation itself; on read,
+//     identifying the stored secret and reconciling a pending revocation; on
+//     delete, the DELETE of the client. The client's own PUT and its group
+//     writes hold no lock.
 //
 // The lock is per client ID and never held across clients, so it cannot
 // deadlock between resources; callers must not take it twice for the same
@@ -50,9 +54,9 @@ var (
 // calls (generate, create, list, revoke) and helpers such as
 // pocketid_client's revokeServerCreatedSecret under it. A new client's ID,
 // the key, exists only once the POST that creates it has returned, so
-// pocketid_client takes the lock right after that POST and may release it
-// after its last secret step, before the group update and any failedCreate
-// cleanup, which touch no secret.
+// pocketid_client takes the lock right after that POST and releases it after
+// its last secret step (or after the cleanup of a failed one), before the
+// group update; a cleanup after the group update takes it again.
 func lockClientSecrets(clientID string) func() {
 	clientSecretLocksMu.Lock()
 	lock, ok := clientSecretLocks[clientID]

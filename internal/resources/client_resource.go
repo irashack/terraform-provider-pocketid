@@ -573,17 +573,19 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 	// same outcome as a failed secret generation.
 	//
 	// From that revocation (with its confirming list) to the generation of
-	// this resource's own secret, no other secret change of this process may
-	// touch the client (client_secret_lock.go): the lock is taken as soon as
-	// the client's ID exists, and released before the group update and any
-	// cleanup, which touch no secret.
+	// this resource's own secret, and through the cleanup of a failed step
+	// (deleting the client deletes its secrets), no other secret change of
+	// this process may touch the client (client_secret_lock.go): the lock is
+	// taken as soon as the client's ID exists. It is released before the
+	// group update, which touches no secret, and taken again for a cleanup
+	// after it; it is never taken twice at once.
 	unlock := lockClientSecrets(clientResp.ID)
 	plan.ClientSecret = types.StringNull()
 	plan.ClientSecretID = types.StringNull()
 	if clientResp.CreatedSecret != nil {
 		if err := r.revokeServerCreatedSecret(ctx, clientResp.ID, clientResp.CreatedSecret.ID); err != nil {
-			unlock()
 			r.failedCreate(ctx, &plan, err, resp)
+			unlock()
 
 			return
 		}
@@ -595,8 +597,8 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 		tflog.Debug(ctx, "Generating client secret for non-public client")
 		secret, err := r.client.GenerateClientSecret(ctx, clientResp.ID, nil)
 		if err != nil {
-			unlock()
 			r.failedCreate(ctx, &plan, err, resp)
+			unlock()
 
 			return
 		}
@@ -610,7 +612,9 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 	// has no signed-in users to notify.
 	if groupIDs := setStrings(plan.AllowedUserGroups); len(groupIDs) > 0 {
 		if _, err := r.writeAllowedGroups(ctx, clientResp.ID, groupIDs); err != nil {
+			unlockCleanup := lockClientSecrets(clientResp.ID)
 			r.failedCreate(ctx, &plan, err, resp)
+			unlockCleanup()
 
 			return
 		}
@@ -716,10 +720,15 @@ func (r *clientResource) Read(ctx context.Context, req resource.ReadRequest, res
 	if state.GenerateSecret.IsNull() || state.GenerateSecret.IsUnknown() {
 		state.GenerateSecret = types.BoolValue(true)
 	}
+	// Identifying the stored secret and reconciling a pending revocation
+	// read the client's secrets and interpret them, so no other secret change
+	// of this process may run meanwhile (client_secret_lock.go).
+	unlockSecrets := lockClientSecrets(state.ID.ValueString())
 	r.fillSecretID(ctx, &state)
 	if privateFlag(ctx, req.Private, pendingRevocationKey) && !r.reconcilePendingRevocation(ctx, &state) && resp.Private != nil {
 		resp.Diagnostics.Append(setPrivateFlag(ctx, resp.Private, pendingRevocationKey, false)...)
 	}
+	unlockSecrets()
 
 	// Set the state
 	diags = resp.State.Set(ctx, &state)
@@ -1094,6 +1103,10 @@ func (r *clientResource) Delete(ctx context.Context, req resource.DeleteRequest,
 	if refuseUnresolvedClient(ctx, req.Private, state.UnresolvedCreation, state.ID.ValueString(), "delete or replace", &resp.Diagnostics) {
 		return
 	}
+
+	// Deleting the client deletes its secrets: no other secret sequence of
+	// this process may run on it meanwhile (client_secret_lock.go).
+	defer lockClientSecrets(state.ID.ValueString())()
 
 	tflog.Debug(ctx, "Deleting OIDC client", map[string]any{
 		"id": state.ID.ValueString(),
