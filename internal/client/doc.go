@@ -15,7 +15,12 @@
 // A new API area goes in a new file; it does not need to edit an existing one.
 //
 // Identifiers. An ID that goes into a request path is validated and escaped
-// first (uuidSegment, clientIDSegment). An object ID that comes back in a
+// first (uuidSegment, clientIDSegment). No identifier or parameter that
+// contains the API key this client sends ever goes out: every request's path
+// and query are checked, raw and decoded, before the request is built or
+// logged (checkEndpoint), and ValidateIdentifier lets a caller refuse such an
+// identifier from configuration, state or import before it logs or shows
+// it. An object ID that comes back in a
 // response is checked before the method returns it, because callers keep it
 // in state, log it and put it into later requests: a create response's new ID
 // with checkCreatedID, and every other one (from reads, updates and lists,

@@ -1,8 +1,16 @@
 package client
 
 import (
+	"bytes"
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/hashicorp/terraform-plugin-log/tflogtest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -143,5 +151,142 @@ func TestCheckReturnedID_Forms(t *testing.T) {
 		for _, id := range []string{"my-app", "https://client.example.com/m", "", strings.ToUpper(userA) + "x"} {
 			assertRefused(t, c.checkReturnedID(kind, "", id), id, "is not a valid "+kind+" ID")
 		}
+	}
+}
+
+// keyRecorder is a server that records every request target it receives and
+// answers each with an empty JSON object.
+func keyRecorder(t *testing.T) (string, func() []string) {
+	t.Helper()
+	var mu sync.Mutex
+	var targets []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		targets = append(targets, r.RequestURI)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(server.Close)
+	return server.URL, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), targets...)
+	}
+}
+
+// An identifier from configuration, state or import that contains the API
+// key (a UUID-shaped key, a client-ID-shaped key, one configured with
+// surrounding whitespace, one that needs escaping in a path or query) is
+// refused before a request is built: the server never sees a request that
+// carries it, and neither the error nor the provider's log contains it.
+func TestRequestsCarryingTheKeyAreNeverSent(t *testing.T) {
+	const (
+		clientShapedKey = "Zq3vR8kLm2Np7Xw4Ys9Tb6Hc1Jd5Fg0A"
+		escapedKey      = "key+with/slash=and%sign-0123456"
+	)
+	ctx := context.Background()
+	cases := []struct {
+		name, token, key string
+		call             func(c *Client, ctx context.Context) error
+	}{
+		{"UUID-shaped key as a user ID", syntheticKey, syntheticKey, func(c *Client, ctx context.Context) error {
+			_, err := c.GetUser(ctx, syntheticKey)
+			return err
+		}},
+		{"UUID-shaped key, configured padded", " \t" + syntheticKey + "\t ", syntheticKey, func(c *Client, ctx context.Context) error {
+			return c.DeleteUserGroup(ctx, syntheticKey)
+		}},
+		{"UUID-shaped key as a secret ID", syntheticKey, syntheticKey, func(c *Client, ctx context.Context) error {
+			return c.DeleteClientSecret(ctx, "my-app", syntheticKey)
+		}},
+		{"UUID-shaped key as a one-time token's user", syntheticKey, syntheticKey, func(c *Client, ctx context.Context) error {
+			_, err := c.CreateOneTimeAccessToken(ctx, syntheticKey, &OneTimeAccessTokenRequest{TTL: "1h"})
+			return err
+		}},
+		{"client-ID-shaped key as a client ID", clientShapedKey, clientShapedKey, func(c *Client, ctx context.Context) error {
+			_, err := c.GetClient(ctx, clientShapedKey)
+			return err
+		}},
+		{"key inside a client ID", clientShapedKey, clientShapedKey, func(c *Client, ctx context.Context) error {
+			_, err := c.UpdateClient(ctx, "app-"+clientShapedKey, &OIDCClientCreateRequest{Name: "n"})
+			return err
+		}},
+		{"key as a search term", clientShapedKey, clientShapedKey, func(c *Client, ctx context.Context) error {
+			_, err := c.ListAllUsers(ctx, clientShapedKey)
+			return err
+		}},
+		{"escaped key in a query", escapedKey, escapedKey, func(c *Client, ctx context.Context) error {
+			_, err := c.ListUsersPage(ctx, 1, 10, "x "+escapedKey)
+			return err
+		}},
+		{"escaped key in a path", escapedKey, escapedKey, func(c *Client, ctx context.Context) error {
+			_, err := c.doRequest(ctx, http.MethodDelete, "/api/x/"+url.PathEscape(escapedKey), nil)
+			return err
+		}},
+		{"escaped key in an image read", escapedKey, escapedKey, func(c *Client, ctx context.Context) error {
+			_, _, err := c.getBinaryUncached(ctx, "/api/x", url.Values{"q": {escapedKey}}, 0)
+			return err
+		}},
+		{"key in an upload's query", clientShapedKey, clientShapedKey, func(c *Client, ctx context.Context) error {
+			_, err := c.upload(ctx, http.MethodPost, "/api/x?name="+clientShapedKey, MultipartFile{FieldName: "file", FileName: "a.png", Content: []byte{1}}, 0)
+			return err
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			serverURL, targets := keyRecorder(t)
+			var logs bytes.Buffer
+			c, err := NewClient(serverURL, tc.token, false, 30)
+			require.NoError(t, err)
+
+			err = tc.call(c, tflogtest.RootLogger(ctx, &logs))
+			require.ErrorIs(t, err, ErrInvalidIdentifier)
+			assert.Contains(t, err.Error(), "contains the API key this provider sends")
+			assert.NotContains(t, err.Error(), tc.key)
+			assert.NotContains(t, err.Error(), url.PathEscape(tc.key))
+			assert.NotContains(t, logs.String(), tc.key)
+			assert.NotContains(t, logs.String(), url.PathEscape(tc.key))
+			assert.Empty(t, targets(), "no request was sent")
+		})
+	}
+
+	// The same calls with an identifier that does not carry the key go out.
+	serverURL, targets := keyRecorder(t)
+	c, err := NewClient(serverURL, syntheticKey, false, 30)
+	require.NoError(t, err)
+	_ = c.DeleteUserGroup(ctx, userA)
+	_, _ = c.ListAllUsers(ctx, "alice")
+	assert.Len(t, targets(), 2)
+}
+
+// ValidateIdentifier, for identifiers from configuration, state or import:
+// the kind's form, and never the key.
+func TestValidateIdentifier(t *testing.T) {
+	c := newCheckingClient(t, " "+syntheticKey+"\t")
+	require.NoError(t, c.ValidateIdentifier("user", userA))
+	require.NoError(t, c.ValidateIdentifier(kindOIDCClient, "my-app"))
+
+	for _, tc := range []struct{ kind, id, why string }{
+		{"user", syntheticKey, "the user ID contains the API key this provider sends"},
+		{kindOIDCClient, syntheticKey, "the OIDC client ID contains the API key"},
+		{kindOIDCClient, "app-" + syntheticKey, "the OIDC client ID contains the API key"},
+		{"user", "my-app", "user ID must be a UUID"},
+		{kindOIDCClient, "https://client.example.com/m", "OIDC client ID must be 2 to 128 characters"},
+		{kindOIDCClient, "..", "OIDC client ID must be 2 to 128 characters"},
+	} {
+		assertRefused(t, c.ValidateIdentifier(tc.kind, tc.id), tc.id, tc.why)
+	}
+}
+
+// An endpoint the check cannot decode is refused too, rather than sent
+// unchecked.
+func TestCheckEndpointRefusesWhatItCannotDecode(t *testing.T) {
+	c := newCheckingClient(t, syntheticKey)
+	require.NoError(t, c.checkEndpoint("/api/users/"+userA+"?pagination%5Bpage%5D=1&search=a+b"))
+	for _, endpoint := range []string{"/api/x/%zz", "/api/x?q=%zz", "/api/x?a=1;b=2"} {
+		err := c.checkEndpoint(endpoint)
+		require.ErrorIs(t, err, ErrInvalidIdentifier, endpoint)
+		assert.Contains(t, err.Error(), "not well formed")
 	}
 }

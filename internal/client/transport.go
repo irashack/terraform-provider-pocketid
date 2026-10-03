@@ -262,6 +262,13 @@ type sendOptions struct {
 // sendWith is send with options, and also returns the response's
 // Content-Type header (server-controlled: compare it, do not log it).
 func (c *Client) sendWith(ctx context.Context, method, endpoint, contentType string, payload []byte, options sendOptions) ([]byte, string, error) {
+	// An identifier from configuration, state or import that carries the API
+	// key never reaches a URL, a log line or an error: the request is refused
+	// before it is built.
+	if err := c.checkEndpoint(endpoint); err != nil {
+		return nil, "", err
+	}
+
 	// The HTTP timeout is applied to the request's context as well as to the
 	// HTTP client (whose own deadline it reaches first), so that setting up
 	// the connection, which Go's transport does on a context detached from

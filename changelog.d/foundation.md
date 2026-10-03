@@ -57,3 +57,8 @@
   is cancelled or the provider's `timeout` passes, a connection still waiting
   for the server's TLS handshake is closed at once. Connecting is also limited
   to 30 seconds and the TLS handshake to 10 seconds whatever the `timeout`.
+- An ID from your configuration, state or an import that contains the
+  provider's API key (for example an import ID pasted from the wrong field) is
+  refused with an error before any request is made, and is never written to
+  a URL, the provider's logs or the error. The same applies to search terms
+  and other request parameters.

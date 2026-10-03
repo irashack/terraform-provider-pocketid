@@ -24,6 +24,10 @@ type OneTimeAccessTokenRequest struct {
 // POST is never retried. A success response without a token is an error
 // wrapping ErrResultUnread: the creation's outcome is uncertain.
 func (c *Client) CreateOneTimeAccessToken(ctx context.Context, userID string, req *OneTimeAccessTokenRequest) (*OneTimeAccessToken, error) {
+	// The ID is checked before it is logged.
+	if err := c.ValidateIdentifier("user", userID); err != nil {
+		return nil, err
+	}
 	tflog.Debug(ctx, "CreateOneTimeAccessToken request", map[string]interface{}{
 		"user_id": userID,
 		"ttl":     req.TTL,

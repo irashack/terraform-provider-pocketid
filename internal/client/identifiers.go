@@ -8,9 +8,12 @@ import (
 	"strings"
 )
 
-// ErrInvalidIdentifier marks an identifier the client refused to put into a
-// request path. Nothing was sent. The identifier itself is never included in
-// the error: it may have come from a server response.
+// ErrInvalidIdentifier marks an identifier the client refused. For one that
+// was to go into a request (a path segment or query parameter from
+// configuration, state or import), nothing was sent. For one that came back
+// in a response (checkCreatedID, checkReturnedID), the request was made and
+// only its answer is refused. The identifier itself is never included in the
+// error: it may carry the API key, or have come from a server response.
 var ErrInvalidIdentifier = errors.New("invalid identifier")
 
 // uuidPattern is the 8-4-4-4-12 hexadecimal form. Pocket ID generates every
@@ -49,8 +52,74 @@ func ValidateClientID(id string) error {
 	return nil
 }
 
+// ValidateIdentifier checks an identifier that comes from configuration,
+// state or import before it is used anywhere, logged or shown: it must not
+// contain the API key this client sends (as the server receives it), and it
+// must have its kind's form (ValidateClientID for kindOIDCClient, "OIDC
+// client"; a UUID for every other kind). The errors wrap ErrInvalidIdentifier,
+// are fixed text and never include the identifier.
+//
+// Every request applies the key check to its whole path and query anyway
+// (checkEndpoint), so a key-bearing identifier is never sent; calling this
+// first also keeps it out of the logs and diagnostics written before the
+// request, such as an import's.
+func (c *Client) ValidateIdentifier(kind, id string) error {
+	if c.reflectsKey(id) {
+		return fmt.Errorf("%w: the %s ID contains the API key this provider sends, so it is not used", ErrInvalidIdentifier, kind)
+	}
+	if kind == kindOIDCClient {
+		return ValidateClientID(id)
+	}
+	return ValidateUUID(kind, id)
+}
+
+// errKeyInEndpoint is checkEndpoint's refusal. It names neither the request
+// nor the identifier: both would show the key.
+var errKeyInEndpoint = fmt.Errorf("%w: an identifier or parameter of this request contains the API key this provider sends; the request was not sent", ErrInvalidIdentifier)
+
+// errMalformedEndpoint is checkEndpoint's refusal of a path or query it
+// cannot decode, and so cannot check.
+var errMalformedEndpoint = fmt.Errorf("%w: the request's path or query is not well formed; the request was not sent", ErrInvalidIdentifier)
+
+// checkEndpoint refuses a request endpoint (path and query, as sendWith
+// receives it) that contains the API key this client sends, in its raw form
+// or once its path and its query parameters are decoded, so that an escaped
+// key is found too. Every identifier that goes into a path (uuidSegment,
+// clientIDSegment and any other builder) or a query (a search term, a
+// filter) passes through it before a request is built or anything is
+// logged; an endpoint it cannot decode is refused as well.
+func (c *Client) checkEndpoint(endpoint string) error {
+	if c.reflectsKey(endpoint) {
+		return errKeyInEndpoint
+	}
+	path, query, _ := strings.Cut(endpoint, "?")
+	decodedPath, err := url.PathUnescape(path)
+	if err != nil {
+		return errMalformedEndpoint
+	}
+	if c.reflectsKey(decodedPath) {
+		return errKeyInEndpoint
+	}
+	values, err := url.ParseQuery(query)
+	if err != nil {
+		return errMalformedEndpoint
+	}
+	for name, list := range values {
+		if c.reflectsKey(name) {
+			return errKeyInEndpoint
+		}
+		for _, value := range list {
+			if c.reflectsKey(value) {
+				return errKeyInEndpoint
+			}
+		}
+	}
+	return nil
+}
+
 // uuidSegment returns id escaped for use as one path segment, after checking
-// it is a UUID.
+// it is a UUID. It cannot see the API key; the request refuses a segment
+// that contains it (checkEndpoint).
 func uuidSegment(kind, id string) (string, error) {
 	if err := ValidateUUID(kind, id); err != nil {
 		return "", err
@@ -59,7 +128,8 @@ func uuidSegment(kind, id string) (string, error) {
 }
 
 // clientIDSegment returns an OIDC client ID escaped for use as one path
-// segment, after checking it with ValidateClientID.
+// segment, after checking it with ValidateClientID. Like uuidSegment, it
+// leaves the API key check to the request (checkEndpoint).
 func clientIDSegment(id string) (string, error) {
 	if err := ValidateClientID(id); err != nil {
 		return "", err
