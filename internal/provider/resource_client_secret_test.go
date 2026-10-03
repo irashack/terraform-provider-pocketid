@@ -666,8 +666,8 @@ resource "pocketid_client_secret" "supplied" {
 				Config: config,
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
-						plancheck.ExpectUnknownValue("pocketid_client_secret.generated", tfjsonpath.New("secret")),
-						plancheck.ExpectUnknownValue("pocketid_client_secret.supplied", tfjsonpath.New("secret")),
+						testAccExpectUnknownSensitive("pocketid_client_secret.generated", tfjsonpath.New("secret")),
+						testAccExpectUnknownSensitive("pocketid_client_secret.supplied", tfjsonpath.New("secret")),
 					},
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(

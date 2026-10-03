@@ -4,12 +4,15 @@
 package provider_test
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -117,4 +120,41 @@ func testAccRequireCount(t *testing.T, what string, want, got int) {
 	if want != got {
 		t.Fatalf("%s: expected %d, got %d", what, want, got)
 	}
+}
+
+// expectUnknownSensitive is plancheck.ExpectUnknownValue for an attribute
+// that must not be shown: the stock check, when it finds a known value,
+// reports it ("Expected unknown value at ..., but found known value: ..."),
+// so a plan that carries a credential would print it. This one rejects a
+// missing, null and known value alike with one fixed message that names only
+// the resource and the attribute path.
+type expectUnknownSensitive struct {
+	address string
+	path    tfjsonpath.Path
+}
+
+// testAccExpectUnknownSensitive returns a plan check that the attribute is
+// unknown in the planned change of the resource, and never reports its value.
+func testAccExpectUnknownSensitive(address string, path tfjsonpath.Path) plancheck.PlanCheck {
+	return expectUnknownSensitive{address: address, path: path}
+}
+
+func (c expectUnknownSensitive) CheckPlan(_ context.Context, req plancheck.CheckPlanRequest, resp *plancheck.CheckPlanResponse) {
+	if req.Plan == nil {
+		resp.Error = fmt.Errorf("%s: there is no plan to check", c.address)
+		return
+	}
+	for _, change := range req.Plan.ResourceChanges {
+		if change == nil || change.Address != c.address {
+			continue
+		}
+		if change.Change != nil {
+			if unknown, err := tfjsonpath.Traverse(change.Change.AfterUnknown, c.path); err == nil && unknown == true {
+				return
+			}
+		}
+		resp.Error = fmt.Errorf("%s: expected %q to be unknown in the plan, but it is known, null or missing (the value is not shown)", c.address, c.path.String())
+		return
+	}
+	resp.Error = fmt.Errorf("%s: the resource is not in the plan", c.address)
 }
