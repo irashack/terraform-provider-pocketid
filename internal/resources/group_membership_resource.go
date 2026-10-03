@@ -184,7 +184,7 @@ func (r *groupMembershipResource) Create(ctx context.Context, req resource.Creat
 		// an ordinary error, and no identity is kept.
 		attempted := !errors.Is(err, client.ErrWriteNotAttempted)
 		switch {
-		case attempted && (errors.Is(err, client.ErrResultUnread) || !errors.As(err, &mismatch) && !client.IsDefiniteRejection(err)):
+		case attempted && (errors.Is(err, client.ErrResultUnread) || !errors.As(err, &mismatch) && !writeRefused(err)):
 			// The addition was accepted, or may have been, but could not be
 			// verified. The pair is kept in state (marked for replacement)
 			// as an unresolved creation, so that removing it from the

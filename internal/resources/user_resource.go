@@ -286,7 +286,7 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 	}
 	defer releaseMembership()
 	userResp, err := r.client.CreateUser(ctx, createReq)
-	if err != nil && createReq.ID != "" && !client.IsDefiniteRejection(err) {
+	if err != nil && createReq.ID != "" && !writeRefused(err) {
 		r.uncertainFixedIDCreate(ctx, &plan, displayName, err, resp)
 		return
 	}

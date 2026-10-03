@@ -75,7 +75,7 @@ func (c *Client) CreateUser(ctx context.Context, user *UserCreateRequest) (*User
 	}
 	// The request carries no ID yet, so the server chose it.
 	if err := c.checkCreatedID("user", "", result.ID); err != nil {
-		return nil, fmt.Errorf("user creation returned no usable ID, so no follow-up request uses it; the user may exist: inspect before recovery: %w", err)
+		return nil, fmt.Errorf("user creation returned no usable ID, so no follow-up request uses it; the user may exist: inspect before recovery: %w", unreadResult(err))
 	}
 	// A new user's groups are set with a separate request. Groups the
 	// response lists that fail the ID check are dropped rather than failing a

@@ -265,7 +265,7 @@ func (r *clientLogoResource) upload(ctx context.Context, plan *clientLogoResourc
 			diags.AddAttributeError(path.Root("client_id"), "OIDC client not found", "Pocket ID has no OIDC client "+clientID+"; nothing was uploaded.")
 		case errors.Is(err, client.ErrInvalidUpload):
 			diags.AddAttributeError(path.Root("source"), "Logo not uploaded", err.Error())
-		case client.IsDefiniteRejection(err):
+		case writeRefused(err):
 			diags.AddError("Logo not uploaded", "Pocket ID refused the "+variant+" logo for OIDC client "+clientID+" ("+err.Error()+"); the client's logo is unchanged.")
 		default:
 			diags.AddError("Logo upload result uncertain", "Uploading the "+variant+" logo for OIDC client "+clientID+" failed after the request was sent ("+

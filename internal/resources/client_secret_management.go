@@ -447,7 +447,7 @@ func skipSecretAction(action secretAction, prior clientResourceModel, model *cli
 // carries: the mutation was accepted and only reading its result failed (a
 // 403 on the read-back, for example).
 func definitelyRejected(err error) bool {
-	return !errors.Is(err, client.ErrResultUnread) && client.IsDefiniteRejection(err)
+	return writeRefused(err)
 }
 
 // heldSecretPresent reports whether the secret state holds still exists on

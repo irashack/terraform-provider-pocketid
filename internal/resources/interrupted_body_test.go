@@ -98,3 +98,42 @@ func TestUserProfilePictureResource_InterruptedUploadResponseIsNotARefusal(t *te
 	assert.NotContains(t, detail, "Nothing was changed")
 	assert.Equal(t, 2, s.count("PUT"), "one upload per call, never repeated")
 }
+
+// A PUT that Pocket ID accepted, whose answer names a member by an unusable
+// ID, is an accepted write with an unknown result (ErrResultUnread alongside
+// ErrInvalidIdentifier), never a refusal: the group is read to verify. When
+// that read shows the requested members, they are recorded; when it fails,
+// the resource is kept with the requested users as candidates to clean up.
+func TestGroupMembersResource_UnusableIDInAnAcceptedAnswerIsVerified(t *testing.T) {
+	unusable := func(s *gmServer) map[string]any {
+		group := s.groupJSON()
+		group["users"] = []any{map[string]any{"id": "not-a-user-id"}}
+		return group
+	}
+
+	t.Run("verification read succeeds", func(t *testing.T) {
+		s, c := newGMServer(t)
+		s.putBody = unusable(s)
+		r, sch := gmResource(t, c)
+		resp := gmCreate(t, r, sch, s.groupID, []string{gmUUID(101)})
+		require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
+		require.Len(t, resp.Diagnostics.Warnings(), 1, "the unusable answer is reported")
+		assert.Equal(t, []string{gmUUID(101)}, gmStateIDs(t, resp.State))
+		assert.Equal(t, 1, s.putCount(), "never sent twice")
+	})
+	t.Run("verification read fails", func(t *testing.T) {
+		s, c := newGMServer(t)
+		s.putBody = unusable(s)
+		s.failGetsAfterPut = true
+		r, sch := gmResource(t, c)
+		resp := gmCreate(t, r, sch, s.groupID, []string{gmUUID(101)})
+		require.True(t, resp.Diagnostics.HasError())
+		assert.Equal(t, "Group members may have changed", resp.Diagnostics.Errors()[0].Summary())
+		assert.NotContains(t, resp.Diagnostics.Errors()[0].Detail(), "Nothing was changed")
+		require.False(t, resp.State.Raw.IsNull(), "the accepted write keeps the resource")
+		candidates, null := gmStateUnresolved(t, resp.State)
+		assert.False(t, null)
+		assert.Equal(t, []string{gmUUID(101)}, candidates)
+		assert.Equal(t, []string{gmUUID(101)}, s.memberSet(), "the write took effect")
+	})
+}

@@ -374,7 +374,7 @@ func (r *clientSecretResource) keepCreated(ctx context.Context, plan *clientSecr
 // values) with those that appeared during the attempt marked, so that the
 // operator can import or revoke it.
 func (r *clientSecretResource) reportFailedCreate(ctx context.Context, clientID string, before []client.ClientSecretMetadata, cause error, resp *resource.CreateResponse) {
-	if client.IsDefiniteRejection(cause) {
+	if writeRefused(cause) {
 		detail := "Pocket ID refused to create a secret for OIDC client " + clientID + " (" + cause.Error() + "); no secret was created."
 		if client.IsNotFound(cause, client.ResourceOIDCClient) {
 			detail = "OIDC client " + clientID + " no longer exists; no secret was created."

@@ -2,7 +2,6 @@ package resources
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -407,7 +406,7 @@ func (r *apiResource) apiFindByResource(ctx context.Context, resource string) (*
 // have been applied, whatever else the error says, so that is checked first.
 // Every write of the API resources classifies its error with it.
 func apiWriteRefused(err error) bool {
-	return !errors.Is(err, client.ErrResultUnread) && client.IsDefiniteRejection(err)
+	return writeRefused(err)
 }
 
 // apiWriteStep runs one write against an existing API and checks that the

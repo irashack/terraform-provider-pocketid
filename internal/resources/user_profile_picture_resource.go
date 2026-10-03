@@ -224,7 +224,7 @@ func (r *userProfilePictureResource) upload(ctx context.Context, plan *userProfi
 	if err != nil {
 		if client.IsUserNotFound(err) {
 			diags.AddError("User not found", fmt.Sprintf("No user found with id '%s'. Nothing was uploaded.", userID))
-		} else if client.IsDefiniteRejection(err) {
+		} else if writeRefused(err) {
 			diags.AddError("Error uploading profile picture", fmt.Sprintf("Pocket ID refused the picture for user %s: %s. Nothing was changed.", userID, err))
 		} else {
 			diags.AddError("Error uploading profile picture", fmt.Sprintf("The upload for user %s failed and may or may not have replaced the picture: %s. It is not repeated; check the user's picture and apply again.", userID, err))

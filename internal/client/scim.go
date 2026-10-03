@@ -48,7 +48,7 @@ func (c *Client) CreateScimServiceProvider(ctx context.Context, req *ScimService
 		return nil, err
 	}
 	if err := c.checkCreatedID("SCIM service provider", "", result.ID); err != nil {
-		return nil, fmt.Errorf("SCIM service provider creation returned no usable ID, so no follow-up request uses it; the SCIM service provider may exist: inspect before recovery: %w", err)
+		return nil, fmt.Errorf("SCIM service provider creation returned no usable ID, so no follow-up request uses it; the SCIM service provider may exist: inspect before recovery: %w", unreadResult(err))
 	}
 	if err := c.checkScimClient(req.OidcClientID, &result); err != nil {
 		return nil, fmt.Errorf("SCIM service provider creation returned a provider of another client; the SCIM service provider may exist: inspect before recovery: %w", unreadResult(err))

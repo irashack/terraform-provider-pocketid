@@ -3,7 +3,6 @@ package resources
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -213,7 +212,9 @@ func (r *groupMembersResource) put(ctx context.Context, groupID string, ids, bef
 	if client.IsNotFound(err, client.ResourceUserGroup) {
 		return groupMembersPut{Gone: true, Err: err}
 	}
-	if client.IsDefiniteRejection(err) || errors.Is(err, client.ErrInvalidIdentifier) {
+	// An accepted write whose answer was unusable (it also wraps
+	// ErrResultUnread) is verified below, never taken for a refusal.
+	if writeRefused(err) {
 		return groupMembersPut{Err: err}
 	}
 

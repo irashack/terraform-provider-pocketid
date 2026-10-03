@@ -157,7 +157,7 @@ func (r *OneTimeAccessTokenResource) Create(ctx context.Context, req resource.Cr
 		case client.IsNotFound(err, client.ResourceUser):
 			resp.Diagnostics.AddAttributeError(path.Root("user_id"), "Error creating one-time access token",
 				fmt.Sprintf("Pocket ID reports that user %s does not exist; no token was created.", userID))
-		case !client.IsDefiniteRejection(err):
+		case !writeRefused(err):
 			resp.Diagnostics.AddError("One-time access token creation result uncertain",
 				fmt.Sprintf("Creating a one-time access token for user %s failed without a definite answer (%s). A token may have been created; "+
 					"it stays valid until it is used or expires (ttl %s), and Pocket ID offers no way to read it back or revoke it. "+

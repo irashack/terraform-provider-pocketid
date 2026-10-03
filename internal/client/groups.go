@@ -35,7 +35,7 @@ func (c *Client) CreateUserGroup(ctx context.Context, group *UserGroupCreateRequ
 		return nil, err
 	}
 	if err := c.checkCreatedID("user group", "", result.ID); err != nil {
-		return nil, fmt.Errorf("user group creation returned no usable ID, so no follow-up request uses it; the user group may exist: inspect before recovery: %w", err)
+		return nil, fmt.Errorf("user group creation returned no usable ID, so no follow-up request uses it; the user group may exist: inspect before recovery: %w", unreadResult(err))
 	}
 	// A new group has no members yet. Members the response lists that fail
 	// the ID check are dropped rather than failing a create whose own ID is

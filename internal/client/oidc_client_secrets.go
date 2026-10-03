@@ -197,7 +197,7 @@ func (c *Client) GenerateClientSecret(ctx context.Context, clientID string, opts
 		return nil, errUndecodableSecret
 	}
 	if result.Secret == "" {
-		return nil, fmt.Errorf("secret creation returned no secret; result uncertain, inspect the client before recovery")
+		return nil, fmt.Errorf("secret creation returned no secret; result uncertain, inspect the client before recovery: %w", ErrResultUnread)
 	}
 	return &ClientSecret{Value: result.Secret}, nil
 }
@@ -287,17 +287,17 @@ func (c *Client) decodeCreatedSecret(response []byte) (*ClientSecret, error) {
 	}
 	if err := c.checkCreatedID("client secret", "", result.ID); err != nil {
 		if result.Secret == "" {
-			return nil, fmt.Errorf("secret creation returned no secret; result uncertain, inspect the client before recovery")
+			return nil, fmt.Errorf("secret creation returned no secret; result uncertain, inspect the client before recovery: %w", ErrResultUnread)
 		}
-		return nil, fmt.Errorf("secret creation returned no usable secret ID; result uncertain, inspect the client's secrets before recovery: %w", err)
+		return nil, fmt.Errorf("secret creation returned no usable secret ID; result uncertain, inspect the client's secrets before recovery: %w", unreadResult(err))
 	}
 	if !validClientSecretPrefix(result.Prefix) || (result.Secret != "" && result.Prefix != secretPrefixOf(result.Secret)) {
 		return &ClientSecret{ClientSecretMetadata: ClientSecretMetadata{ID: result.ID}},
-			fmt.Errorf("secret creation returned secret %s with a prefix outside Pocket ID's contract; result uncertain, inspect the client before recovery: %w", result.ID, ErrCreatedSecretMalformed)
+			fmt.Errorf("secret creation returned secret %s with a prefix outside Pocket ID's contract; result uncertain, inspect the client before recovery: %w: %w", result.ID, ErrResultUnread, ErrCreatedSecretMalformed)
 	}
 	if result.Secret == "" {
 		return &ClientSecret{ClientSecretMetadata: result.ClientSecretMetadata},
-			fmt.Errorf("secret creation returned no secret for secret %s; result uncertain, inspect the client before recovery: %w", result.ID, ErrCreatedSecretValueMissing)
+			fmt.Errorf("secret creation returned no secret for secret %s; result uncertain, inspect the client before recovery: %w: %w", result.ID, ErrResultUnread, ErrCreatedSecretValueMissing)
 	}
 	return &ClientSecret{ClientSecretMetadata: result.ClientSecretMetadata, Value: result.Secret}, nil
 }
