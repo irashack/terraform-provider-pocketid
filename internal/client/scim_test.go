@@ -190,3 +190,58 @@ func TestClient_SyncScimServiceProviderRefusesAnInvalidID(t *testing.T) {
 	}
 	assert.Zero(t, requests)
 }
+
+func TestClient_GetScimServiceProviderToken(t *testing.T) {
+	const id = "33333333-3333-4333-8333-333333333333"
+	cases := []struct {
+		name    string
+		body    string
+		want    string
+		wantErr error
+	}{
+		{"a token", `{"id":"` + id + `","token":"held"}`, "held", nil},
+		{"an explicit empty token", `{"id":"` + id + `","token":""}`, "", nil},
+		{"an upper-case ID", `{"id":"33333333-3333-4333-8333-333333333333","token":"held"}`, "held", nil},
+		{"an empty object", `{}`, "", client.ErrUnexpectedAnswer},
+		{"JSON null", `null`, "", client.ErrUnexpectedAnswer},
+		{"a missing token", `{"id":"` + id + `"}`, "", client.ErrUnexpectedAnswer},
+		{"a null token", `{"id":"` + id + `","token":null}`, "", client.ErrUnexpectedAnswer},
+		{"a missing ID", `{"token":"held"}`, "", client.ErrUnexpectedAnswer},
+		{"another ID", `{"id":"44444444-4444-4444-8444-444444444444","token":"held"}`, "", client.ErrUnexpectedAnswer},
+		{"not JSON", `held`, "", client.ErrUnexpectedAnswer},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/api/oidc/clients/client-123/scim-service-provider", r.URL.Path)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			c, err := client.NewClient(server.URL, "test-token", false, 30)
+			require.NoError(t, err)
+
+			got, err := c.GetScimServiceProviderToken(context.Background(), "client-123", id)
+			if tc.wantErr != nil {
+				require.ErrorIs(t, err, tc.wantErr)
+				assert.NotContains(t, err.Error(), "held")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestClient_GetScimServiceProviderTokenRefusesInvalidIdentifiers(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests++ }))
+	defer server.Close()
+	c, err := client.NewClient(server.URL, "test-token", false, 30)
+	require.NoError(t, err)
+
+	_, err = c.GetScimServiceProviderToken(context.Background(), "client-123", "not-a-uuid")
+	require.ErrorIs(t, err, client.ErrInvalidIdentifier)
+	_, err = c.GetScimServiceProviderToken(context.Background(), "../x", "33333333-3333-4333-8333-333333333333")
+	require.ErrorIs(t, err, client.ErrInvalidIdentifier)
+	assert.Zero(t, requests)
+}

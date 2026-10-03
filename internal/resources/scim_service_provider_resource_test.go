@@ -3,8 +3,10 @@ package resources_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -137,6 +139,8 @@ type scimFake struct {
 	requests []scimRequest
 	// failWith, when set, answers every request with this status and body.
 	failWith *scimFailure
+	// getBody, when set, is the 200 answer to the read by client.
+	getBody *string
 }
 
 type scimRequest struct {
@@ -196,6 +200,10 @@ func (f *scimFake) serve(w http.ResponseWriter, r *http.Request) {
 		if !f.exists {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(scimNotFoundBody))
+			return
+		}
+		if f.getBody != nil {
+			_, _ = w.Write([]byte(*f.getBody))
 			return
 		}
 		provider()
@@ -624,4 +632,90 @@ func TestScimServiceProviderResource_ReadDoesNotStoreTheTokenInWriteOnlyMode(t *
 	require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
 	assert.Equal(t, types.StringNull(), scimStateString(t, resp.State, "token"))
 	assert.Equal(t, types.StringValue("1"), scimStateString(t, resp.State, "token_wo_version"))
+}
+
+// The keep-token path reads the token before an unrelated update. A read that
+// succeeds but is not this provider with a present token must not become a PUT
+// that clears the credential.
+func TestScimServiceProviderResource_UpdateWithoutAVersionBumpRefusesAnUnusableRead(t *testing.T) {
+	otherID := "99999999-9999-4999-8999-999999999999"
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"an empty object", `{}`},
+		{"JSON null", `null`},
+		{"a missing token", fmt.Sprintf(`{"id":%q,"endpoint":"https://scim.example.com/v2"}`, scimTestProviderID)},
+		{"a null token", fmt.Sprintf(`{"id":%q,"token":null}`, scimTestProviderID)},
+		{"a token of the wrong type", fmt.Sprintf(`{"id":%q,"token":5}`, scimTestProviderID)},
+		{"a missing ID", `{"token":"other-token-value"}`},
+		{"a null ID", `{"id":null,"token":"other-token-value"}`},
+		{"another provider's ID", fmt.Sprintf(`{"id":%q,"token":"other-token-value"}`, otherID)},
+		{"a string", `"other-token-value"`},
+		{"a list", `[]`},
+		{"not JSON", `<html>other-token-value</html>`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake, c := newScimFake(t)
+			fake.token = "token-held-by-the-server"
+			body := tc.body
+			fake.getBody = &body
+			r := scimResource(t, c)
+			sch := scimSchema(t, r)
+
+			plan := scimWriteOnlyState("1")
+			plan["endpoint"] = "https://scim.example.com/v3"
+			config := map[string]any{
+				"client_id": scimTestClientID, "endpoint": "https://scim.example.com/v3",
+				"token_wo": "token-in-the-configuration", "token_wo_version": "1",
+			}
+			resp := scimUpdate(t, r, sch, scimWriteOnlyState("1"), plan, config)
+			require.True(t, resp.Diagnostics.HasError())
+			assert.Empty(t, fake.mutations(), "nothing may be sent: a PUT would clear the token")
+			assert.Equal(t, "token-held-by-the-server", fake.token)
+			for _, d := range resp.Diagnostics {
+				text := d.Summary() + d.Detail()
+				assert.NotContains(t, text, "other-token-value")
+				assert.NotContains(t, text, "token-in-the-configuration")
+				assert.NotContains(t, text, "token-held-by-the-server")
+			}
+			assert.Contains(t, resp.Diagnostics.Errors()[0].Detail(), "was not this SCIM service provider with its token")
+		})
+	}
+}
+
+// An explicit empty token is a valid answer (the provider has none), and the
+// provider ID may be written in either case.
+func TestScimServiceProviderResource_UpdateWithoutAVersionBumpAcceptsAPresentToken(t *testing.T) {
+	cases := []struct {
+		name      string
+		body      string
+		wantToken any
+	}{
+		{"an explicit empty token", fmt.Sprintf(`{"id":%q,"token":""}`, scimTestProviderID), nil},
+		{"a token", fmt.Sprintf(`{"id":%q,"token":"kept-token"}`, scimTestProviderID), "kept-token"},
+		{"an upper-case ID", fmt.Sprintf(`{"id":%q,"token":"kept-token"}`, strings.ToUpper(scimTestProviderID)), "kept-token"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake, c := newScimFake(t)
+			body := tc.body
+			fake.getBody = &body
+			r := scimResource(t, c)
+			sch := scimSchema(t, r)
+
+			plan := scimWriteOnlyState("1")
+			plan["endpoint"] = "https://scim.example.com/v3"
+			config := map[string]any{
+				"client_id": scimTestClientID, "endpoint": "https://scim.example.com/v3",
+				"token_wo": "token-in-the-configuration", "token_wo_version": "1",
+			}
+			resp := scimUpdate(t, r, sch, scimWriteOnlyState("1"), plan, config)
+			require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
+			mutations := fake.mutations()
+			require.Len(t, mutations, 1)
+			assert.Equal(t, tc.wantToken, mutations[0].Body["token"])
+		})
+	}
 }

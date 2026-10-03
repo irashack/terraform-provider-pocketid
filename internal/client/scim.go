@@ -2,7 +2,10 @@ package client
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 )
 
 // ScimServiceProvider represents a SCIM service provider configuration attached
@@ -117,4 +120,43 @@ func (c *Client) SyncScimServiceProvider(ctx context.Context, id string) error {
 	}
 	_, err = c.doRequest(ctx, "POST", "/api/scim/service-provider/"+segment+"/sync", nil)
 	return err
+}
+
+// ErrUnexpectedAnswer marks a successful response that is not the object the
+// caller needs, for example an empty object, JSON null, or another object than
+// the one asked for. It carries no part of the response.
+var ErrUnexpectedAnswer = errors.New("the answer was not the expected object")
+
+// GetScimServiceProviderToken returns the bearer token Pocket ID holds for the
+// SCIM service provider providerID of the OIDC client clientID, for a caller
+// that will send it back unchanged in a PUT.
+//
+// Pocket ID always includes the token field (decrypted; "" when none is
+// configured), and a PUT that carries "" clears the token. An answer that
+// merely decodes to "" is therefore not enough: the object must name
+// providerID and hold a present, non-null string token ("" is a valid token
+// meaning none). Anything else is ErrUnexpectedAnswer, so a malformed answer
+// (an empty object, null, a missing or null token, another provider) can never
+// turn into a request that erases the credential.
+func (c *Client) GetScimServiceProviderToken(ctx context.Context, clientID, providerID string) (string, error) {
+	if err := ValidateUUID("SCIM service provider", providerID); err != nil {
+		return "", err
+	}
+	segment, err := clientIDSegment(clientID)
+	if err != nil {
+		return "", err
+	}
+	body, err := c.doRequest(ctx, "GET", "/api/oidc/clients/"+segment+"/scim-service-provider", nil)
+	if err != nil {
+		return "", err
+	}
+
+	var answer struct {
+		ID    *string `json:"id"`
+		Token *string `json:"token"`
+	}
+	if err := json.Unmarshal(body, &answer); err != nil || answer.ID == nil || answer.Token == nil || !strings.EqualFold(*answer.ID, providerID) {
+		return "", ErrUnexpectedAnswer
+	}
+	return *answer.Token, nil
 }

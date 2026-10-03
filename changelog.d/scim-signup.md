@@ -15,7 +15,8 @@
   the plan or the state, so it can come from an ephemeral value. The token is
   sent when the resource is created and whenever `token_wo_version` changes;
   every other update keeps the token Pocket ID already holds (Pocket ID would
-  otherwise clear it). Because the state holds no token, a token changed or
+  otherwise clear it); the update is refused, and nothing is sent, if Pocket
+  ID's read of that token fails or does not return this provider with a token. Because the state holds no token, a token changed or
   cleared outside Terraform is not detected: change `token_wo_version` to send
   it again. `token_wo` conflicts with `token` and needs `token_wo_version`.
   Write-only attributes need Terraform or OpenTofu 1.11 or later; `token`

@@ -276,16 +276,19 @@ func (r *scimServiceProviderResource) Update(ctx context.Context, req resource.U
 	token := plan.Token.ValueString()
 	if tokenWO != nil {
 		if plan.TokenWOVer.Equal(state.TokenWOVer) {
-			current, err := r.client.GetClientScimServiceProvider(ctx, plan.ClientID.ValueString())
+			current, err := r.client.GetScimServiceProviderToken(ctx, plan.ClientID.ValueString(), state.ID.ValueString())
 			if err != nil {
-				resp.Diagnostics.AddError(
-					"Error reading SCIM service provider before update",
-					"The update would replace the bearer token Pocket ID holds, which Terraform does not know "+
-						"(token_wo is write-only), so it must read it first. The read failed and nothing was changed: "+err.Error(),
-				)
+				detail := "The update would replace the bearer token Pocket ID holds, which Terraform does not know " +
+					"(token_wo is write-only), so it must read it first. Nothing was changed. "
+				if errors.Is(err, client.ErrUnexpectedAnswer) {
+					detail += "Pocket ID's answer to the read was not this SCIM service provider with its token, so it was not used."
+				} else {
+					detail += "The read failed: " + err.Error()
+				}
+				resp.Diagnostics.AddError("Error reading SCIM service provider before update", detail)
 				return
 			}
-			token = current.Token
+			token = current
 		} else {
 			token = *tokenWO
 		}
