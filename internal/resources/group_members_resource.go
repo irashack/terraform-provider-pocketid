@@ -362,7 +362,7 @@ func groupMembersPrivateAvailable(private groupMembersPrivateWriter) bool {
 		return false
 	}
 	value := reflect.ValueOf(private)
-	return value.Kind() != reflect.Ptr || !value.IsNil()
+	return value.Kind() != reflect.Pointer || !value.IsNil()
 }
 
 // groupMembersUnresolved returns the candidates recorded by an earlier write
