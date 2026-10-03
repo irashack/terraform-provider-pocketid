@@ -56,6 +56,8 @@ type apiTestPocketID struct {
 	tamper func(route string, api *client.API)
 	// beforeList, when set, runs before each list is answered.
 	beforeList func()
+	// requests counts every request received, the version check included.
+	requests int
 }
 
 func newAPITestPocketID(t *testing.T) (*apiTestPocketID, *client.Client) {
@@ -128,6 +130,7 @@ func (r *apiTestRecorder) Write(body []byte) (int, error) {
 func (f *apiTestPocketID) serve(rw http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.requests++
 	recorder := &apiTestRecorder{ResponseWriter: rw}
 	var w http.ResponseWriter = recorder
 	w.Header().Set("Content-Type", "application/json")
@@ -237,6 +240,13 @@ func (f *apiTestPocketID) apply(route string, api *client.API, r *http.Request) 
 	}
 	body, _ = json.Marshal(api)
 	return status, body
+}
+
+// received is the number of requests the server got, of any kind.
+func (f *apiTestPocketID) received() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.requests
 }
 
 // stored is the number of APIs the server holds.
@@ -920,4 +930,92 @@ func TestAPIResource_KeyBearingIdentity(t *testing.T) {
 	assert.NotContains(t, apiTestUpdateDiag(updated), key)
 
 	assert.Empty(t, f.routes(), "no request carried the identity")
+}
+
+// Configured text that contains the API key is refused with a fixed
+// diagnostic before any request, however it is configured: at plan time for
+// known values, and at the top of create and update for the rest. Pocket ID
+// would accept such text, and the provider would then refuse its answer.
+func TestAPIResource_CredentialBearingConfiguration(t *testing.T) {
+	const key = "synthetic-api-key-0123456789"
+	permission := func(name string, description *string) map[string]attr.Value {
+		return map[string]attr.Value{"read": apiTestPermission("", name, description, false)}
+	}
+	withKey := key
+	for name, tc := range map[string]struct {
+		model func() apiResourceModel
+	}{
+		"name": {func() apiResourceModel {
+			return apiTestModel("", "Inv "+key, "https://inventory.example", false, nil)
+		}},
+		"name is the key": {func() apiResourceModel {
+			return apiTestModel("", key, "https://inventory.example", false, nil)
+		}},
+		"resource": {func() apiResourceModel {
+			return apiTestModel("", "Inventory", "https://inventory.example/"+key, false, nil)
+		}},
+		"permission key": {func() apiResourceModel {
+			return apiTestModel("", "Inventory", "https://inventory.example", false, map[string]attr.Value{"scope-" + key: apiTestPermission("", "Read", nil, false)})
+		}},
+		"permission name": {func() apiResourceModel {
+			return apiTestModel("", "Inventory", "https://inventory.example", false, permission("Read "+key, nil))
+		}},
+		"permission description": {func() apiResourceModel {
+			d := "about " + withKey
+			return apiTestModel("", "Inventory", "https://inventory.example", false, permission("Read", &d))
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// Create sends nothing.
+			f, c := newAPITestPocketIDWithKey(t, key)
+			resp, state := apiTestCreate(t, c, tc.model())
+			require.True(t, resp.Diagnostics.HasError())
+			assert.Equal(t, "Value not supported", resp.Diagnostics[0].Summary())
+			assert.NotContains(t, apiTestCreateDiag(resp), key)
+			assert.Nil(t, state)
+			assert.Zero(t, f.received(), "no request of any kind")
+
+			// So does update, against an API that exists.
+			f, c = newAPITestPocketIDWithKey(t, key)
+			existing := f.add(client.API{Name: "Inventory", Resource: "https://inventory.example"})
+			plan := tc.model()
+			plan.ID = types.StringValue(existing.ID)
+			plan.CreatedAt = types.StringValue("2026-01-01T00:00:00Z")
+			plan.Resource = types.StringValue("https://inventory.example")
+			if name == "resource" {
+				plan.Resource = types.StringValue("https://inventory.example/" + key)
+			}
+			prior := apiTestModel(existing.ID, "Inventory", "https://inventory.example", false, nil)
+			updated, _ := apiTestUpdate(t, c, prior, plan)
+			require.True(t, updated.Diagnostics.HasError())
+			assert.Equal(t, "Value not supported", updated.Diagnostics[0].Summary())
+			assert.NotContains(t, apiTestUpdateDiag(updated), key)
+			assert.Zero(t, f.received(), "no request of any kind")
+
+			// And planning refuses it, through the framework's plan.
+			f, c = newAPITestPocketIDWithKey(t, key)
+			h := newAPIHarness(t, c)
+			r := &apiResource{}
+			config := tc.model()
+			proposed := apiPlanProposed(t, config, nil)
+			plan2 := h.plan("pocketid_api", apiHarnessValue(t, r, (*apiResourceModel)(nil)), apiHarnessValue(t, r, &config), apiHarnessValue(t, r, &proposed), nil)
+			errs := apiHarnessErrors(plan2.Diagnostics)
+			assert.Contains(t, errs, "Value not supported")
+			assert.NotContains(t, errs, key)
+			assert.Zero(t, f.received())
+		})
+	}
+
+	// Without the key, and for a destroy, planning is not held back.
+	_, c := newAPITestPocketIDWithKey(t, key)
+	h := newAPIHarness(t, c)
+	r := &apiResource{}
+	config := apiPlanConfig("read")
+	proposed := apiPlanProposed(t, config, nil)
+	plan := h.plan("pocketid_api", apiHarnessValue(t, r, (*apiResourceModel)(nil)), apiHarnessValue(t, r, &config), apiHarnessValue(t, r, &proposed), nil)
+	assert.Empty(t, apiHarnessErrors(plan.Diagnostics))
+	created := apiTestModel("00000000-0000-4000-8000-000000000001", "Inv "+key, "https://inventory.example", false, nil)
+	null := apiHarnessValue(t, r, (*apiResourceModel)(nil))
+	destroy := h.plan("pocketid_api", apiHarnessValue(t, r, &created), null, null, nil)
+	assert.Empty(t, apiHarnessErrors(destroy.Diagnostics))
 }

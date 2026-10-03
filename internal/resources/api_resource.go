@@ -28,6 +28,7 @@ var (
 	_ resource.Resource                = &apiResource{}
 	_ resource.ResourceWithConfigure   = &apiResource{}
 	_ resource.ResourceWithImportState = &apiResource{}
+	_ resource.ResourceWithModifyPlan  = &apiResource{}
 )
 
 func init() { register(NewAPIResource) }
@@ -87,6 +88,9 @@ func (r *apiResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *
 			"~> **Deleting or replacing an API removes access to it.** Pocket ID deletes an API's permissions and every client's " +
 			"grants on it together with the API. `resource` cannot be changed in place: changing it replaces the API, and the " +
 			"replacement has a new ID, so `pocketid_api_client_access` resources that refer to it are replaced as well.\n\n" +
+			"**Unsupported values.** The provider never stores or prints the admin API key it authenticates with. A `name`, " +
+			"`resource`, or permission key, `name` or `description` that contains that key is therefore refused at plan time, " +
+			"although Pocket ID would accept it; choose another value.\n\n" +
 			"If creating an API ends without a definite answer from Pocket ID (a timeout or a server error), nothing is recorded " +
 			"in state: an API holding the same `resource` afterwards may be someone else's. The error names that API's ID and " +
 			"name; import it if it is the intended one.",
@@ -420,6 +424,23 @@ func apiWriteStep(id string, write func() (*client.API, error)) (*client.API, er
 	return api, nil
 }
 
+// ModifyPlan refuses configured text that contains the API key at plan time,
+// so no apply is attempted with it (see apiCredentialTextDiag). Values that are
+// not known yet are checked when the resource is created or updated.
+func (r *apiResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() {
+		return
+	}
+	var plan apiResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if r.client.ContainsAPIKey(apiModelTexts(ctx, plan)...) {
+		apiCredentialTextDiag(&resp.Diagnostics)
+	}
+}
+
 func (r *apiResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan apiResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -429,6 +450,12 @@ func (r *apiResource) Create(ctx context.Context, req resource.CreateRequest, re
 	desired, diags := apiDesiredFromModel(ctx, plan)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	// Before anything is sent or printed: Pocket ID would accept text that
+	// carries the API key, and the provider would then refuse its answer.
+	if r.client.ContainsAPIKey(apiModelTexts(ctx, plan)...) {
+		apiCredentialTextDiag(&resp.Diagnostics)
 		return
 	}
 
@@ -587,6 +614,10 @@ func (r *apiResource) Update(ctx context.Context, req resource.UpdateRequest, re
 	}
 	id := state.ID.ValueString()
 	if !apiIdentityOK(r.client, &resp.Diagnostics, "state", id) {
+		return
+	}
+	if r.client.ContainsAPIKey(apiModelTexts(ctx, plan)...) {
+		apiCredentialTextDiag(&resp.Diagnostics)
 		return
 	}
 

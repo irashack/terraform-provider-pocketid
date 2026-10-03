@@ -56,6 +56,13 @@
   refused with a fixed message that does not show it, before any request is
   sent, and a diagnostic prints an identifier from state only after it passes
   the check.
+- Text that contains the provider's own admin API key is deliberately
+  unsupported in a `pocketid_api`: its `name`, `resource`, and each permission
+  key, `name` and `description`. Pocket ID would accept such a value, but the
+  provider never stores that credential in state or prints it, so it refuses
+  the value at plan time (and again before creating or updating) with a
+  message that does not show it, and nothing is sent. The `resource` lookup of
+  the `pocketid_api` data source refuses such a value too.
 - New data sources `pocketid_api` (look up one API by `id` or by its exact
   `resource` identifier) and `pocketid_apis` (every API, oldest first, read
   across all pages), each with the API's permissions keyed by permission key

@@ -38,7 +38,7 @@ resource "pocketid_api_client_access" "reporting" {
 ### Optional
 
 - `id` (String) The ID of the API. Exactly one of `id` and `resource` must be set.
-- `resource` (String) The resource identifier of the API, exactly as Pocket ID stores it (without a trailing slash). Exactly one of `id` and `resource` must be set.
+- `resource` (String) The resource identifier of the API, exactly as Pocket ID stores it (without a trailing slash). Exactly one of `id` and `resource` must be set. A value that contains the admin API key this provider authenticates with is refused.
 
 ### Read-Only
 

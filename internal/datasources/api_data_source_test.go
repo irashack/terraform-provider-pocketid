@@ -252,6 +252,22 @@ func TestAPIDataSources_ReflectedTextNeverReachesState(t *testing.T) {
 	}
 }
 
+// A resource identifier to look up that contains the API key is refused with
+// fixed text before any request; the value is never printed.
+func TestAPIDataSource_ResourceSelectorWithKeyRefused(t *testing.T) {
+	const key = "synthetic-api-key-0123456789"
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++ }))
+	t.Cleanup(server.Close)
+	c, err := client.NewClient(server.URL, key, false, 5)
+	require.NoError(t, err)
+	resp, _ := apiDataSourceTestRead(t, c, types.StringNull(), types.StringValue("https://inventory.example/"+key))
+	require.True(t, resp.Diagnostics.HasError())
+	assert.Equal(t, "Value not supported", resp.Diagnostics[0].Summary())
+	assert.NotContains(t, resp.Diagnostics[0].Detail(), key)
+	assert.Zero(t, calls)
+}
+
 func TestAPIDataSource_InputValidators(t *testing.T) {
 	ctx := context.Background()
 	check := func(v validator.String, value string) string {

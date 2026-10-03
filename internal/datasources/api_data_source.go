@@ -108,7 +108,7 @@ func (d *apiDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, re
 	}
 	attributes["resource"] = schema.StringAttribute{
 		Description: "The resource identifier of the API, exactly as Pocket ID stores it (without a trailing slash). " +
-			"Exactly one of `id` and `resource` must be set.",
+			"Exactly one of `id` and `resource` must be set. A value that contains the admin API key this provider authenticates with is refused.",
 		Optional:   true,
 		Computed:   true,
 		Validators: []validator.String{apiDataSourceResourceValidator{}},
@@ -166,6 +166,13 @@ func (d *apiDataSource) Read(ctx context.Context, req datasource.ReadRequest, re
 		found = api
 	} else {
 		want := cfg.Resource.ValueString()
+		// The configured identifier is printed when no API matches; one that
+		// carries the API key is refused before anything is sent or shown.
+		if d.client.ContainsAPIKey(want) {
+			resp.Diagnostics.AddAttributeError(path.Root("resource"), "Value not supported",
+				"The resource identifier contains the API key this provider authenticates with, which the provider never stores or prints. The value is not shown, and no request was made.")
+			return
+		}
 		apis, err := d.client.ListAPIs(ctx)
 		if err != nil {
 			resp.Diagnostics.AddError("Unable to list APIs", err.Error())

@@ -1,9 +1,11 @@
 package resources
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
 )
@@ -52,4 +54,41 @@ func apiShownClientID(c *client.Client, id string) string {
 		return apiNotShown
 	}
 	return id
+}
+
+// apiCredentialTextDiag is the fixed refusal for configured text that
+// contains the API key. It names no value.
+func apiCredentialTextDiag(diags *diag.Diagnostics) {
+	diags.AddError("Value not supported",
+		"The name, resource identifier or a permission key, name or description in this configuration contains the API key this provider "+
+			"authenticates with. Pocket ID would accept it, but the provider never stores that credential in state or prints it, so it "+
+			"would reject the server's answer after the API was created. The value is not shown, and no request was made. Change the value.")
+}
+
+// apiModelTexts lists the configured text of an API that is known at this
+// point: its name and resource identifier, and each permission's key, name and
+// description. Unknown and null values are left out.
+func apiModelTexts(ctx context.Context, m apiResourceModel) []string {
+	var texts []string
+	for _, value := range []types.String{m.Name, m.Resource} {
+		if !value.IsNull() && !value.IsUnknown() {
+			texts = append(texts, value.ValueString())
+		}
+	}
+	if m.Permissions.IsNull() || m.Permissions.IsUnknown() {
+		return texts
+	}
+	var permissions map[string]apiPermissionModel
+	if m.Permissions.ElementsAs(ctx, &permissions, false).HasError() {
+		return texts
+	}
+	for key, p := range permissions {
+		texts = append(texts, key)
+		for _, value := range []types.String{p.Name, p.Description} {
+			if !value.IsNull() && !value.IsUnknown() {
+				texts = append(texts, value.ValueString())
+			}
+		}
+	}
+	return texts
 }
