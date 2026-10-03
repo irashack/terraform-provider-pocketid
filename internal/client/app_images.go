@@ -164,7 +164,8 @@ func (c *Client) UploadApplicationImage(ctx context.Context, image ApplicationIm
 // Pocket ID lets caches keep an image for 15 minutes and serve it stale for a
 // day (utils.SetCacheControlHeader), so the read goes through
 // getBinaryUncached: a URL no cache has seen and request headers that ask
-// caches to revalidate. Like every image read it is sent once, never retried.
+// caches to revalidate. Like every read it is retried after a transient
+// failure, with a new nocache value each time.
 func (c *Client) GetApplicationImage(ctx context.Context, image ApplicationImage) ([]byte, error) {
 	path, query, err := image.route()
 	if err != nil {

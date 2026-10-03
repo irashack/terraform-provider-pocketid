@@ -58,8 +58,8 @@ func (c *Client) ResetUserProfilePicture(ctx context.Context, userID string) err
 // answer with the picture from before an upload. The read therefore goes
 // through getBinaryUncached: a URL no cache has seen (a random nocache
 // parameter, which Pocket ID ignores) and request headers that ask caches to
-// revalidate (Cache-Control: no-cache, Pragma: no-cache). It is sent once,
-// never retried.
+// revalidate (Cache-Control: no-cache, Pragma: no-cache). Like every read it
+// is retried after a transient failure, with a new nocache value each time.
 func (c *Client) GetUserProfilePicture(ctx context.Context, userID string) ([]byte, error) {
 	id, err := uuidSegment("user", userID)
 	if err != nil {

@@ -103,8 +103,9 @@ func (c *Client) UploadClientLogo(ctx context.Context, clientID string, light bo
 // provider and the server could answer with an earlier logo. The read
 // therefore goes through getBinaryUncached: a URL no cache has seen (a random
 // nocache parameter, which Pocket ID ignores) and request headers that ask
-// caches to revalidate (Cache-Control: no-cache, Pragma: no-cache). It is
-// sent once, never retried.
+// caches to revalidate (Cache-Control: no-cache, Pragma: no-cache). Like every
+// read it is retried after a transient failure, with a new nocache value each
+// time.
 func (c *Client) GetClientLogo(ctx context.Context, clientID string, light bool) ([]byte, error) {
 	id, err := clientIDSegment(clientID)
 	if err != nil {

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-log/tflogtest"
 	"github.com/stretchr/testify/assert"
@@ -109,29 +110,36 @@ func TestGetBinaryUncached_SizeLimit(t *testing.T) {
 	})
 }
 
-// A non-2xx answer is classified as usual and, like every answer, is never
-// retried.
-func TestGetBinaryUncached_ErrorsAndNoRetry(t *testing.T) {
+// A non-2xx answer is classified as usual. Like every read, a transient one
+// (429 or a 5xx the retry policy covers) is retried up to the policy's
+// limit; any other is not.
+func TestGetBinaryUncached_Errors(t *testing.T) {
 	cases := map[string]struct {
-		status int
-		body   string
-		check  func(t *testing.T, err error)
+		status   int
+		body     string
+		attempts int32
+		check    func(t *testing.T, err error)
 	}{
-		"no custom image": {404, `{"error":"Image not found","code":"image_not_found"}`, func(t *testing.T, err error) {
+		"no custom image": {404, `{"error":"Image not found","code":"image_not_found"}`, 1, func(t *testing.T, err error) {
 			assert.True(t, IsNotFound(err, ResourceImage))
 		}},
-		"missing route": {404, `{"error":"API endpoint not found"}`, func(t *testing.T, err error) {
+		"missing route": {404, `{"error":"API endpoint not found"}`, 1, func(t *testing.T, err error) {
 			assert.False(t, IsNotFound(err, ResourceImage))
 			var status *HTTPError
 			require.ErrorAs(t, err, &status)
 			assert.True(t, status.MissingEndpoint)
 		}},
-		"server error": {503, ``, func(t *testing.T, err error) {
+		"forbidden": {403, ``, 1, func(t *testing.T, err error) {
+			var status *HTTPError
+			require.ErrorAs(t, err, &status)
+			assert.Equal(t, 403, status.StatusCode)
+		}},
+		"server error": {503, ``, 3, func(t *testing.T, err error) {
 			var status *HTTPError
 			require.ErrorAs(t, err, &status)
 			assert.Equal(t, 503, status.StatusCode)
 		}},
-		"rate limited": {429, ``, func(t *testing.T, err error) {
+		"rate limited": {429, ``, 3, func(t *testing.T, err error) {
 			var limited *RateLimitError
 			assert.ErrorAs(t, err, &limited)
 		}},
@@ -141,18 +149,18 @@ func TestGetBinaryUncached_ErrorsAndNoRetry(t *testing.T) {
 			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests.Add(1)
-				w.Header().Set("Retry-After", "1")
 				w.WriteHeader(tc.status)
 				_, _ = io.WriteString(w, tc.body)
 			}))
 			defer server.Close()
 			c, err := NewClient(server.URL, "test-token", false, 30)
 			require.NoError(t, err)
+			c.retry = retryPolicy{maxAttempts: 3, backoffUnit: time.Millisecond, maxWait: time.Second, maxElapsed: 10 * time.Second}
 
 			_, _, err = c.getBinaryUncached(context.Background(), "/api/application-images/logo", nil, 0)
 			require.Error(t, err)
 			tc.check(t, err)
-			assert.Equal(t, int32(1), requests.Load(), "never retried")
+			assert.Equal(t, tc.attempts, requests.Load())
 		})
 	}
 	t.Run("endpoint with a query", func(t *testing.T) {
@@ -161,6 +169,70 @@ func TestGetBinaryUncached_ErrorsAndNoRetry(t *testing.T) {
 		_, _, err = c.getBinaryUncached(context.Background(), "/api/x?light=false", nil, 0)
 		assert.Error(t, err)
 	})
+}
+
+// A transient failure is retried: the next attempt has a nocache value of its
+// own and the same cache headers, the caller's query and the body limit, and
+// its answer (body and media type) is the one returned.
+func TestGetBinaryUncached_RetriesTransientFailures(t *testing.T) {
+	var mu sync.Mutex
+	var seen []*http.Request
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r.Clone(context.Background()))
+		n := len(seen)
+		mu.Unlock()
+		if n == 1 {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(pngBytes)
+	}))
+	defer server.Close()
+	c, err := NewClient(server.URL, "test-token", false, 30)
+	require.NoError(t, err)
+	c.retry = retryPolicy{maxAttempts: 3, backoffUnit: time.Millisecond, maxWait: time.Second, maxElapsed: 10 * time.Second}
+
+	body, mediaType, err := c.getBinaryUncached(context.Background(), "/api/oidc/clients/c1/logo", url.Values{"light": {"false"}}, 1<<20)
+	require.NoError(t, err)
+	assert.Equal(t, pngBytes, body)
+	assert.Equal(t, "image/png", mediaType)
+	require.Len(t, seen, 2)
+	assert.NotEqual(t, seen[0].URL.Query().Get(nocacheParameter), seen[1].URL.Query().Get(nocacheParameter), "each attempt gets its own nocache value")
+	for _, r := range seen {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, "false", r.URL.Query().Get("light"))
+		assert.Equal(t, "no-cache", r.Header.Get("Cache-Control"))
+		assert.Equal(t, "no-cache", r.Header.Get("Pragma"))
+		assert.Equal(t, "*/*", r.Header.Get("Accept"))
+	}
+
+	// A too-large body is not retried, and neither is a cancelled read.
+	seen = nil
+	large := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r)
+		mu.Unlock()
+		_, _ = w.Write(bytes.Repeat([]byte("x"), 200))
+	}))
+	defer large.Close()
+	c, err = NewClient(large.URL, "test-token", false, 30)
+	require.NoError(t, err)
+	c.retry = retryPolicy{maxAttempts: 3, backoffUnit: time.Millisecond, maxWait: time.Second, maxElapsed: 10 * time.Second}
+	_, _, err = c.getBinaryUncached(context.Background(), "/api/x", nil, 100)
+	var tooLarge *ResponseBodyError
+	require.ErrorAs(t, err, &tooLarge)
+	assert.True(t, tooLarge.TooLarge)
+	assert.Len(t, seen, 1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	seen = nil
+	_, _, err = c.getBinaryUncached(ctx, "/api/x", nil, 100)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Empty(t, seen, "nothing is sent once the caller has given up")
 }
 
 // Nothing the server controls reaches the provider's logs, Go's standard

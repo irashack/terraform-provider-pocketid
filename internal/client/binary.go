@@ -30,13 +30,15 @@ const nocacheParameter = "nocache"
 // parameters, empty when it is missing, malformed or contains the API key);
 // the media type is server-controlled, so compare it rather than log it.
 //
-// It is never retried, unlike other reads: the answer is used as evidence of
-// what the server holds at this moment, and a second attempt could be served
-// by a different cache or after a change, so a failure is reported instead.
-// Otherwise it goes through the same path as every request: one connection
-// per request, the read deadline, sanitized errors and logs, and the usual
-// classification of a non-2xx answer (IsNotFound with ResourceImage for a
-// missing image).
+// Like every read it follows the bounded GET retry policy (withRetries): a
+// transient failure (a connection error, 500, 502, 503, 504 or 429) is retried
+// within the read deadline, and each attempt gets a nocache value of its own.
+// Only this GET is repeated, never an upload or deletion before it; an answer
+// is an observation of what the server held when it was served, not proof
+// against a concurrent replacement. Otherwise it goes through the same path
+// as every request: one connection per request, sanitized errors and logs,
+// and the usual classification of a non-2xx answer (IsNotFound with
+// ResourceImage for a missing image).
 func (c *Client) getBinaryUncached(ctx context.Context, endpoint string, query url.Values, maxBytes int64) ([]byte, string, error) {
 	if strings.ContainsAny(endpoint, "?#") {
 		return nil, "", errors.New("getBinaryUncached: endpoint must be a path; pass its parameters in query")
@@ -44,31 +46,25 @@ func (c *Client) getBinaryUncached(ctx context.Context, endpoint string, query u
 	if maxBytes <= 0 || maxBytes > maxResponseBodyBytes {
 		maxBytes = maxResponseBodyBytes
 	}
-	nonce := make([]byte, 16)
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, "", fmt.Errorf("getBinaryUncached: could not generate a cache-busting value: %w", err)
-	}
-	values := url.Values{}
-	for key, list := range query {
-		values[key] = append([]string(nil), list...)
-	}
-	values.Set(nocacheParameter, hex.EncodeToString(nonce))
-
-	policy := c.retry
-	if policy.maxAttempts == 0 {
-		policy = defaultRetryPolicy
-	}
-	ctx, cancel := context.WithTimeout(ctx, policy.maxElapsed)
-	defer cancel()
-	if err := ctx.Err(); err != nil {
-		return nil, "", fmt.Errorf("request not sent: %w", err)
-	}
-
 	headers := http.Header{}
 	headers.Set("Cache-Control", "no-cache")
 	headers.Set("Pragma", "no-cache")
-	body, contentType, err := c.sendWith(ctx, http.MethodGet, endpoint+"?"+values.Encode(), "", nil,
-		sendOptions{accept: "*/*", headers: headers, maxBody: maxBytes})
+	var contentType string
+	body, err := c.withRetries(ctx, http.MethodGet, func(ctx context.Context) ([]byte, error) {
+		nonce := make([]byte, 16)
+		if _, err := rand.Read(nonce); err != nil {
+			return nil, fmt.Errorf("getBinaryUncached: could not generate a cache-busting value: %w", err)
+		}
+		values := url.Values{}
+		for key, list := range query {
+			values[key] = append([]string(nil), list...)
+		}
+		values.Set(nocacheParameter, hex.EncodeToString(nonce))
+		body, header, err := c.sendWith(ctx, http.MethodGet, endpoint+"?"+values.Encode(), "", nil,
+			sendOptions{accept: "*/*", headers: headers, maxBody: maxBytes})
+		contentType = header
+		return body, err
+	})
 	if err != nil {
 		return nil, "", err
 	}

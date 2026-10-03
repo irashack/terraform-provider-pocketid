@@ -682,7 +682,10 @@ go-playground/validator and the URL-pattern libraries.
   headers, as most do by default. If your cache does neither, exclude
   `/api/application-images/` from caching for the address the provider uses;
   otherwise the provider can record an older image and upload yours again
-  later. Image reads are sent once and not retried.
+  later. Image reads, like other reads, are retried after a transient failure
+  (each attempt with a new `nocache` value); the upload or deletion before
+  them never is. A read shows what Pocket ID served at that moment, not
+  proof that nothing replaced the image meanwhile.
 
 ### SCIM, signup tokens and API keys
 
