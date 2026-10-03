@@ -1,6 +1,6 @@
 # Changelog
 
-## 3.0.0 (unreleased)
+## 3.0.0 — 2026-10-03
 
 The first release of this provider as a project of its own (see
 [UPSTREAM.md](UPSTREAM.md)), covering most of Pocket ID's admin API. Supported
