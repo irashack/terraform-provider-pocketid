@@ -247,6 +247,72 @@ func TestClient_GrantResponses_ReflectedKeyRefused(t *testing.T) {
 	}
 }
 
+// An identifier that carries the API key is refused before it reaches a
+// request path, for every call that takes one, with fixed text.
+func TestClient_APIIdentifiers_KeyRefusedBeforeRequest(t *testing.T) {
+	const clientKey = "synthetic-client-key-0123"
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		key, apiID, clientID string
+	}{
+		"api ID is the key":     {apiReflectTestKey, apiReflectTestKey, "app"},
+		"client ID is the key":  {clientKey, apiTestAPIID, clientKey},
+		"client ID contains it": {clientKey, apiTestAPIID, "x." + clientKey},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1) }))
+			t.Cleanup(server.Close)
+			c, err := client.NewClient(server.URL, tc.key, false, 5)
+			require.NoError(t, err)
+
+			// The calls that take the bad identifier (all of them for a bad API ID;
+			// the grant calls for a bad client ID). Calls whose identifiers are
+			// fine would be sent, so they are not made here.
+			grantCalls := map[string]func() error{
+				"grant write": func() error {
+					_, err := c.SetAPIClientAccess(ctx, tc.apiID, tc.clientID, client.APIClientGrant{UserDelegatedAccess: true})
+					return err
+				},
+				"grant remove": func() error { return c.RemoveAPIClientAccess(ctx, tc.apiID, tc.clientID) },
+				"grant lookup": func() error { _, err := c.FindClientAPIGrant(ctx, tc.clientID, tc.apiID); return err },
+			}
+			if tc.clientID != "app" {
+				grantCalls["grant list"] = func() error { _, err := c.ListClientAPIGrants(ctx, tc.clientID); return err }
+			}
+			if tc.apiID != apiTestAPIID {
+				grantCalls["api read"] = func() error { _, err := c.GetAPI(ctx, tc.apiID); return err }
+				grantCalls["api update"] = func() error { _, err := c.UpdateAPI(ctx, tc.apiID, &client.APIUpdateRequest{Name: "x"}); return err }
+				grantCalls["api delete"] = func() error { return c.DeleteAPI(ctx, tc.apiID) }
+				grantCalls["permissions"] = func() error { _, err := c.UpdateAPIPermissions(ctx, tc.apiID, nil); return err }
+				grantCalls["cimd access"] = func() error { _, err := c.UpdateAPICIMDAccess(ctx, tc.apiID, false, nil); return err }
+			}
+			for label, call := range grantCalls {
+				err := call()
+				require.ErrorIs(t, err, client.ErrInvalidIdentifier, label)
+				assert.NotContains(t, err.Error(), tc.key, label)
+			}
+			assert.Zero(t, calls.Load(), "nothing was sent")
+		})
+	}
+}
+
+// The identifier checks used on import IDs, configuration and state.
+func TestClient_CheckIdentifiers(t *testing.T) {
+	c := apiReflectTestServer(t, func(w http.ResponseWriter, r *http.Request) {})
+	assert.NoError(t, c.CheckAPIIdentifier(apiTestAPIID))
+	assert.ErrorIs(t, c.CheckAPIIdentifier(apiReflectTestKey), client.ErrInvalidIdentifier)
+	assert.NotContains(t, c.CheckAPIIdentifier(apiReflectTestKey).Error(), apiReflectTestKey)
+	assert.ErrorIs(t, c.CheckAPIIdentifier("not-a-uuid"), client.ErrInvalidIdentifier)
+	assert.NoError(t, c.CheckClientIdentifier("app"))
+	assert.ErrorIs(t, c.CheckClientIdentifier("a"), client.ErrInvalidIdentifier)
+	assert.True(t, c.ContainsAPIKey("x", "see "+apiReflectTestKey))
+	assert.False(t, c.ContainsAPIKey("x", "y"))
+	var none *client.Client
+	assert.False(t, none.ContainsAPIKey(apiReflectTestKey), "a missing client has no key")
+	assert.NoError(t, none.CheckAPIIdentifier(apiTestAPIID))
+}
+
 func TestClient_GetAPI_NotFound(t *testing.T) {
 	c := apiTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/apis/"+apiTestAPIID, r.URL.Path)

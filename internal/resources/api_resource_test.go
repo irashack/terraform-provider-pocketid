@@ -12,9 +12,11 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -874,4 +876,48 @@ func TestAPIResourcePlan_PermissionIDs(t *testing.T) {
 	assert.True(t, apiTestPermissions(t, planned)["read"].ID.IsUnknown(), "a re-added key's ID is unknown")
 	assert.NotEqual(t, readID, apiTestPermissions(t, readded)["read"].ID, "a re-added key is a new permission")
 	assert.Equal(t, apiTestPermissions(t, added)["write"].ID, apiTestPermissions(t, readded)["write"].ID)
+}
+
+// An API ID that carries the API key is refused wherever it comes from: the
+// import ID, and the ID in state for read, update and delete. The error is
+// fixed text, nothing is stored, and no request is sent.
+func TestAPIResource_KeyBearingIdentity(t *testing.T) {
+	const key = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	ctx := context.Background()
+	f, c := newAPITestPocketIDWithKey(t, key)
+	sr := apiTestSchema(t)
+	text := func(diags diag.Diagnostics) string {
+		var parts []string
+		for _, d := range diags.Errors() {
+			parts = append(parts, d.Summary()+": "+d.Detail())
+		}
+		return strings.Join(parts, "\n")
+	}
+
+	imported := resource.ImportStateResponse{State: tfsdk.State{Schema: sr.Schema, Raw: tftypes.NewValue(sr.Schema.Type().TerraformType(ctx), nil)}}
+	(&apiResource{client: c}).ImportState(ctx, resource.ImportStateRequest{ID: key}, &imported)
+	require.True(t, imported.Diagnostics.HasError())
+	assert.NotContains(t, text(imported.Diagnostics), key)
+	assert.True(t, imported.State.Raw.IsNull(), "nothing is stored")
+
+	prior := apiTestModel(key, "Inventory", "https://inventory.example", false, nil)
+	state := tfsdk.State{Schema: sr.Schema}
+	require.False(t, state.Set(ctx, &prior).HasError())
+
+	read := resource.ReadResponse{State: tfsdk.State{Schema: sr.Schema, Raw: state.Raw.Copy()}}
+	(&apiResource{client: c}).Read(ctx, resource.ReadRequest{State: state}, &read)
+	require.True(t, read.Diagnostics.HasError())
+	assert.NotContains(t, text(read.Diagnostics), key)
+	assert.False(t, read.State.Raw.IsNull(), "state is left as it was")
+
+	deleted := resource.DeleteResponse{State: state}
+	(&apiResource{client: c}).Delete(ctx, resource.DeleteRequest{State: state}, &deleted)
+	require.True(t, deleted.Diagnostics.HasError())
+	assert.NotContains(t, text(deleted.Diagnostics), key)
+
+	updated, _ := apiTestUpdate(t, c, prior, apiTestModel(key, "Renamed", "https://inventory.example", false, nil))
+	require.True(t, updated.Diagnostics.HasError())
+	assert.NotContains(t, apiTestUpdateDiag(updated), key)
+
+	assert.Empty(t, f.routes(), "no request carried the identity")
 }

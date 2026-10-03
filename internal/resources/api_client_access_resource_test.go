@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -56,10 +57,16 @@ type apiAccessTestPocketID struct {
 }
 
 func newAPIAccessTestPocketID(t *testing.T) (*apiAccessTestPocketID, *client.Client) {
+	return newAPIAccessTestPocketIDWithKey(t, "synthetic-token")
+}
+
+// newAPIAccessTestPocketIDWithKey serves the fake to a client that
+// authenticates with key.
+func newAPIAccessTestPocketIDWithKey(t *testing.T, key string) (*apiAccessTestPocketID, *client.Client) {
 	f := &apiAccessTestPocketID{t: t, version: "2.16.0", failures: map[string]apiTestFailure{}}
 	server := httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(server.Close)
-	c, err := client.NewClient(server.URL, "synthetic-token", false, 5)
+	c, err := client.NewClient(server.URL, key, false, 5)
 	require.NoError(t, err)
 	return f, c
 }
@@ -653,6 +660,115 @@ func TestAPIClientAccessRead_IncompleteList(t *testing.T) {
 			assert.Equal(t, apiAccessSummary(t, created.state), apiAccessSummary(t, refreshed))
 		})
 	}
+}
+
+// Identifiers that carry the API key never enter a request, a log line or a
+// diagnostic, wherever they come from: the import ID (both halves of the
+// pair, and the whole), configuration, and state. Each is refused with fixed
+// text before anything is stored or sent.
+func TestAPIClientAccess_KeyBearingIdentities(t *testing.T) {
+	const uuidKey = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	const clientKey = "synthetic-client-key-0123"
+	ctx := context.Background()
+	text := func(diags interface {
+		Errors() diag.Diagnostics
+	}) string {
+		var parts []string
+		for _, d := range diags.Errors() {
+			parts = append(parts, d.Summary()+": "+d.Detail())
+		}
+		return strings.Join(parts, "\n")
+	}
+
+	t.Run("import", func(t *testing.T) {
+		sr := apiAccessTestSchema(t)
+		for name, tc := range map[string]struct {
+			key, id string
+		}{
+			"api half is the key":      {uuidKey, uuidKey + "/app"},
+			"client half is the key":   {clientKey, apiAccessTestAPI + "/" + clientKey},
+			"client half contains key": {clientKey, apiAccessTestAPI + "/x-" + clientKey},
+			"whole ID contains key":    {"abc/def-0123456789", apiAccessTestAPI + "/abc/def-0123456789"},
+		} {
+			t.Run(name, func(t *testing.T) {
+				_, c := newAPIAccessTestPocketIDWithKey(t, tc.key)
+				resp := resource.ImportStateResponse{State: tfsdk.State{Schema: sr.Schema, Raw: tftypes.NewValue(sr.Schema.Type().TerraformType(ctx), nil)}}
+				(&apiClientAccessResource{client: c}).ImportState(ctx, resource.ImportStateRequest{ID: tc.id}, &resp)
+				require.True(t, resp.Diagnostics.HasError())
+				assert.NotContains(t, text(resp.Diagnostics), tc.key)
+				assert.True(t, resp.State.Raw.IsNull(), "nothing is stored")
+			})
+		}
+		// An identity without the key still imports.
+		_, c := newAPIAccessTestPocketIDWithKey(t, uuidKey)
+		resp := resource.ImportStateResponse{State: tfsdk.State{Schema: sr.Schema, Raw: tftypes.NewValue(sr.Schema.Type().TerraformType(ctx), nil)}}
+		(&apiClientAccessResource{client: c}).ImportState(ctx, resource.ImportStateRequest{ID: apiAccessTestAPI + "/app"}, &resp)
+		assert.False(t, resp.Diagnostics.HasError())
+	})
+
+	// Operations on an identity from state or configuration that carries the
+	// key refuse before any request and show nothing of it.
+	t.Run("operations", func(t *testing.T) {
+		f, c := newAPIAccessTestPocketIDWithKey(t, uuidKey)
+		h := newAPIHarness(t, c)
+		r := &apiClientAccessResource{}
+		state := apiAccessModel(uuidKey, "app", apiAccessGrant{UserAccess: true})
+		config := apiAccessConfig([]string{"read"}, nil)
+		config.APIID = types.StringValue(uuidKey)
+
+		errs, refreshed, _ := apiAccessRefresh(t, h, &state, nil)
+		assert.Contains(t, errs, "Unusable identifier")
+		assert.NotContains(t, errs, uuidKey)
+		require.NotNil(t, refreshed, "state is left as it was")
+
+		step := apiAccessRun(t, h, nil, nil, config)
+		require.NotNil(t, step.apply)
+		assert.Contains(t, apiHarnessErrors(step.apply.Diagnostics), "Unusable identifier")
+		assert.NotContains(t, apiHarnessErrors(step.apply.Diagnostics), uuidKey)
+		assert.Nil(t, step.state)
+
+		priorValue := apiHarnessValue(t, r, &state)
+		null := apiHarnessValue(t, r, (*apiClientAccessModel)(nil))
+		destroy := h.apply("pocketid_api_client_access", priorValue, null, h.dynamic("pocketid_api_client_access", null), nil)
+		assert.Contains(t, apiHarnessErrors(destroy.Diagnostics), "Unusable identifier")
+		assert.NotContains(t, apiHarnessErrors(destroy.Diagnostics), uuidKey)
+
+		update := apiAccessRun(t, h, &state, nil, config)
+		require.NotNil(t, update.apply)
+		assert.Contains(t, apiHarnessErrors(update.apply.Diagnostics), "Unusable identifier")
+		assert.NotContains(t, apiHarnessErrors(update.apply.Diagnostics), uuidKey)
+
+		assert.Empty(t, f.routes(), "no request carried the identity")
+	})
+
+	// The plan refusal of an unresolved outcome prints the identity from state
+	// only when it passes the check.
+	t.Run("unresolved plan diagnostic", func(t *testing.T) {
+		_, c := newAPIAccessTestPocketIDWithKey(t, uuidKey)
+		h := newAPIHarness(t, c)
+		marker, err := json.Marshal(map[string][]byte{apiAccessUnresolvedKey: []byte(`{"unresolved":true}`)})
+		require.NoError(t, err)
+		for name, tc := range map[string]struct {
+			state     apiClientAccessModel
+			wantShown string
+		}{
+			"api ID is the key": {apiAccessModel(uuidKey, "app", apiAccessGrant{UserAccess: true}), ""},
+			"clean identity":    {apiAccessModel(apiAccessTestAPI, "app", apiAccessGrant{UserAccess: true}), apiAccessTestAPI + "/app"},
+		} {
+			t.Run(name, func(t *testing.T) {
+				config := apiAccessConfig([]string{"read"}, nil)
+				config.APIID = tc.state.APIID
+				step := apiAccessRun(t, h, &tc.state, marker, config)
+				errs := apiHarnessErrors(step.plan.Diagnostics)
+				assert.Contains(t, errs, "API access outcome unresolved")
+				assert.Contains(t, errs, "state rm")
+				assert.NotContains(t, errs, uuidKey)
+				if tc.wantShown != "" {
+					assert.Contains(t, errs, tc.wantShown)
+				}
+			})
+		}
+	})
 }
 
 // A destroy is never held back by an unresolved outcome: removing the grant

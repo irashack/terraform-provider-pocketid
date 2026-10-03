@@ -49,6 +49,13 @@
   resource identifier, creation time or permission text that contains the key. The error
   is fixed text that never repeats the value, and nothing from that answer
   reaches a diagnostic, the state or a data source.
+- Identifiers you give the provider are checked the same way before anything
+  uses them: an API ID in an import ID, in state or in configuration, and an
+  OIDC client ID in an import ID, in state or in configuration, must be valid
+  and must not contain the provider's own API key. Such an identifier is
+  refused with a fixed message that does not show it, before any request is
+  sent, and a diagnostic prints an identifier from state only after it passes
+  the check.
 - New data sources `pocketid_api` (look up one API by `id` or by its exact
   `resource` identifier) and `pocketid_apis` (every API, oldest first, read
   across all pages), each with the API's permissions keyed by permission key

@@ -122,6 +122,65 @@ func (c *Client) CreateAPI(ctx context.Context, req *APICreateRequest) (*API, er
 	return result, nil
 }
 
+// containsKey reports whether any value contains the API key this client
+// sends. It is false for a nil client or one without a key.
+func (c *Client) containsKey(values ...string) bool {
+	if c == nil || c.apiToken == "" {
+		return false
+	}
+	for _, value := range values {
+		if strings.Contains(value, c.apiToken) {
+			return true
+		}
+	}
+	return false
+}
+
+// ContainsAPIKey reports whether any of the values contains the API key this
+// client authenticates with. Callers use it to refuse configured text or an
+// import ID that carries the credential before anything is sent, logged or
+// printed; the value itself must never be echoed.
+func (c *Client) ContainsAPIKey(values ...string) bool {
+	return c.containsKey(values...)
+}
+
+// CheckAPIIdentifier checks an API ID that did not come from a response (an
+// import ID, configuration or state) before it enters a request, a log line or
+// a diagnostic: a UUID that does not contain the API key this client sends.
+// The error is fixed text and never includes the value.
+func (c *Client) CheckAPIIdentifier(id string) error {
+	if c.containsKey(id) {
+		return fmt.Errorf("%w: the API ID contains the API key this provider sends", ErrInvalidIdentifier)
+	}
+	return ValidateUUID(apiKind, id)
+}
+
+// CheckClientIdentifier is CheckAPIIdentifier for an OIDC client ID, which
+// must also follow Pocket ID's rule for client IDs (ValidateClientID).
+func (c *Client) CheckClientIdentifier(id string) error {
+	if c.containsKey(id) {
+		return fmt.Errorf("%w: the OIDC client ID contains the API key this provider sends", ErrInvalidIdentifier)
+	}
+	return ValidateClientID(id)
+}
+
+// apiSegment returns an API ID escaped for use as one path segment after
+// CheckAPIIdentifier.
+func (c *Client) apiSegment(id string) (string, error) {
+	if err := c.CheckAPIIdentifier(id); err != nil {
+		return "", err
+	}
+	return url.PathEscape(id), nil
+}
+
+// clientSegment is apiSegment for an OIDC client ID.
+func (c *Client) clientSegment(id string) (string, error) {
+	if err := c.CheckClientIdentifier(id); err != nil {
+		return "", err
+	}
+	return url.PathEscape(id), nil
+}
+
 // apiCheckReturnedID checks an identifier that came back in a response before
 // anything uses it, in a path, a diagnostic or state: it must not contain the
 // API key this client sends (a server or proxy that reflects the credential
@@ -131,7 +190,7 @@ func (c *Client) CreateAPI(ctx context.Context, req *APICreateRequest) (*API, er
 // the value is never included. It has the rules of the foundation's
 // checkReturnedID and is replaced by it at integration.
 func (c *Client) apiCheckReturnedID(kind, addressed, returned string) error {
-	if c.apiToken != "" && strings.Contains(returned, c.apiToken) {
+	if c.containsKey(returned) {
 		return fmt.Errorf("%w: an %s ID in the response contains the API key this provider sent", ErrInvalidIdentifier, kind)
 	}
 	if addressed != "" {
@@ -166,10 +225,8 @@ func (c *Client) apiCheckResponse(api *API, addressed string) error {
 			texts = append(texts, *p.Description)
 		}
 	}
-	for _, text := range texts {
-		if c.apiToken != "" && strings.Contains(text, c.apiToken) {
-			return fmt.Errorf("%w: a text field of the API in the response contains the API key this provider sent", ErrInvalidIdentifier)
-		}
+	if c.containsKey(texts...) {
+		return fmt.Errorf("%w: a text field of the API in the response contains the API key this provider sent", ErrInvalidIdentifier)
 	}
 	return nil
 }
@@ -207,7 +264,7 @@ func (c *Client) decodeCheckedAPI(body []byte, addressed string, mutation bool) 
 // GetAPI reads an API with its permissions. A missing API is reported as
 // IsNotFound(err, ResourceAPI).
 func (c *Client) GetAPI(ctx context.Context, id string) (*API, error) {
-	segment, err := uuidSegment(apiKind, id)
+	segment, err := c.apiSegment(id)
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +277,7 @@ func (c *Client) GetAPI(ctx context.Context, id string) (*API, error) {
 
 // UpdateAPI renames an API and returns it as the server holds it afterwards.
 func (c *Client) UpdateAPI(ctx context.Context, id string, req *APIUpdateRequest) (*API, error) {
-	segment, err := uuidSegment(apiKind, id)
+	segment, err := c.apiSegment(id)
 	if err != nil {
 		return nil, err
 	}
@@ -234,7 +291,7 @@ func (c *Client) UpdateAPI(ctx context.Context, id string, req *APIUpdateRequest
 // DeleteAPI deletes an API. Pocket ID deletes its permissions and every
 // client's grants on it with it.
 func (c *Client) DeleteAPI(ctx context.Context, id string) error {
-	segment, err := uuidSegment(apiKind, id)
+	segment, err := c.apiSegment(id)
 	if err != nil {
 		return err
 	}
@@ -265,7 +322,7 @@ func (c *Client) ListAPIs(ctx context.Context) ([]API, error) {
 // together with every client's grant of it; a new key gets a new ID. An empty
 // or nil list is sent as [] and removes every permission.
 func (c *Client) UpdateAPIPermissions(ctx context.Context, id string, permissions []APIPermissionInput) (*API, error) {
-	segment, err := uuidSegment(apiKind, id)
+	segment, err := c.apiSegment(id)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +342,7 @@ func (c *Client) UpdateAPIPermissions(ctx context.Context, id string, permission
 // API's own without an error (Service.SetCIMDAccess), so a caller compares the
 // returned API with what it asked for. A nil list is sent as [].
 func (c *Client) UpdateAPICIMDAccess(ctx context.Context, id string, enabled bool, permissionIDs []string) (*API, error) {
-	segment, err := uuidSegment(apiKind, id)
+	segment, err := c.apiSegment(id)
 	if err != nil {
 		return nil, err
 	}
@@ -315,7 +372,7 @@ func (c *Client) UpdateAPICIMDAccess(ctx context.Context, id string, enabled boo
 // wrong types) is not a grant: it is reported as an error wrapping
 // ErrResultUnread, because the write may have been applied.
 func (c *Client) SetAPIClientAccess(ctx context.Context, apiID, clientID string, grant APIClientGrant) (*APIClientGrant, error) {
-	path, err := apiClientPath(apiID, clientID)
+	path, err := c.apiClientPath(apiID, clientID)
 	if err != nil {
 		return nil, err
 	}
@@ -346,7 +403,7 @@ func (c *Client) SetAPIClientAccess(ctx context.Context, apiID, clientID string,
 // Pocket ID deletes grants together with their API or client. Removing a
 // grant that does not exist succeeds.
 func (c *Client) RemoveAPIClientAccess(ctx context.Context, apiID, clientID string) error {
-	path, err := apiClientPath(apiID, clientID)
+	path, err := c.apiClientPath(apiID, clientID)
 	if err != nil {
 		return err
 	}
@@ -360,7 +417,7 @@ func (c *Client) RemoveAPIClientAccess(ctx context.Context, apiID, clientID stri
 // not a list, or whose entries lack the API or the grant fields, is an error
 // wrapping ErrIncompleteGrantResponse, never an empty or missing grant.
 func (c *Client) ListClientAPIGrants(ctx context.Context, clientID string) ([]ClientAPIGrant, error) {
-	segment, err := clientIDSegment(clientID)
+	segment, err := c.clientSegment(clientID)
 	if err != nil {
 		return nil, err
 	}
@@ -375,7 +432,7 @@ func (c *Client) ListClientAPIGrants(ctx context.Context, clientID string) ([]Cl
 // when the client's list has no grant written for it (the list may still show
 // the API when it reaches it only through CIMD access).
 func (c *Client) FindClientAPIGrant(ctx context.Context, clientID, apiID string) (*ClientAPIGrant, error) {
-	if err := ValidateUUID(apiKind, apiID); err != nil {
+	if err := c.CheckAPIIdentifier(apiID); err != nil {
 		return nil, err
 	}
 	grants, err := c.ListClientAPIGrants(ctx, clientID)
@@ -390,12 +447,12 @@ func (c *Client) FindClientAPIGrant(ctx context.Context, clientID, apiID string)
 	return nil, nil
 }
 
-func apiClientPath(apiID, clientID string) (string, error) {
-	api, err := uuidSegment(apiKind, apiID)
+func (c *Client) apiClientPath(apiID, clientID string) (string, error) {
+	api, err := c.apiSegment(apiID)
 	if err != nil {
 		return "", err
 	}
-	client, err := clientIDSegment(clientID)
+	client, err := c.clientSegment(clientID)
 	if err != nil {
 		return "", err
 	}

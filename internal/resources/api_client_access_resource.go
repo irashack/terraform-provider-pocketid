@@ -402,7 +402,11 @@ func apiAccessIsUnresolved(ctx context.Context, private apiAccessPrivate, diags 
 
 // apiAccessRecovery names the two ways out of an unresolved outcome.
 func apiAccessRecovery(apiID, clientID string) string {
-	return fmt.Sprintf("Run terraform plan or terraform apply without -refresh=false, which reads the grant and clears this, or run terraform state rm on the resource and import it again as %s/%s.", apiID, clientID)
+	again := "import it again with its API ID and client ID"
+	if apiID != apiNotShown && clientID != apiNotShown {
+		again = fmt.Sprintf("import it again as %s/%s", apiID, clientID)
+	}
+	return "Run terraform plan or terraform apply without -refresh=false, which reads the grant and clears this, or run terraform state rm on the resource and " + again + "."
 }
 
 func apiAccessUnresolvedDiagnostics(diags *diag.Diagnostics, apiID, clientID string) {
@@ -541,6 +545,9 @@ func (r *apiClientAccessResource) Create(ctx context.Context, req resource.Creat
 		return
 	}
 	apiID, clientID := plan.APIID.ValueString(), plan.ClientID.ValueString()
+	if !apiIdentityOK(r.client, &resp.Diagnostics, "configuration", apiID, clientID) {
+		return
+	}
 	outcome := r.apiAccessWrite(ctx, apiID, clientID, want, &resp.Diagnostics)
 	switch {
 	case outcome.stored != nil:
@@ -566,6 +573,9 @@ func (r *apiClientAccessResource) Read(ctx context.Context, req resource.ReadReq
 		return
 	}
 	apiID, clientID := state.APIID.ValueString(), state.ClientID.ValueString()
+	if !apiIdentityOK(r.client, &resp.Diagnostics, "state", apiID, clientID) {
+		return
+	}
 	entry, err := r.client.FindClientAPIGrant(ctx, clientID, apiID)
 	if err != nil {
 		// A deleted client takes its grants with it.
@@ -613,7 +623,10 @@ func (r *apiClientAccessResource) ModifyPlan(ctx context.Context, req resource.M
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	apiAccessUnresolvedDiagnostics(&resp.Diagnostics, state.APIID.ValueString(), state.ClientID.ValueString())
+	// The identities come from state and are printed only when they pass the
+	// check.
+	apiAccessUnresolvedDiagnostics(&resp.Diagnostics,
+		apiShownAPIID(r.client, state.APIID.ValueString()), apiShownClientID(r.client, state.ClientID.ValueString()))
 }
 
 func (r *apiClientAccessResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -623,6 +636,9 @@ func (r *apiClientAccessResource) Update(ctx context.Context, req resource.Updat
 		return
 	}
 	apiID, clientID := plan.APIID.ValueString(), plan.ClientID.ValueString()
+	if !apiIdentityOK(r.client, &resp.Diagnostics, "configuration", apiID, clientID) {
+		return
+	}
 	// ModifyPlan refuses to plan an unresolved resource; a plan made before the
 	// marker was set must not write either.
 	if apiAccessIsUnresolved(ctx, req.Private, &resp.Diagnostics) {
@@ -662,6 +678,9 @@ func (r *apiClientAccessResource) Delete(ctx context.Context, req resource.Delet
 		return
 	}
 	apiID, clientID := state.APIID.ValueString(), state.ClientID.ValueString()
+	if !apiIdentityOK(r.client, &resp.Diagnostics, "state", apiID, clientID) {
+		return
+	}
 	// An unresolved outcome does not stop a delete: removing every grant the
 	// pair holds is correct whatever the last write did, and never widens access.
 	if err := checkAPISupport(ctx, r.client); err != nil {
@@ -679,9 +698,11 @@ func (r *apiClientAccessResource) Delete(ctx context.Context, req resource.Delet
 // ImportState imports a grant as "<api_id>/<client_id>".
 func (r *apiClientAccessResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	apiID, clientID, ok := strings.Cut(req.ID, "/")
-	if !ok || client.ValidateUUID("API", apiID) != nil || client.ValidateClientID(clientID) != nil {
+	// Both halves, and the whole ID, must be valid and free of the API key
+	// before anything is stored; the value is never shown.
+	if !ok || r.client.ContainsAPIKey(req.ID) || r.client.CheckAPIIdentifier(apiID) != nil || r.client.CheckClientIdentifier(clientID) != nil {
 		resp.Diagnostics.AddError("Unexpected Import Identifier",
-			"Import API access as <api_id>/<client_id>: an API ID (a UUID), a slash, and an OIDC client ID.")
+			"Import API access as <api_id>/<client_id>: an API ID (a UUID), a slash, and an OIDC client ID, none of which may contain the API key this provider authenticates with.")
 		return
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), req.ID)...)

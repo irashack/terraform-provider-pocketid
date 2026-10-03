@@ -548,6 +548,9 @@ func (r *apiResource) Read(ctx context.Context, req resource.ReadRequest, resp *
 		return
 	}
 	id := state.ID.ValueString()
+	if !apiIdentityOK(r.client, &resp.Diagnostics, "state", id) {
+		return
+	}
 	api, err := r.client.GetAPI(ctx, id)
 	if err != nil {
 		if client.IsNotFound(err, client.ResourceAPI) {
@@ -583,6 +586,9 @@ func (r *apiResource) Update(ctx context.Context, req resource.UpdateRequest, re
 		return
 	}
 	id := state.ID.ValueString()
+	if !apiIdentityOK(r.client, &resp.Diagnostics, "state", id) {
+		return
+	}
 
 	if err := checkAPISupport(ctx, r.client); err != nil {
 		resp.Diagnostics.AddError("Cannot update API", err.Error())
@@ -672,6 +678,9 @@ func (r *apiResource) Delete(ctx context.Context, req resource.DeleteRequest, re
 		return
 	}
 	id := state.ID.ValueString()
+	if !apiIdentityOK(r.client, &resp.Diagnostics, "state", id) {
+		return
+	}
 	// Pocket ID had a DELETE for APIs before 2.14.0, but this provider
 	// manages APIs only from 2.14.0; an imported API is not deleted on a
 	// server that Create and Update refuse, or whose version is unknown.
@@ -687,7 +696,7 @@ func (r *apiResource) Delete(ctx context.Context, req resource.DeleteRequest, re
 
 // ImportState imports an API by its ID.
 func (r *apiResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	if err := client.ValidateUUID("API", req.ID); err != nil {
+	if err := r.client.CheckAPIIdentifier(req.ID); err != nil {
 		resp.Diagnostics.AddError("Unexpected Import Identifier", "Import an API by its ID: "+err.Error())
 		return
 	}
