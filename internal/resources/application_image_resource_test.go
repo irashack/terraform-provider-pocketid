@@ -1,0 +1,322 @@
+package resources
+
+import (
+	"bytes"
+	"context"
+	"encoding/binary"
+	"hash/crc32"
+	"image"
+	"image/png"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/irashack/terraform-provider-pocketid/internal/client"
+)
+
+// imageServer is a fake Pocket ID for one application image. served is what
+// a GET returns (nil: no uploaded image), and an upload replaces it with
+// the uploaded bytes passed through transform (Pocket ID strips metadata).
+type imageServer struct {
+	mu        sync.Mutex
+	served    []byte
+	transform func([]byte) []byte
+	requests  []string
+	getStatus int
+}
+
+func (s *imageServer) client(t *testing.T) *client.Client {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.requests = append(s.requests, r.Method+" "+r.URL.RequestURI())
+		switch r.Method {
+		case http.MethodPut:
+			require.NoError(t, r.ParseMultipartForm(1<<20))
+			f, _, err := r.FormFile("file")
+			require.NoError(t, err)
+			var buf bytes.Buffer
+			_, _ = buf.ReadFrom(f)
+			s.served = buf.Bytes()
+			if s.transform != nil {
+				s.served = s.transform(s.served)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		case http.MethodDelete:
+			if s.served == nil {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"error":"Image not found","code":"image_not_found"}`))
+				return
+			}
+			s.served = nil
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			if s.getStatus != 0 {
+				w.WriteHeader(s.getStatus)
+				return
+			}
+			if s.served == nil {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"error":"Image not found","code":"image_not_found"}`))
+				return
+			}
+			_, _ = w.Write(s.served)
+		}
+	}))
+	t.Cleanup(server.Close)
+	c, err := client.NewClient(server.URL, "synthetic-token", false, 30)
+	require.NoError(t, err)
+	return c
+}
+
+func writeImageFile(t *testing.T, name string, content []byte) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	require.NoError(t, os.WriteFile(path, content, 0o600))
+	return path
+}
+
+const svgImage = `<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>`
+
+func TestApplicationImageExtensionRules(t *testing.T) {
+	for _, tc := range []struct {
+		kind   client.ApplicationImage
+		source string
+		ok     bool
+	}{
+		{client.ApplicationImageLogoLight, "logo.svg", true},
+		{client.ApplicationImageLogoLight, "Logo.PNG", true},
+		{client.ApplicationImageLogoDark, "logo.heic", true},
+		{client.ApplicationImageLogoLight, "logo.bmp", false},
+		{client.ApplicationImageLogoLight, "logo", false},
+		{client.ApplicationImageFavicon, "favicon.ico", true},
+		{client.ApplicationImageFavicon, "favicon.jpg", false},
+		{client.ApplicationImageEmailLogo, "mail.jpeg", true},
+		{client.ApplicationImageEmailLogo, "mail.svg", false},
+		{client.ApplicationImageBackground, "bg.webp", true},
+		{client.ApplicationImageDefaultProfilePicture, "avatar.gif", true},
+	} {
+		problem := applicationImageExtensionProblem(tc.kind, tc.source)
+		assert.Equal(t, tc.ok, problem == "", "%s %s: %s", tc.kind, tc.source, problem)
+	}
+}
+
+// pngHeader returns a PNG whose header claims width x height; DecodeConfig
+// reads only the header.
+func pngHeader(t *testing.T, width, height uint32) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	require.NoError(t, png.Encode(&buf, image.NewGray(image.Rect(0, 0, 1, 1))))
+	data := buf.Bytes()
+	// Signature (8), IHDR length (4), "IHDR" (4), then width and height.
+	binary.BigEndian.PutUint32(data[16:20], width)
+	binary.BigEndian.PutUint32(data[20:24], height)
+	binary.BigEndian.PutUint32(data[29:33], crc32.ChecksumIEEE(data[12:29]))
+	return data
+}
+
+func TestReadApplicationImageSourceLimits(t *testing.T) {
+	small := writeImageFile(t, "logo.png", pngHeader(t, 4000, 4000))
+	content, hash, err := readApplicationImageSource(client.ApplicationImageLogoLight, small)
+	require.NoError(t, err)
+	assert.Equal(t, sha256Hex(content), hash)
+
+	tooManyPixels := writeImageFile(t, "logo.png", pngHeader(t, 4001, 4000))
+	_, _, err = readApplicationImageSource(client.ApplicationImageLogoLight, tooManyPixels)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "4001x4000 pixels")
+
+	// Not decodable: Pocket ID accepts it as it is, so it is not refused.
+	_, _, err = readApplicationImageSource(client.ApplicationImageLogoLight, writeImageFile(t, "logo.png", []byte("not a png")))
+	assert.NoError(t, err)
+
+	tooLarge := writeImageFile(t, "background.webp", make([]byte, client.MaxApplicationImageBytes+1))
+	_, _, err = readApplicationImageSource(client.ApplicationImageBackground, tooLarge)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "larger than")
+
+	_, _, err = readApplicationImageSource(client.ApplicationImageFavicon, writeImageFile(t, "favicon.gif", []byte("GIF89a")))
+	assert.Error(t, err)
+}
+
+func applicationImageTestSchema(t *testing.T) schema.Schema {
+	t.Helper()
+	var resp resource.SchemaResponse
+	(&applicationImageResource{}).Schema(context.Background(), resource.SchemaRequest{}, &resp)
+	require.False(t, resp.Diagnostics.HasError())
+	return resp.Schema
+}
+
+func applicationImageRaw(t *testing.T, s schema.Schema, m *applicationImageModel) tftypes.Value {
+	t.Helper()
+	if m == nil {
+		return tftypes.NewValue(s.Type().TerraformType(context.Background()), nil)
+	}
+	state := tfsdk.State{Schema: s, Raw: tftypes.NewValue(s.Type().TerraformType(context.Background()), nil)}
+	require.False(t, state.Set(context.Background(), m).HasError())
+	return state.Raw
+}
+
+func TestApplicationImageValidateConfig(t *testing.T) {
+	s := applicationImageTestSchema(t)
+	validate := func(kind, source string) diag.Diagnostics {
+		var resp resource.ValidateConfigResponse
+		(&applicationImageResource{}).ValidateConfig(context.Background(), resource.ValidateConfigRequest{
+			Config: tfsdk.Config{Schema: s, Raw: applicationImageRaw(t, s, &applicationImageModel{
+				ID: types.StringNull(), Kind: types.StringValue(kind), Source: types.StringValue(source), SHA256: types.StringNull(),
+			})},
+		}, &resp)
+		return resp.Diagnostics
+	}
+	assert.False(t, validate("favicon", "icons/favicon.svg").HasError())
+	diags := validate("favicon", "icons/favicon.jpg")
+	require.True(t, diags.HasError())
+	assert.Contains(t, diags.Errors()[0].Detail(), "accepts only ico, png, svg for the favicon")
+}
+
+func TestApplicationImageModifyPlan(t *testing.T) {
+	s := applicationImageTestSchema(t)
+	r := &applicationImageResource{}
+	plan := func(source string) (types.String, diag.Diagnostics) {
+		planned := &applicationImageModel{ID: types.StringUnknown(), Kind: types.StringValue("logo_light"), Source: types.StringValue(source), SHA256: types.StringUnknown()}
+		raw := applicationImageRaw(t, s, planned)
+		resp := resource.ModifyPlanResponse{Plan: tfsdk.Plan{Schema: s, Raw: raw}}
+		r.ModifyPlan(context.Background(), resource.ModifyPlanRequest{Plan: tfsdk.Plan{Schema: s, Raw: raw}, State: tfsdk.State{Schema: s, Raw: applicationImageRaw(t, s, nil)}}, &resp)
+		var got applicationImageModel
+		require.False(t, resp.Plan.Get(context.Background(), &got).HasError())
+		return got.SHA256, resp.Diagnostics
+	}
+	source := writeImageFile(t, "logo.svg", []byte(svgImage))
+	sha, diags := plan(source)
+	require.False(t, diags.HasError(), "%v", diags)
+	assert.Equal(t, sha256Hex([]byte(svgImage)), sha.ValueString())
+
+	sha, diags = plan(filepath.Join(t.TempDir(), "later.svg"))
+	assert.False(t, diags.HasError())
+	assert.Len(t, diags.Warnings(), 1)
+	assert.True(t, sha.IsUnknown(), "a file that does not exist yet is read at apply")
+
+	// Destroying an image Pocket ID cannot remove warns at plan time.
+	state := applicationImageRaw(t, s, &applicationImageModel{ID: types.StringValue("favicon"), Kind: types.StringValue("favicon"), Source: types.StringValue("f.ico"), SHA256: types.StringValue("x")})
+	resp := resource.ModifyPlanResponse{Plan: tfsdk.Plan{Schema: s, Raw: applicationImageRaw(t, s, nil)}}
+	r.ModifyPlan(context.Background(), resource.ModifyPlanRequest{Plan: tfsdk.Plan{Schema: s, Raw: applicationImageRaw(t, s, nil)}, State: tfsdk.State{Schema: s, Raw: state}}, &resp)
+	require.Len(t, resp.Diagnostics.Warnings(), 1)
+	assert.Contains(t, resp.Diagnostics.Warnings()[0].Detail(), "leaves the image in place")
+}
+
+func TestApplicationImageUploadRecordsServedImage(t *testing.T) {
+	server := &imageServer{transform: func(b []byte) []byte { return append([]byte("stripped:"), b...) }}
+	r := &applicationImageResource{client: server.client(t)}
+	source := writeImageFile(t, "logo.svg", []byte(svgImage))
+	plan := &applicationImageModel{ID: types.StringUnknown(), Kind: types.StringValue("logo_dark"), Source: types.StringValue(source), SHA256: types.StringValue(sha256Hex([]byte(svgImage)))}
+	var diags diag.Diagnostics
+	uploaded, served := r.upload(context.Background(), plan, &diags)
+	require.False(t, diags.HasError(), "%v", diags)
+	require.True(t, uploaded)
+	assert.Equal(t, sha256Hex([]byte("stripped:"+svgImage)), served)
+	assert.Equal(t, sha256Hex([]byte(svgImage)), plan.SHA256.ValueString())
+	assert.Equal(t, "logo_dark", plan.ID.ValueString())
+	assert.Equal(t, []string{"PUT /api/application-images/logo?light=false", "GET /api/application-images/logo?light=false&default=false"}, server.requests)
+
+	// A file changed since the plan is not uploaded.
+	server.requests = nil
+	plan.SHA256 = types.StringValue("0000")
+	uploaded, _ = r.upload(context.Background(), plan, &diags)
+	assert.False(t, uploaded)
+	assert.Contains(t, diags.Errors()[0].Detail(), "changed after the plan")
+	assert.Empty(t, server.requests)
+}
+
+func TestApplicationImageRefresh(t *testing.T) {
+	ctx := context.Background()
+	stateFor := func(sha types.String) *applicationImageModel {
+		return &applicationImageModel{ID: types.StringValue("background"), Kind: types.StringValue("background"), Source: types.StringValue("bg.webp"), SHA256: sha}
+	}
+	uploadedHash := sha256Hex([]byte("source"))
+
+	t.Run("unchanged", func(t *testing.T) {
+		server := &imageServer{served: []byte("served")}
+		r := &applicationImageResource{client: server.client(t)}
+		state := stateFor(types.StringValue(uploadedHash))
+		var diags diag.Diagnostics
+		gone, record := r.refresh(ctx, state, sha256Hex([]byte("served")), &diags)
+		require.False(t, diags.HasError())
+		assert.False(t, gone)
+		assert.Empty(t, record)
+		assert.Equal(t, uploadedHash, state.SHA256.ValueString())
+	})
+	t.Run("replaced outside Terraform", func(t *testing.T) {
+		server := &imageServer{served: []byte("someone else's")}
+		r := &applicationImageResource{client: server.client(t)}
+		state := stateFor(types.StringValue(uploadedHash))
+		var diags diag.Diagnostics
+		gone, _ := r.refresh(ctx, state, sha256Hex([]byte("served")), &diags)
+		assert.False(t, gone)
+		assert.Equal(t, sha256Hex([]byte("someone else's")), state.SHA256.ValueString(), "the plan uploads source again")
+	})
+	t.Run("removed outside Terraform", func(t *testing.T) {
+		server := &imageServer{}
+		r := &applicationImageResource{client: server.client(t)}
+		var diags diag.Diagnostics
+		gone, _ := r.refresh(ctx, stateFor(types.StringValue(uploadedHash)), sha256Hex([]byte("served")), &diags)
+		assert.False(t, diags.HasError())
+		assert.True(t, gone)
+	})
+	t.Run("a 404 that is not Pocket ID's is an error", func(t *testing.T) {
+		server := &imageServer{served: []byte("served"), getStatus: http.StatusNotFound}
+		r := &applicationImageResource{client: server.client(t)}
+		var diags diag.Diagnostics
+		gone, _ := r.refresh(ctx, stateFor(types.StringValue(uploadedHash)), "", &diags)
+		assert.False(t, gone)
+		assert.True(t, diags.HasError())
+	})
+	t.Run("imported", func(t *testing.T) {
+		server := &imageServer{served: []byte("served")}
+		r := &applicationImageResource{client: server.client(t)}
+		state := &applicationImageModel{ID: types.StringValue("background"), Kind: types.StringValue("background"), Source: types.StringNull(), SHA256: types.StringNull()}
+		var diags diag.Diagnostics
+		gone, record := r.refresh(ctx, state, "", &diags)
+		assert.False(t, gone)
+		assert.Equal(t, sha256Hex([]byte("served")), record)
+		assert.Equal(t, sha256Hex([]byte("served")), state.SHA256.ValueString())
+	})
+}
+
+func TestApplicationImageDelete(t *testing.T) {
+	s := applicationImageTestSchema(t)
+	del := func(t *testing.T, server *imageServer, kind string) diag.Diagnostics {
+		r := &applicationImageResource{client: server.client(t)}
+		state := applicationImageRaw(t, s, &applicationImageModel{ID: types.StringValue(kind), Kind: types.StringValue(kind), Source: types.StringValue("x.png"), SHA256: types.StringValue("x")})
+		var resp resource.DeleteResponse
+		r.Delete(context.Background(), resource.DeleteRequest{State: tfsdk.State{Schema: s, Raw: state}}, &resp)
+		return resp.Diagnostics
+	}
+	server := &imageServer{served: []byte("x")}
+	diags := del(t, server, "default_profile_picture")
+	assert.False(t, diags.HasError())
+	assert.Equal(t, []string{"DELETE /api/application-images/default-profile-picture"}, server.requests)
+
+	server = &imageServer{}
+	assert.False(t, del(t, server, "logo_light").HasError(), "an image that is already gone is deleted")
+
+	server = &imageServer{served: []byte("x")}
+	diags = del(t, server, "email_logo")
+	assert.False(t, diags.HasError())
+	require.Len(t, diags.Warnings(), 1)
+	assert.True(t, strings.Contains(diags.Warnings()[0].Detail(), "stays in place"))
+	assert.Empty(t, server.requests)
+}

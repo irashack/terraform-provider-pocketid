@@ -52,3 +52,13 @@
   upgrading, `terraform show` cannot read a stored result of this data source
   until the next apply (or `apply -refresh-only`) rewrites it; plans and
   applies are unaffected.
+- New resource `pocketid_application_image` uploads one of Pocket ID's
+  application images (`logo_light`, `logo_dark`, `email_logo`, `background`,
+  `favicon`, `default_profile_picture`) from a local file. Its computed
+  `sha256` follows the file's content, so a changed file is uploaded again, and
+  an image replaced or removed outside Terraform is shown by the next plan and
+  uploaded again. The file type must be one Pocket ID accepts for that image
+  (checked at plan time). Destroying the logos, the background or the default
+  profile picture removes them; Pocket ID cannot remove the e-mail logo or the
+  favicon, so destroying those leaves the image in place, with a warning.
+  Uploads are sent once, never retried, and limited to 10 MiB.
