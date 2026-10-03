@@ -292,6 +292,12 @@ func (c *Client) decodeCreatedSecret(response []byte) (*ClientSecret, error) {
 		return &ClientSecret{ClientSecretMetadata: ClientSecretMetadata{ID: result.ID}},
 			fmt.Errorf("secret creation returned secret %s with a prefix outside Pocket ID's contract; result uncertain, inspect the client before recovery: %w: %w", result.ID, ErrResultUnread, ErrCreatedSecretMalformed)
 	}
+	// The metadata is shown and stored; one that carries the API key keeps
+	// only the ID, like any other unusable remainder.
+	if err := c.checkSecretMetadata(&result.ClientSecretMetadata); err != nil {
+		return &ClientSecret{ClientSecretMetadata: ClientSecretMetadata{ID: result.ID}},
+			fmt.Errorf("secret creation returned secret %s with metadata that cannot be used; result uncertain, inspect the client before recovery: %w: %w: %w", result.ID, ErrResultUnread, ErrCreatedSecretMalformed, err)
+	}
 	if result.Secret == "" {
 		return &ClientSecret{ClientSecretMetadata: result.ClientSecretMetadata},
 			fmt.Errorf("secret creation returned no secret for secret %s; result uncertain, inspect the client before recovery: %w: %w", result.ID, ErrResultUnread, ErrCreatedSecretValueMissing)
@@ -336,14 +342,37 @@ func (c *Client) ListClientSecrets(ctx context.Context, clientID string) ([]Clie
 // contract. An empty list is a client without secrets.
 func (c *Client) checkClientSecretList(secrets []ClientSecretMetadata) error {
 	seen := make(map[string]bool, len(secrets))
-	for _, secret := range secrets {
-		canonical := strings.ToLower(secret.ID)
-		if c.checkReturnedID("client secret", "", secret.ID) != nil || seen[canonical] || !validClientSecretPrefix(secret.Prefix) {
+	for i := range secrets {
+		err := c.checkSecretMetadata(&secrets[i])
+		if errors.Is(err, ErrKeyInResponse) {
+			return fmt.Errorf("%w: %w", ErrMalformedSecretList, ErrKeyInResponse)
+		}
+		canonical := strings.ToLower(secrets[i].ID)
+		if err != nil || seen[canonical] {
 			return ErrMalformedSecretList
 		}
 		seen[canonical] = true
 	}
 	return nil
+}
+
+// errMalformedSecretMetadata marks a secret's metadata outside Pocket ID's
+// contract (a prefix that is not empty or four printable ASCII bytes).
+var errMalformedSecretMetadata = fmt.Errorf("%w: a client secret's metadata in the response is outside Pocket ID's contract", ErrInvalidIdentifier)
+
+// checkSecretMetadata is the one check of a secret's metadata, wherever it
+// comes from (a client's credentials.secrets, the secrets list, a creation
+// answer): a usable ID, a prefix inside Pocket ID's contract, and no text the
+// provider stores or prints (the prefix and its times as they are formatted)
+// that contains the API key (ErrKeyInResponse).
+func (c *Client) checkSecretMetadata(secret *ClientSecretMetadata) error {
+	if err := c.checkReturnedID("client secret", "", secret.ID); err != nil {
+		return err
+	}
+	if !validClientSecretPrefix(secret.Prefix) {
+		return errMalformedSecretMetadata
+	}
+	return c.checkReturnedText(secretMetadataTexts(secret)...)
 }
 
 // DeleteClientSecret revokes one secret of an OIDC client. Pocket ID 2.14.0

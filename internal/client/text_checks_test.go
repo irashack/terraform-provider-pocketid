@@ -428,3 +428,75 @@ func TestClient_RequestsCarryingTheKeyAreNotSent(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(sent[2]), &secret))
 	assert.Equal(t, textKey, secret["secret"])
 }
+
+// A secret's metadata gets one check wherever it comes from (a client's
+// credentials.secrets, the secrets list, a creation answer): a prefix that is
+// not empty or four printable ASCII bytes is refused, and so is a prefix or a
+// time, in the form the provider stores or prints it, that contains the key.
+// A static key can look like a timestamp.
+func TestClient_SecretMetadataIsCheckedEverywhere(t *testing.T) {
+	ctx := context.Background()
+	const timeKey = "2030-01-02T03:04:05Z"
+	secret := func(prefix, createdAt, expiresAt string) string {
+		expires := "null"
+		if expiresAt != "" {
+			expires = `"` + expiresAt + `"`
+		}
+		return `{"id":"` + textSecret + `","prefix":"` + prefix + `","createdAt":"` + createdAt + `","expiresAt":` + expires + `,"isActive":true}`
+	}
+	embedded := func(s string) string { return textClientJSON(`,"credentials":{"secrets":[` + s + `]}`) }
+	for name, tc := range map[string]struct {
+		key, body string
+		call      func(c *client.Client) error
+		want      []error
+	}{
+		"embedded prefix carrying the key": {textKey, embedded(secret(textKey, "2026-10-02T10:00:00Z", "")), func(c *client.Client) error {
+			_, err := c.GetClient(ctx, "app")
+			return err
+		}, []error{client.ErrInvalidIdentifier}},
+		"embedded creation time that is the key": {timeKey, embedded(secret("abcd", timeKey, "")), func(c *client.Client) error {
+			_, err := c.GetClient(ctx, "app")
+			return err
+		}, []error{client.ErrKeyInResponse}},
+		"embedded expiry that is the key, in a client list": {timeKey, textPage(embedded(secret("abcd", "2026-10-02T10:00:00Z", timeKey))), func(c *client.Client) error {
+			_, err := c.ListClients(ctx)
+			return err
+		}, []error{client.ErrKeyInResponse}},
+		"listed creation time that is the key": {timeKey, "[" + secret("abcd", timeKey, "") + "]", func(c *client.Client) error {
+			_, err := c.ListClientSecrets(ctx, "app")
+			return err
+		}, []error{client.ErrMalformedSecretList, client.ErrKeyInResponse}},
+		"listed expiry that is the key": {timeKey, "[" + secret("abcd", "2026-10-02T10:00:00Z", timeKey) + "]", func(c *client.Client) error {
+			_, err := c.ListClientSecrets(ctx, "app")
+			return err
+		}, []error{client.ErrMalformedSecretList, client.ErrKeyInResponse}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, _ := textServerWithKey(t, tc.key, tc.body)
+			err := tc.call(c)
+			require.Error(t, err)
+			for _, want := range tc.want {
+				assert.ErrorIs(t, err, want)
+			}
+			assert.NotContains(t, err.Error(), tc.key)
+		})
+	}
+
+	// A creation answer whose metadata carries the key keeps only the
+	// secret's ID.
+	c, _ := textServerWithKey(t, timeKey, `{"id":"`+textSecret+`","prefix":"abcd","createdAt":"`+timeKey+`","expiresAt":null,"isActive":true,"secret":"abcdefghijklmnopqrstuvwx"}`)
+	created, err := c.CreateClientSecret(ctx, "app", nil)
+	require.ErrorIs(t, err, client.ErrResultUnread)
+	require.ErrorIs(t, err, client.ErrCreatedSecretMalformed)
+	require.ErrorIs(t, err, client.ErrKeyInResponse)
+	assert.NotContains(t, err.Error(), timeKey)
+	require.NotNil(t, created)
+	assert.Equal(t, client.ClientSecret{ClientSecretMetadata: client.ClientSecretMetadata{ID: textSecret}}, *created)
+
+	// The same metadata without the key is used.
+	c, _ = textServerWithKey(t, timeKey, embedded(secret("abcd", "2026-10-02T10:00:00Z", "2031-01-01T00:00:00Z")))
+	got, err := c.GetClient(ctx, "app")
+	require.NoError(t, err)
+	require.Len(t, got.Credentials.Secrets, 1)
+	assert.Equal(t, "abcd", got.Credentials.Secrets[0].Prefix)
+}

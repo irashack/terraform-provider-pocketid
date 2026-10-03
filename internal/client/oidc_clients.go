@@ -166,7 +166,7 @@ func (c *Client) CreateClient(ctx context.Context, createReq *OIDCClientCreateRe
 	// An answer whose text carries the API key is not used; the client
 	// exists under its usable ID, which alone is returned so the caller can
 	// keep it for recovery.
-	if err := c.checkReturnedText(result.shownTexts()...); err != nil {
+	if err := c.checkClientContent(&result); err != nil {
 		return &OIDCClient{ID: result.ID}, fmt.Errorf("client %s was created, but its answer cannot be used; only its ID is kept: %w", result.ID, unreadResult(err))
 	}
 	return &result, nil

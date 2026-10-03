@@ -74,8 +74,15 @@ func (c *Client) checkOIDCClient(addressed string, oidcClient *OIDCClient) error
 	if err := c.checkGroupIDs(oidcClient.AllowedUserGroups); err != nil {
 		return err
 	}
-	for _, secret := range oidcClient.Credentials.Secrets {
-		if err := c.checkReturnedID("client secret", "", secret.ID); err != nil {
+	return c.checkClientContent(oidcClient)
+}
+
+// checkClientContent checks what a client answer carries besides its own
+// and its groups' IDs: the metadata of every secret it lists
+// (checkSecretMetadata) and its text.
+func (c *Client) checkClientContent(oidcClient *OIDCClient) error {
+	for i := range oidcClient.Credentials.Secrets {
+		if err := c.checkSecretMetadata(&oidcClient.Credentials.Secrets[i]); err != nil {
 			return err
 		}
 	}

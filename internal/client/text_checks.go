@@ -176,10 +176,25 @@ func federatedIdentityTexts(identities []OIDCClientFederatedIdentity) []string {
 	return texts
 }
 
-// shownTexts of a client: its settings, URLs and federated identities, and
-// the groups it lists. The secrets it lists carry only an ID, a prefix of at
-// most four characters (which cannot hold a key Pocket ID accepts: at least
-// 16) and times that decode only as times.
+// timeTexts returns the forms a time from an answer is stored or printed in:
+// RFC 3339 with and without fractions of a second, in UTC and as sent.
+func timeTexts(t time.Time) []string {
+	utc := t.UTC()
+	return []string{utc.Format(time.RFC3339), utc.Format(time.RFC3339Nano), t.Format(time.RFC3339Nano)}
+}
+
+// secretMetadataTexts returns the text the provider takes from a secret's
+// metadata: its prefix and its times.
+func secretMetadataTexts(secret *ClientSecretMetadata) []string {
+	texts := append([]string{secret.Prefix}, timeTexts(secret.CreatedAt)...)
+	if secret.ExpiresAt != nil {
+		texts = append(texts, timeTexts(*secret.ExpiresAt)...)
+	}
+	return texts
+}
+
+// shownTexts of a client: its settings, URLs and federated identities, the
+// groups it lists and the metadata of the secrets it lists.
 func (o *OIDCClient) shownTexts() []string {
 	texts := []string{o.Name, o.BackchannelLogoutURL, o.LaunchURL, o.ClientType, o.Description,
 		optionalText(o.LogoURL), optionalText(o.DarkLogoURL),
@@ -189,6 +204,9 @@ func (o *OIDCClient) shownTexts() []string {
 	texts = append(texts, federatedIdentityTexts(o.Credentials.FederatedIdentities)...)
 	for i := range o.AllowedUserGroups {
 		texts = append(texts, o.AllowedUserGroups[i].shownTexts()...)
+	}
+	for i := range o.Credentials.Secrets {
+		texts = append(texts, secretMetadataTexts(&o.Credentials.Secrets[i])...)
 	}
 	return texts
 }
