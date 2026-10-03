@@ -407,3 +407,29 @@ func TestUserReadRemovesConfirmedMissingUser(t *testing.T) {
 	require.Empty(t, warnings)
 	require.Nil(t, got, "an ordinary missing user leaves state")
 }
+
+// A failure before the create is sent (the check that no user has the chosen
+// ID cannot be completed) is an ordinary error: nothing was sent, so no ID is
+// kept in state and nothing is unresolved, and once the API answers again the
+// same configuration creates the user.
+func TestUserChosenIDPreflightFailureLeavesNothingToReconcile(t *testing.T) {
+	s := &fixedIDServer{version: "2.17.0", readStatus: http.StatusForbidden}
+	h := newUsersGroupsUserHarness(t, s.start(t))
+
+	state, private, errs := h.apply(nil, fixedIDPlanModel(), nil)
+	require.Contains(t, errs, "Cannot create a user with this ID")
+	require.Nil(t, state, "no ID is kept")
+	require.NotContains(t, string(private), userUnresolvedCreationKey)
+	require.Zero(t, s.posts, "no create was sent")
+
+	s.mu.Lock()
+	s.readStatus = 0
+	s.mu.Unlock()
+	state, private, errs = h.apply(nil, fixedIDPlanModel(), nil)
+	require.Empty(t, errs)
+	require.NotNil(t, state)
+	require.Equal(t, fixedUserID, state.ID.ValueString())
+	require.True(t, state.UnresolvedCreation.IsNull())
+	require.NotContains(t, string(private), userUnresolvedCreationKey)
+	require.Equal(t, 1, s.posts)
+}

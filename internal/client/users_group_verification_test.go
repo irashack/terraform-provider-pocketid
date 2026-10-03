@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -37,8 +38,11 @@ type usersGroupsVerifyServer struct {
 	getBody     string
 	getBodyFrom int
 	// putBody, when set, is the raw body of every PUT's response.
-	putBody    string
-	puts, gets int
+	putBody string
+	// getStatus, when set, is the status of the GETs that fail (403 when 0);
+	// putStatus, when set, answers every PUT with it and applies nothing.
+	getStatus, putStatus int
+	puts, gets           int
 }
 
 func (s *usersGroupsVerifyServer) start(t *testing.T) *client.Client {
@@ -56,7 +60,11 @@ func (s *usersGroupsVerifyServer) start(t *testing.T) *client.Client {
 		case "GET /api/users/" + verifyUserID:
 			s.gets++
 			if s.readFails || (s.failGetsFrom > 0 && s.gets >= s.failGetsFrom) {
-				w.WriteHeader(http.StatusForbidden)
+				status := http.StatusForbidden
+				if s.getStatus != 0 {
+					status = s.getStatus
+				}
+				w.WriteHeader(status)
 				return
 			}
 			if s.getBody != "" && s.gets >= s.getBodyFrom {
@@ -68,6 +76,10 @@ func (s *usersGroupsVerifyServer) start(t *testing.T) *client.Client {
 			s.puts++
 			var req client.UpdateUserGroupsRequest
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+			if s.putStatus != 0 {
+				w.WriteHeader(s.putStatus)
+				return
+			}
 			s.current = nil
 			for _, id := range req.UserGroupIDs {
 				if slices.Contains(s.existing, id) {
@@ -307,5 +319,84 @@ func TestClient_UserGroupsPutEvidenceMustNameTheUser(t *testing.T) {
 		_, err := s.start(t).SetUserGroups(ctx, verifyUserID, []string{"g1"})
 		require.Error(t, err)
 		assert.NotContains(t, err.Error(), "canary-text")
+	})
+}
+
+// A membership change says whether its write was attempted: a failure of the
+// read that precedes the PUT (a refused or failed request, a server error
+// that outlasts the retries, a malformed answer) wraps ErrWriteNotAttempted,
+// with no PUT sent; a failure of the PUT or of reading its result back does not.
+func TestClient_GroupMembershipChangeReportsWhetherTheWriteWasAttempted(t *testing.T) {
+	ctx := context.Background()
+	type change struct {
+		name string
+		run  func(*client.Client) error
+	}
+	changes := []change{
+		{"add", func(c *client.Client) error { return c.AddUserToGroup(ctx, verifyUserID, "g2") }},
+		{"remove", func(c *client.Client) error { return c.RemoveUserFromGroup(ctx, verifyUserID, "g1") }},
+	}
+	for _, ch := range changes {
+		t.Run(ch.name+"_preflight_failures", func(t *testing.T) {
+			for name, s := range map[string]*usersGroupsVerifyServer{
+				"forbidden":    {existing: []string{"g1", "g2"}, current: []string{"g1"}, readFails: true},
+				"server_error": {existing: []string{"g1", "g2"}, current: []string{"g1"}, readFails: true, getStatus: http.StatusBadGateway},
+				"empty_object": {existing: []string{"g1", "g2"}, current: []string{"g1"}, getBody: `{}`},
+				"other_user":   {existing: []string{"g1", "g2"}, current: []string{"g1"}, getBody: `{"id":"88888888-8888-4888-8888-888888888888","userGroups":[]}`},
+				"not_json":     {existing: []string{"g1", "g2"}, current: []string{"g1"}, getBody: `<html>ok</html>`},
+				"group_no_id":  {existing: []string{"g1", "g2"}, current: []string{"g1"}, getBody: `{"id":"` + verifyUserID + `","userGroups":[{}]}`},
+			} {
+				t.Run(name, func(t *testing.T) {
+					c := s.start(t)
+					client.SetRetryPolicyForTest(c, 2, time.Millisecond, 2*time.Millisecond, time.Second)
+					err := ch.run(c)
+					require.Error(t, err)
+					assert.ErrorIs(t, err, client.ErrWriteNotAttempted)
+					assert.NotErrorIs(t, err, client.ErrResultUnread)
+					assert.Zero(t, s.puts, "no write was sent")
+				})
+			}
+		})
+	}
+	t.Run("add_after_the_write_was_sent", func(t *testing.T) {
+		for name, s := range map[string]*usersGroupsVerifyServer{
+			"put_server_error":               {existing: []string{"g1", "g2"}, current: []string{"g1"}, putStatus: http.StatusBadGateway},
+			"put_rejected":                   {existing: []string{"g1", "g2"}, current: []string{"g1"}, putStatus: http.StatusBadRequest},
+			"unreadable_and_no_read":         {existing: []string{"g1", "g2"}, current: []string{"g1"}, unreadablePut: true, failGetsFrom: 2},
+			"unreadable_read_back_malformed": {existing: []string{"g1", "g2"}, current: []string{"g1"}, unreadablePut: true, getBody: `{}`, getBodyFrom: 2},
+		} {
+			t.Run(name, func(t *testing.T) {
+				err := s.start(t).AddUserToGroup(ctx, verifyUserID, "g2")
+				require.Error(t, err)
+				assert.NotErrorIs(t, err, client.ErrWriteNotAttempted)
+				assert.Equal(t, 1, s.puts)
+			})
+		}
+	})
+	t.Run("remove_after_the_write_was_sent", func(t *testing.T) {
+		s := &usersGroupsVerifyServer{existing: []string{"g1"}, current: []string{"g1"}, putStatus: http.StatusBadGateway}
+		err := s.start(t).RemoveUserFromGroup(ctx, verifyUserID, "g1")
+		require.Error(t, err)
+		assert.NotErrorIs(t, err, client.ErrWriteNotAttempted)
+		assert.Equal(t, 1, s.puts)
+	})
+	t.Run("missing_user_is_still_recognized", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"User not found","code":"user_not_found"}`))
+		}))
+		defer server.Close()
+		c, err := client.NewClient(server.URL, "test-token", false, 5)
+		require.NoError(t, err)
+		err = c.AddUserToGroup(ctx, verifyUserID, "g1")
+		require.Error(t, err)
+		assert.ErrorIs(t, err, client.ErrWriteNotAttempted)
+		assert.True(t, client.IsUserNotFound(err), "the cause is still visible")
+		assert.NoError(t, c.RemoveUserFromGroup(ctx, verifyUserID, "g1"), "removing from a missing user is already done")
+	})
+	t.Run("nothing_to_write_is_no_error", func(t *testing.T) {
+		s := &usersGroupsVerifyServer{existing: []string{"g1"}, current: []string{"g1"}}
+		require.NoError(t, s.start(t).AddUserToGroup(ctx, verifyUserID, "g1"))
+		assert.Zero(t, s.puts)
 	})
 }

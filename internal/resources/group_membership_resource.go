@@ -208,8 +208,12 @@ func (r *groupMembershipResource) Create(ctx context.Context, req resource.Creat
 	plan.ID = types.StringValue(groupMembershipID(groupID, userID))
 	if err := r.client.AddUserToGroup(ctx, userID, groupID); err != nil {
 		var mismatch *client.UserGroupsMismatchError
+		// A failure before the write was sent (the read of the user's groups
+		// that precedes it) leaves nothing pending, whatever its kind: it is
+		// an ordinary error, and no identity is kept.
+		attempted := !errors.Is(err, client.ErrWriteNotAttempted)
 		switch {
-		case errors.Is(err, client.ErrResultUnread), !errors.As(err, &mismatch) && !client.IsDefiniteRejection(err):
+		case attempted && (errors.Is(err, client.ErrResultUnread) || !errors.As(err, &mismatch) && !client.IsDefiniteRejection(err)):
 			// The addition was accepted, or may have been, but could not be
 			// verified. The pair is kept in state (marked for replacement)
 			// as an unresolved creation, so that removing it from the
@@ -224,8 +228,9 @@ func (r *groupMembershipResource) Create(ctx context.Context, req resource.Creat
 					"and a refresh that does not see the user in the group does not remove it. Once a refresh sees the user in the group, the "+
 					"condition clears.", userID, groupID, err))
 		default:
-			// A definite rejection, or a group the user is confirmed not to
-			// be in (it does not exist): nothing to track.
+			// A definite rejection, a group the user is confirmed not to be
+			// in (it does not exist), or a failure before anything was
+			// sent: nothing to track.
 			resp.Diagnostics.AddError(
 				"Error adding user to group",
 				fmt.Sprintf("Could not add user %s to group %s: %s", userID, groupID, err),

@@ -36,7 +36,11 @@ type pendingMembershipServer struct {
 	hold    bool
 	pending []string
 	gone    bool
-	puts    int
+	// getStatus, when set, answers every GET with it; getBody, when set, is
+	// the raw body of every GET's 200 answer.
+	getStatus int
+	getBody   string
+	puts      int
 }
 
 func (s *pendingMembershipServer) release() {
@@ -65,7 +69,14 @@ func (s *pendingMembershipServer) start(t *testing.T) *client.Client {
 		}
 		switch r.Method + " " + r.URL.Path {
 		case "GET /api/users/" + unresolvedMembershipUser:
-			user()
+			switch {
+			case s.getStatus != 0:
+				w.WriteHeader(s.getStatus)
+			case s.getBody != "":
+				_, _ = w.Write([]byte(s.getBody))
+			default:
+				user()
+			}
 		case "PUT /api/users/" + unresolvedMembershipUser + "/user-groups":
 			s.puts++
 			var req client.UpdateUserGroupsRequest
@@ -312,4 +323,48 @@ func TestGroupMembershipOrdinaryCreateAndDelete(t *testing.T) {
 	_, errs = h.apply(state, nil)
 	require.Empty(t, errs)
 	require.Empty(t, s.current)
+}
+
+// A failed read of the user's groups before the write (a refused request, a
+// malformed answer) means no write was sent and nothing is pending: the error
+// is an ordinary one, no pair is kept in state, and once the API answers
+// again the next apply creates the membership with no manual reconciliation.
+func TestGroupMembershipFailedPreflightLeavesNothingToReconcile(t *testing.T) {
+	for name, fail := range map[string]func(*pendingMembershipServer){
+		"forbidden":         func(s *pendingMembershipServer) { s.getStatus = http.StatusForbidden },
+		"malformed_success": func(s *pendingMembershipServer) { s.getBody = `{}` },
+		"other_users_answer": func(s *pendingMembershipServer) {
+			s.getBody = `{"id":"` + unresolvedMembershipOther + `","userGroups":[]}`
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := &pendingMembershipServer{}
+			h := newMembershipHarness(t, s.start(t))
+
+			fail(s)
+			state, errs := h.apply(nil, h.planFromNull())
+			require.Contains(t, errs, "Error adding user to group")
+			require.NotContains(t, errs, "uncertain")
+			require.Nil(t, state, "no pair is kept: nothing was sent")
+			require.Zero(t, s.puts, "no write was sent")
+
+			// The API recovers; the same configuration applies normally.
+			s.getStatus, s.getBody = 0, ""
+			state, errs = h.apply(nil, h.planFromNull())
+			require.Empty(t, errs)
+			require.NotNil(t, state)
+			require.True(t, state.UnresolvedCreation.IsNull(), "nothing is unresolved")
+			require.Equal(t, 1, s.puts)
+			require.Equal(t, []string{unresolvedMembershipGroup}, s.current)
+
+			// And it is an ordinary resource: it refreshes and is removed.
+			state, errs, warnings := h.read(state)
+			require.Empty(t, errs)
+			require.Empty(t, warnings)
+			require.NotNil(t, state)
+			_, errs = h.apply(state, nil)
+			require.Empty(t, errs)
+			require.Empty(t, s.current)
+		})
+	}
 }

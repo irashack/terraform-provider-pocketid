@@ -114,7 +114,10 @@
   resource with a warning instead of removing it, and a destroy or replacement
   that cannot see the membership is refused instead of recorded as done. A
   refresh that sees the user in the group clears it. To give up on the
-  membership, run `terraform state rm` on the resource.
+  membership, run `terraform state rm` on the resource. A failure before the
+  write was sent (the read of the user's groups that precedes it failed) is an
+  ordinary error that records nothing, and the next apply creates the
+  membership normally.
 - Reading a user's groups (to add or remove a `pocketid_group_membership`, to
   refresh one, or to check a write whose response could not be read) now
   requires a response that names the user and lists its groups. An empty or

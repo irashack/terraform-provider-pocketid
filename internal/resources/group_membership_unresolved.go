@@ -13,7 +13,8 @@ import "fmt"
 // replacement's destroy step is given, until the user is seen in the group
 // (the condition then clears) or the resource is removed from state by hand.
 const groupMembershipUnresolvedDescription = "True while adding the user to the group was accepted, or may have been, but the result could not be confirmed, " +
-	"so the request may still take effect. It is null otherwise. While it is set, a refresh that finds the user outside the group (or the user missing) " +
+	"so the request may still take effect. It is null otherwise, and in particular after a failure before anything was sent (reading the user's groups " +
+	"first), which is an ordinary error that records nothing. While it is set, a refresh that finds the user outside the group (or the user missing) " +
 	"keeps the resource in state with a warning instead of removing it, and a destroy or replacement that finds the user outside the group is refused " +
 	"instead of recorded as done. It clears when a refresh sees the user in the group. To give up on the membership instead, run `terraform state rm` on the resource."
 

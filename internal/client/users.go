@@ -347,6 +347,19 @@ func (c *Client) SetUserGroups(ctx context.Context, userID string, groupIDs []st
 	return held, CheckUserGroups(userID, groupIDs, held)
 }
 
+// ErrWriteNotAttempted marks an error from AddUserToGroup or
+// RemoveUserFromGroup that happened before the PUT that changes the user's
+// groups was sent: reading the user's groups first failed, so nothing was
+// written and nothing is pending. An error without it came from the PUT or
+// from reading its result back, and may leave a change that was made or still
+// is in flight.
+var ErrWriteNotAttempted = errors.New("no change was sent to Pocket ID")
+
+// notAttempted wraps a failure of the read that precedes the write.
+func notAttempted(err error) error {
+	return fmt.Errorf("%w: reading the user's groups first failed: %w", ErrWriteNotAttempted, err)
+}
+
 // AddUserToGroup adds a user to a group without changing the user's other
 // group memberships, and checks that the user is in the group afterwards: a
 // group that does not exist, or was deleted meanwhile, gives a
@@ -361,12 +374,15 @@ func (c *Client) SetUserGroups(ctx context.Context, userID string, groupIDs []st
 // onboarding broker) that runs between the read and the write can have its
 // change silently overwritten; there is no compare-and-swap primitive that
 // would close this window.
+//
+// A failure of the first read, before anything is written, wraps
+// ErrWriteNotAttempted.
 func (c *Client) AddUserToGroup(ctx context.Context, userID, groupID string) error {
 	// The write replaces the whole list, so it is built only from a response
 	// that shows the user's groups (an empty one would drop them all).
 	current, err := c.readUserGroupIDs(ctx, userID)
 	if err != nil {
-		return err
+		return notAttempted(err)
 	}
 	if slices.Contains(current, groupID) {
 		// Already a member; nothing to do.
@@ -392,14 +408,15 @@ func (c *Client) AddUserToGroup(ctx context.Context, userID, groupID string) err
 // own not-found page, or an endpoint missing on an older server - does not by
 // itself prove the user is gone, and is returned as an error instead. See
 // AddUserToGroup for the read-modify-write mechanism this relies on and the
-// race window it leaves.
+// race window it leaves. A failure of the first read, before anything is
+// written, wraps ErrWriteNotAttempted.
 func (c *Client) RemoveUserFromGroup(ctx context.Context, userID, groupID string) error {
 	current, err := c.readUserGroupIDs(ctx, userID)
 	if err != nil {
 		if IsUserNotFound(err) {
 			return nil
 		}
-		return err
+		return notAttempted(err)
 	}
 
 	found := false
