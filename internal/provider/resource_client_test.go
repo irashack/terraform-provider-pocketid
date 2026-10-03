@@ -434,23 +434,58 @@ resource "pocketid_client" "test" {
 `, name, par)
 }
 
-func TestAccResourceClient_parPublicConflict(t *testing.T) {
+// Pocket ID 2.10.0 and later store PAR for a public client, so the provider
+// accepts it and the plan converges.
+func TestAccResourceClient_parPublicClient(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				// PAR on a public client is rejected at plan time.
 				Config: testAccProviderConfig() + `
 resource "pocketid_client" "test" {
-  name          = "par-public-conflict"
+  name          = "par-public"
   callback_urls = ["https://example.com/callback"]
   is_public     = true
 
   requires_pushed_authorization_requests = true
 }
 `,
-				ExpectError: regexp.MustCompile("Invalid PAR configuration"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("pocketid_client.test", "requires_pushed_authorization_requests", "true"),
+					func(s *terraform.State) error {
+						var got struct {
+							PAR bool `json:"requiresPushedAuthorizationRequests"`
+						}
+						id := s.RootModule().Resources["pocketid_client.test"].Primary.ID
+						if status, err := testAccAPI("GET", "/api/oidc/clients/"+id, nil, &got); err != nil || status != http.StatusOK || !got.PAR {
+							return fmt.Errorf("the server did not store PAR for the public client (HTTP %d, %v)", status, err)
+						}
+						return nil
+					},
+				),
+			},
+		},
+	})
+}
+
+// Pocket ID forces PKCE on for a public client, so turning it off is
+// rejected at plan time instead of never converging.
+func TestAccResourceClient_publicClientWithoutPKCE(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccProviderConfig() + `
+resource "pocketid_client" "test" {
+  name          = "public-no-pkce"
+  callback_urls = ["https://example.com/callback"]
+  is_public     = true
+  pkce_enabled  = false
+}
+`,
+				ExpectError: regexp.MustCompile("Invalid PKCE configuration"),
 			},
 		},
 	})

@@ -40,3 +40,9 @@
 - `has_logo` no longer shows as "known after apply" on every update, and
   `logout_callback_urls = []` and `allowed_user_groups = []` no longer show a
   change on every plan; omitting them and setting them to `[]` both mean none.
+- `pocketid_client` now rejects `is_public = true` with `pkce_enabled = false`
+  at plan time. Pocket ID always turns PKCE on for a public client, so such a
+  configuration used to plan a change on every run.
+- A public client may now set `requires_pushed_authorization_requests = true`.
+  Pocket ID has stored it for public clients since 2.10.0; on an older server
+  the apply stops before changing anything.

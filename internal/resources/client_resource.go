@@ -166,8 +166,8 @@ func (r *clientResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			},
 			"requires_pushed_authorization_requests": schema.BoolAttribute{
 				Description: "Whether this client requires Pushed Authorization Requests (PAR, RFC 9126). Defaults to false. " +
-					"Applies to confidential clients only — Pocket-ID coerces this to false for public clients (is_public = true). " +
-					"Enforced only by Pocket-ID versions that support PAR (v2.9.0+); on older versions the value is stored in state but not enforced.",
+					"Public clients can require PAR on Pocket ID 2.10.0 and later; Pocket ID 2.9.0 ignores it for a public client, so the provider refuses that combination there before changing anything. " +
+					"Enforced only by Pocket ID versions that support PAR (2.9.0 and later); on older versions the value is stored in state but not enforced.",
 				Optional: true,
 				Computed: true,
 				Default:  booldefault.StaticBool(false),
@@ -224,7 +224,7 @@ func (r *clientResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				},
 			},
 			"pkce_enabled": schema.BoolAttribute{
-				Description: "Whether PKCE is enabled for this client. Defaults to true.",
+				Description: "Whether PKCE is enabled for this client. Defaults to true. Pocket ID always requires PKCE for a public client, so `is_public = true` with `pkce_enabled = false` is rejected.",
 				Optional:    true,
 				Computed:    true,
 				Default:     booldefault.StaticBool(true),
@@ -302,16 +302,37 @@ func (r *clientResource) ValidateConfig(ctx context.Context, req resource.Valida
 		}
 	}
 
-	// Pocket-ID coerces requires_pushed_authorization_requests to false for
-	// public clients, so true + is_public is never satisfiable.
-	if config.IsPublic.ValueBool() && config.RequiresPushedAuthorizationRequests.ValueBool() {
+	// Pocket ID forces PKCE on for a public client (updateOIDCClientModelFromDto:
+	// PkceEnabled = IsPublic || PkceEnabled), so this combination would never
+	// converge.
+	if config.IsPublic.ValueBool() && !config.PkceEnabled.IsNull() && !config.PkceEnabled.IsUnknown() && !config.PkceEnabled.ValueBool() {
 		resp.Diagnostics.AddAttributeError(
-			path.Root("requires_pushed_authorization_requests"),
-			"Invalid PAR configuration",
-			"requires_pushed_authorization_requests can only be true for confidential clients. "+
-				"Set is_public = false to use Pushed Authorization Requests.",
+			path.Root("pkce_enabled"),
+			"Invalid PKCE configuration",
+			"Pocket ID always requires PKCE for a public client. Remove pkce_enabled = false, or set is_public = false.",
 		)
 	}
+}
+
+// publicPARMinVersion is the first Pocket ID that stores
+// requiresPushedAuthorizationRequests for a public client; 2.9.0 forced it to
+// false (RequiresPushedAuthorizationRequests = !IsPublic && ...).
+const publicPARMinVersion = "2.10.0"
+
+// checkPublicPARSupport refuses, before any mutation, a public client that
+// requires PAR on a server that would silently drop the setting.
+func checkPublicPARSupport(ctx context.Context, api *client.Client, isPublic, par bool) error {
+	if !isPublic || !par {
+		return nil
+	}
+	supported, err := api.VersionAtLeast(ctx, publicPARMinVersion)
+	if err != nil {
+		return fmt.Errorf("could not verify that the server accepts PAR for a public client: %w", err)
+	}
+	if !supported {
+		return fmt.Errorf("a public client requiring PAR needs Pocket ID %s or later; no mutation was attempted", publicPARMinVersion)
+	}
+	return nil
 }
 
 // Create creates the resource and sets the initial Terraform state.
@@ -358,6 +379,10 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 	}
 	if err := checkBackchannelLogoutSupport(ctx, r.client, createReq.BackchannelLogoutURL); err != nil {
 		resp.Diagnostics.AddAttributeError(path.Root("backchannel_logout_url"), "Unsupported back-channel logout configuration", err.Error())
+		return
+	}
+	if err := checkPublicPARSupport(ctx, r.client, createReq.IsPublic, createReq.RequiresPushedAuthorizationRequests); err != nil {
+		resp.Diagnostics.AddAttributeError(path.Root("requires_pushed_authorization_requests"), "Unsupported PAR configuration", err.Error())
 		return
 	}
 	if !plan.IsPublic.ValueBool() && plan.GenerateSecret.ValueBool() {
@@ -653,6 +678,10 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 	}
 	if err := checkBackchannelLogoutSupport(ctx, r.client, stringPointer(plan.BackchannelLogoutURL)); err != nil {
 		resp.Diagnostics.AddAttributeError(path.Root("backchannel_logout_url"), "Unsupported back-channel logout configuration", err.Error())
+		return
+	}
+	if err := checkPublicPARSupport(ctx, r.client, updateReq.IsPublic, updateReq.RequiresPushedAuthorizationRequests); err != nil {
+		resp.Diagnostics.AddAttributeError(path.Root("requires_pushed_authorization_requests"), "Unsupported PAR configuration", err.Error())
 		return
 	}
 	// A secret to revoke is identified before anything changes: if it cannot

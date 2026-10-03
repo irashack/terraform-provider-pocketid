@@ -206,8 +206,8 @@ output "spa_client_id" {
 - `is_public` (Boolean) Whether this is a public client (no client secret). Defaults to false.
 - `launch_url` (String) The URL the Pocket ID dashboard opens for this client. When omitted, the client keeps the launch URL it has (set in the admin UI, or earlier by Terraform) and state shows it; an update never clears it. Set it to `""` to remove it.
 - `logout_callback_urls` (List of String) List of allowed logout callback URLs for the OIDC client. Omitting it and setting it to `[]` both mean none.
-- `pkce_enabled` (Boolean) Whether PKCE is enabled for this client. Defaults to true.
-- `requires_pushed_authorization_requests` (Boolean) Whether this client requires Pushed Authorization Requests (PAR, RFC 9126). Defaults to false. Applies to confidential clients only — Pocket-ID coerces this to false for public clients (is_public = true). Enforced only by Pocket-ID versions that support PAR (v2.9.0+); on older versions the value is stored in state but not enforced.
+- `pkce_enabled` (Boolean) Whether PKCE is enabled for this client. Defaults to true. Pocket ID always requires PKCE for a public client, so `is_public = true` with `pkce_enabled = false` is rejected.
+- `requires_pushed_authorization_requests` (Boolean) Whether this client requires Pushed Authorization Requests (PAR, RFC 9126). Defaults to false. Public clients can require PAR on Pocket ID 2.10.0 and later; Pocket ID 2.9.0 ignores it for a public client, so the provider refuses that combination there before changing anything. Enforced only by Pocket ID versions that support PAR (2.9.0 and later); on older versions the value is stored in state but not enforced.
 - `requires_reauthentication` (Boolean) Whether this client requires reauthentication for certain flows. Defaults to false.
 
 ### Read-Only

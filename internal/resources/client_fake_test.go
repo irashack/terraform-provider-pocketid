@@ -19,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/mod/semver"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
 )
@@ -72,6 +73,11 @@ func newFakePocketID(t *testing.T, version string, c *fakeClient) *fakePocketID 
 		c.ClientType = "standard"
 	}
 	return &fakePocketID{t: t, version: version, client: c, groups: map[string]bool{}, members: map[string][]string{}, fail: map[string]int{}}
+}
+
+// atLeast compares the fake's version.
+func (f *fakePocketID) atLeast(version string) bool {
+	return semver.Compare("v"+f.version, "v"+version) >= 0
 }
 
 func (f *fakePocketID) start() *client.Client {
@@ -135,7 +141,7 @@ func (f *fakePocketID) clientJSON() map[string]any {
 	if c.PkceSupported {
 		body["pkceSupported"] = true
 	}
-	if f.version >= "2.17.0" {
+	if f.atLeast("2.17.0") {
 		body["backchannelLogoutURL"] = c.BackchannelURL
 	}
 	return body
@@ -143,7 +149,7 @@ func (f *fakePocketID) clientJSON() map[string]any {
 
 // notifyLostAccess signs out authorized users in none of the allowed groups.
 func (f *fakePocketID) notifyLostAccess() {
-	if f.version < "2.17.0" || !f.client.Restricted {
+	if !f.atLeast("2.17.0") || !f.client.Restricted {
 		return
 	}
 	for user, groups := range f.members {
@@ -186,7 +192,7 @@ func (f *fakePocketID) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		f.applyUpdate(in)
 		body := f.clientJSON()
-		if f.version >= "2.17.0" && !f.client.IsPublic {
+		if f.atLeast("2.17.0") && !f.client.IsPublic {
 			// autoCreateOidcClientSecret, on by default.
 			auto := fakeSecret{ID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", Prefix: "auto", Created: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
 			f.secrets = append(f.secrets, auto)
