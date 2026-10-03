@@ -70,7 +70,13 @@ func (r *userProfilePictureResource) Schema(_ context.Context, _ resource.Schema
 			"The provider therefore keeps, in `stored_sha256`, the digest of the picture the server *serves* for the user right after the upload, and compares the served picture with it on every refresh. " +
 			"A picture replaced or removed outside Terraform is detected that way, and the next apply uploads the file again. " +
 			"A false difference can appear after a Pocket ID upgrade that changes how pictures are scaled or encoded; the cost is one more upload. " +
+			"If the upload succeeded but the picture could not be read back, `stored_sha256` is null, nothing can be compared, and the next plan shows an upload that records it. " +
 			"What cannot be detected: that the stored picture came from *this* file, as opposed to an identical image uploaded some other way, and any change while the user does not exist.\n\n" +
+			"**Destroy.** Destroying removes the picture only while the picture the server serves is still the one recorded in `stored_sha256`: the provider reads it again, past caches, immediately before it deletes. " +
+			"A refresh never replaces `stored_sha256`; only an upload does. " +
+			"If the served picture is different (replaced or removed outside Terraform, or encoded differently after a Pocket ID upgrade), or `stored_sha256` is null, destroy stops with an error and changes nothing, because the default picture cannot be told apart from a replacement and the provider does not delete what it did not upload. " +
+			"To restore this configuration's picture, apply it again, which uploads the file and records it, and destroy afterwards. To stop managing the picture without touching it, run `terraform state rm` for the resource. " +
+			"Pocket ID has no conditional delete, so a picture uploaded by someone else between the provider's check and its delete request is removed all the same; that race cannot be closed from here.\n\n" +
 			"There is no import: the source file is not recoverable from the server. Do not manage the same user's picture with two of these resources.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -102,7 +108,7 @@ func (r *userProfilePictureResource) Schema(_ context.Context, _ resource.Schema
 				Computed:    true,
 			},
 			"stored_sha256": schema.StringAttribute{
-				Description: "The SHA-256 digest of the picture Pocket ID served for the user right after the upload (the 300x300 PNG it made from the file), used to detect a picture changed or removed outside Terraform. Null when it could not be read after the upload.",
+				Description: "The SHA-256 digest of the picture Pocket ID served for the user right after the provider's last upload (the 300x300 PNG it made from the file). It detects a picture changed or removed outside Terraform and is what destroy checks before deleting; a refresh never changes it. Null when it could not be read after the upload.",
 				Computed:    true,
 			},
 		},
@@ -227,11 +233,12 @@ func (r *userProfilePictureResource) upload(ctx context.Context, plan *userProfi
 	plan.SHA256 = types.StringValue(file.SHA256)
 	served, err := r.servedDigest(ctx, userID)
 	if err != nil {
-		// The picture was uploaded; only the drift baseline is missing. The
-		// next refresh adopts whatever is served then.
+		// The picture was uploaded; only the baseline is missing. A baseline
+		// adopted from a later read could be someone else's picture, so Read
+		// does not adopt one: it asks for another upload instead.
 		plan.StoredSHA256 = types.StringNull()
 		diags.AddWarning("Could not read the uploaded picture back",
-			fmt.Sprintf("The picture was uploaded, but reading it back failed (%s). A change made outside Terraform before the next refresh will not be detected.", err))
+			fmt.Sprintf("The picture was uploaded, but reading it back failed (%s). Without that record the provider cannot tell later whether the stored picture is the one it uploaded: the next plan shows an upload to record it, and destroying the resource stops until then.", err))
 		return true
 	}
 	plan.StoredSHA256 = types.StringValue(served)
@@ -253,9 +260,11 @@ func (r *userProfilePictureResource) Create(ctx context.Context, req resource.Cr
 }
 
 // Read confirms the user still exists and compares the picture the server
-// serves with the one recorded after the upload. A difference clears sha256 in
-// the state, so that the next plan shows the file's digest as a change and the
-// apply uploads the file again.
+// serves with the one recorded after the last upload. A difference clears
+// sha256 in the state, so that the next plan shows the file's digest as a
+// change and the apply uploads the file again. stored_sha256 stays what the
+// last upload recorded: it is the picture Delete may remove, and a picture
+// found at refresh time is not that.
 func (r *userProfilePictureResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var state userProfilePictureResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
@@ -277,12 +286,10 @@ func (r *userProfilePictureResource) Read(ctx context.Context, req resource.Read
 	}
 
 	state.ID = types.StringValue(userID)
-	switch {
-	case state.StoredSHA256.IsNull() || state.StoredSHA256.IsUnknown():
-		// No baseline (the read-back after the upload failed): adopt it.
-		state.StoredSHA256 = types.StringValue(served)
-	case state.StoredSHA256.ValueString() != served:
-		state.StoredSHA256 = types.StringValue(served)
+	if state.StoredSHA256.IsNull() || state.StoredSHA256.IsUnknown() || state.StoredSHA256.ValueString() != served {
+		// Either the picture differs from the one uploaded, or there is no
+		// record of what was uploaded (the read-back failed): the file is
+		// uploaded again, which records it.
 		state.SHA256 = types.StringNull()
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -311,8 +318,13 @@ func (r *userProfilePictureResource) Update(ctx context.Context, req resource.Up
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-// Delete restores the default picture. A user that is already gone, or that has
-// no custom picture, is nothing to do.
+// Delete restores the default picture, but only when the picture the server
+// serves is still the one recorded after the last upload: it is read again here,
+// past caches, because the state may be older than the plan (a refresh, then a
+// wait). A different picture, or no record of the upload, is refused and
+// nothing is changed. A user that is already gone is nothing to do. Pocket ID
+// has no conditional delete, so a picture uploaded between the check and the
+// request is still removed.
 func (r *userProfilePictureResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var state userProfilePictureResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
@@ -320,6 +332,31 @@ func (r *userProfilePictureResource) Delete(ctx context.Context, req resource.De
 		return
 	}
 	userID := state.UserID.ValueString()
+
+	served, err := r.servedDigest(ctx, userID)
+	if err != nil {
+		if client.IsUserNotFound(err) {
+			return
+		}
+		resp.Diagnostics.AddError("Error checking the profile picture before removing it",
+			fmt.Sprintf("Could not read the picture of user %s: %s. Nothing was removed. Destroy again, or remove the resource from the state with `terraform state rm` to leave the picture as it is.", userID, err))
+		return
+	}
+	switch {
+	case state.StoredSHA256.IsNull() || state.StoredSHA256.IsUnknown():
+		resp.Diagnostics.AddError("Cannot tell whether the stored picture is the one this resource uploaded",
+			fmt.Sprintf("The provider has no record of the picture it uploaded for user %s (reading it back after the upload failed), so it cannot tell whether the picture stored now is that one. "+
+				"Nothing was removed. Apply the configuration again to upload the file and record it, then destroy; "+
+				"or remove the resource from the state with `terraform state rm` to leave the picture as it is.", userID))
+		return
+	case state.StoredSHA256.ValueString() != served:
+		resp.Diagnostics.AddError("The stored picture is not the one this resource uploaded",
+			fmt.Sprintf("The picture stored for user %s differs from the one this resource last uploaded: it was replaced or removed outside Terraform, or Pocket ID now encodes pictures differently. "+
+				"Nothing was removed. To restore this configuration's picture, apply it again (that uploads the file) and then destroy; "+
+				"to leave the picture as it is, remove the resource from the state with `terraform state rm`.", userID))
+		return
+	}
+
 	if err := r.client.ResetUserProfilePicture(ctx, userID); err != nil {
 		if client.IsUserNotFound(err) {
 			return

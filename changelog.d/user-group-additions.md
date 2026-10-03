@@ -65,3 +65,15 @@
   and what it holds is recorded. It also refuses a group record that lacks its
   users instead of reading it as an empty group, and takes the same
   provider-wide lock as the other membership writers.
+- `pocketid_user_profile_picture` reads the stored picture past any cache
+  between the provider and Pocket ID, so its recorded digest and its drift
+  checks describe the picture the server holds now. Destroy removes the picture
+  only if it is still the one recorded after the provider's last upload
+  (`stored_sha256`, which a refresh no longer replaces): a picture replaced or
+  removed outside Terraform stops the destroy with an error that changes
+  nothing. Apply the configuration again to upload the file and destroy
+  afterwards, or run `terraform state rm` to leave the picture as it is. When
+  the picture could not be read back after an upload, `stored_sha256` stays null
+  and the next plan shows an upload that records it. Pocket ID has no
+  conditional delete, so a picture uploaded between the provider's check and
+  its delete request is still removed.

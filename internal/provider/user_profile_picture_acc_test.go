@@ -246,3 +246,64 @@ func TestAccResourceUserProfilePicture_UserDeletedOutsideTerraform(t *testing.T)
 		},
 	})
 }
+
+// A picture that someone else uploaded after the provider's own is not removed
+// by destroy: the destroy stops, the replacement is still served, and applying
+// the configuration again restores the file's picture so that destroy succeeds.
+func TestAccResourceUserProfilePicture_DestroyKeepsAReplacementPicture(t *testing.T) {
+	testAccPreCheck(t)
+	name := acctest.RandomWithPrefix("tf-acc-pp")
+	userID := gmAccUser(t, name)
+	defaultDigest, err := ppAccServed(userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(t.TempDir(), "me.png")
+	if err := os.WriteFile(file, ppAccImage(t, 120, 80, 3), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var replacement string
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             func(s *terraform.State) error { return ppAccCheckServed(userID, true, defaultDigest)(s) },
+		Steps: []resource.TestStep{
+			{
+				Config: ppAccConfig(userID, file),
+				Check:  ppAccCheckServed(userID, false, defaultDigest),
+			},
+			{
+				PreConfig: func() {
+					c, err := testClient()
+					if err != nil {
+						t.Fatal(err)
+					}
+					err = c.UploadUserProfilePicture(context.Background(), userID, client.MultipartFile{FileName: "other.png", ContentType: "image/png", Content: ppAccImage(t, 50, 50, 77)})
+					if err != nil {
+						t.Fatalf("replacing the picture out of band: %v", err)
+					}
+					if replacement, err = ppAccServed(userID); err != nil {
+						t.Fatal(err)
+					}
+				},
+				Config:      ppAccConfig(userID, file),
+				Destroy:     true,
+				ExpectError: regexp.MustCompile(`not the one this resource uploaded`),
+			},
+			{
+				// The refused destroy changed nothing on the server.
+				PreConfig: func() {
+					served, err := ppAccServed(userID)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if served != replacement {
+						t.Fatal("the destroy that was refused still changed the user's picture")
+					}
+				},
+				Config: ppAccConfig(userID, file),
+				Check:  ppAccCheckServed(userID, false, defaultDigest, &replacement),
+			},
+		},
+	})
+}

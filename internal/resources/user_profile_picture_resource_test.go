@@ -256,7 +256,8 @@ func TestUserProfilePictureResource_Schema(t *testing.T) {
 	assert.False(t, sch.Attributes["sha256"].IsOptional())
 	_, isImportable := r.(resource.ResourceWithImportState)
 	assert.False(t, isImportable, "the source file cannot be recovered from the server")
-	for _, claim := range []string{"300x300", "16 million pixels", "10 MiB", "stored_sha256", "cannot be detected", "no import"} {
+	for _, claim := range []string{"300x300", "16 million pixels", "10 MiB", "stored_sha256", "cannot be detected", "no import",
+		"terraform state rm", "no conditional delete", "that race cannot be closed"} {
 		assert.Contains(t, sch.MarkdownDescription, claim)
 	}
 }
@@ -346,7 +347,7 @@ func TestUserProfilePictureResource_Create_ServerRefusals(t *testing.T) {
 }
 
 // The picture was uploaded but cannot be read back: the resource is recorded
-// (it exists) with no baseline, and a warning says detection is off for now.
+// (it exists) with no baseline, and a warning says the baseline is missing.
 func TestUserProfilePictureResource_Create_ReadBackFailureStillRecordsTheUpload(t *testing.T) {
 	s, c := newPPServer(t)
 	s.failGetAfterUpload = true
@@ -449,6 +450,8 @@ func ppRead(t *testing.T, r resource.Resource, sch schema.Schema, sha, stored st
 }
 
 // Read compares what the server serves with what it served after the upload.
+// The recorded digest stays the one the last upload produced: it is what Delete
+// holds the served picture against.
 func TestUserProfilePictureResource_Read_DetectsAChangedPicture(t *testing.T) {
 	s, c := newPPServer(t)
 	r, sch := ppResource(t, c)
@@ -467,26 +470,32 @@ func TestUserProfilePictureResource_Read_DetectsAChangedPicture(t *testing.T) {
 	require.False(t, replaced.Diagnostics.HasError(), "%v", replaced.Diagnostics)
 	_, null := ppAttr(t, replaced.State, "sha256")
 	assert.True(t, null, "the file digest is cleared so the next plan uploads the file again")
+	keptStored, _ := ppAttr(t, replaced.State, "stored_sha256")
+	assert.Equal(t, stored, keptStored, "a picture found at refresh is not the one that was uploaded")
 
 	// Removed outside Terraform: the default is served.
 	s.custom = nil
 	removed := ppRead(t, r, sch, "file-digest", stored)
 	_, null = ppAttr(t, removed.State, "sha256")
 	assert.True(t, null)
+	keptStored, _ = ppAttr(t, removed.State, "stored_sha256")
+	assert.Equal(t, stored, keptStored)
 }
 
-func TestUserProfilePictureResource_Read_AdoptsAMissingBaseline(t *testing.T) {
+// With no record of what was uploaded (the read-back failed), nothing the
+// server serves can be taken for it: Read adopts no baseline and asks for
+// another upload, which records one.
+func TestUserProfilePictureResource_Read_DoesNotAdoptAMissingBaseline(t *testing.T) {
 	s, c := newPPServer(t)
 	r, sch := ppResource(t, c)
 	s.custom = ppPNG(t, 60, 40, 1)
 
 	resp := ppRead(t, r, sch, "file-digest", "")
 	require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
-	sha, _ := ppAttr(t, resp.State, "sha256")
-	stored, null := ppAttr(t, resp.State, "stored_sha256")
-	assert.Equal(t, "file-digest", sha, "adopting a baseline is not drift")
-	assert.False(t, null)
-	assert.Equal(t, ppDigest(ppServed(s.custom)), stored)
+	_, shaNull := ppAttr(t, resp.State, "sha256")
+	_, storedNull := ppAttr(t, resp.State, "stored_sha256")
+	assert.True(t, shaNull, "the file digest is cleared so the next plan uploads the file and records the picture")
+	assert.True(t, storedNull, "whatever is served now may be someone else's picture")
 }
 
 func TestUserProfilePictureResource_Read_UserGone(t *testing.T) {
@@ -568,34 +577,122 @@ func TestUserProfilePictureResource_Update(t *testing.T) {
 	})
 }
 
-func ppDelete(t *testing.T, r resource.Resource, sch schema.Schema) *resource.DeleteResponse {
+func ppDelete(t *testing.T, r resource.Resource, sch schema.Schema, stored string) *resource.DeleteResponse {
 	t.Helper()
-	ctx := context.Background()
-	state := tfsdk.State{Schema: sch, Raw: ppObject(ctx, sch, ppUser, "/x.png", "sha", "stored")}
+	return ppDeleteState(t, r, sch, ppObject(context.Background(), sch, ppUser, "/x.png", "sha", stored))
+}
+
+func ppDeleteState(t *testing.T, r resource.Resource, sch schema.Schema, raw tftypes.Value) *resource.DeleteResponse {
+	t.Helper()
+	state := tfsdk.State{Schema: sch, Raw: raw}
 	resp := &resource.DeleteResponse{State: state}
-	r.Delete(ctx, resource.DeleteRequest{State: state}, resp)
+	r.Delete(context.Background(), resource.DeleteRequest{State: state}, resp)
 	return resp
 }
 
 func TestUserProfilePictureResource_Delete(t *testing.T) {
-	t.Run("restores the default", func(t *testing.T) {
+	uploaded := ppPNG(t, 60, 40, 1)
+	uploadedServed := ppDigest(ppServed(uploaded))
+
+	t.Run("restores the default when the picture is the one uploaded", func(t *testing.T) {
 		s, c := newPPServer(t)
-		s.custom = ppPNG(t, 60, 40, 1)
+		s.custom = uploaded
 		r, sch := ppResource(t, c)
-		resp := ppDelete(t, r, sch)
+		resp := ppDelete(t, r, sch, uploadedServed)
 		require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
 		assert.Nil(t, s.custom)
+		assert.Equal(t, 1, s.count("DELETE"))
 	})
+
+	// Someone replaced the picture after the plan: it is not ours to remove.
+	t.Run("a replacement picture is refused and kept", func(t *testing.T) {
+		s, c := newPPServer(t)
+		s.custom = ppPNG(t, 60, 40, 9)
+		r, sch := ppResource(t, c)
+		resp := ppDelete(t, r, sch, uploadedServed)
+		require.True(t, resp.Diagnostics.HasError())
+		assert.Equal(t, "The stored picture is not the one this resource uploaded", resp.Diagnostics.Errors()[0].Summary())
+		assert.Contains(t, resp.Diagnostics.Errors()[0].Detail(), "terraform state rm")
+		assert.Contains(t, resp.Diagnostics.Errors()[0].Detail(), "apply it again")
+		assert.Contains(t, resp.Diagnostics.Errors()[0].Detail(), "Nothing was removed")
+		assert.Zero(t, s.count("DELETE"), "no delete request was sent")
+		assert.NotNil(t, s.custom)
+		assert.False(t, resp.State.Raw.IsNull(), "the resource stays in the state")
+	})
+
+	t.Run("a picture removed outside Terraform is refused too", func(t *testing.T) {
+		s, c := newPPServer(t)
+		s.custom = nil // the default is served
+		r, sch := ppResource(t, c)
+		resp := ppDelete(t, r, sch, uploadedServed)
+		require.True(t, resp.Diagnostics.HasError())
+		assert.Zero(t, s.count("DELETE"))
+	})
+
+	t.Run("no record of the upload is refused and explained", func(t *testing.T) {
+		s, c := newPPServer(t)
+		s.custom = uploaded
+		r, sch := ppResource(t, c)
+		resp := ppDelete(t, r, sch, "")
+		require.True(t, resp.Diagnostics.HasError())
+		assert.Equal(t, "Cannot tell whether the stored picture is the one this resource uploaded", resp.Diagnostics.Errors()[0].Summary())
+		assert.Contains(t, resp.Diagnostics.Errors()[0].Detail(), "no record")
+		assert.Contains(t, resp.Diagnostics.Errors()[0].Detail(), "terraform state rm")
+		assert.Zero(t, s.count("DELETE"))
+		assert.NotNil(t, s.custom)
+	})
+
+	// A picture that a refresh found replaced is not removed by the destroy
+	// that follows the refresh: the state Read leaves still holds the upload's
+	// digest.
+	t.Run("a replacement found at refresh survives the destroy", func(t *testing.T) {
+		s, c := newPPServer(t)
+		s.custom = uploaded
+		r, sch := ppResource(t, c)
+		s.custom = ppPNG(t, 60, 40, 9)
+		refreshed := ppRead(t, r, sch, "file-digest", uploadedServed)
+		require.False(t, refreshed.Diagnostics.HasError(), "%v", refreshed.Diagnostics)
+		resp := ppDeleteState(t, r, sch, refreshed.State.Raw)
+		require.True(t, resp.Diagnostics.HasError())
+		assert.Zero(t, s.count("DELETE"))
+		assert.NotNil(t, s.custom)
+	})
+
+	t.Run("the check reads the picture again, so a later replacement is seen", func(t *testing.T) {
+		s, c := newPPServer(t)
+		s.custom = uploaded
+		r, sch := ppResource(t, c)
+		refreshed := ppRead(t, r, sch, "file-digest", uploadedServed) // no drift at refresh
+		require.False(t, refreshed.Diagnostics.HasError(), "%v", refreshed.Diagnostics)
+		s.custom = ppPNG(t, 60, 40, 9) // replaced between the refresh and the destroy
+		resp := ppDeleteState(t, r, sch, refreshed.State.Raw)
+		require.True(t, resp.Diagnostics.HasError())
+		assert.Zero(t, s.count("DELETE"))
+	})
+
 	t.Run("user already gone", func(t *testing.T) {
 		s, c := newPPServer(t)
 		s.exists = false
 		r, sch := ppResource(t, c)
-		assert.False(t, ppDelete(t, r, sch).Diagnostics.HasError())
+		assert.False(t, ppDelete(t, r, sch, uploadedServed).Diagnostics.HasError())
+		assert.False(t, ppDelete(t, r, sch, "").Diagnostics.HasError(), "with the user gone there is nothing to protect")
 	})
+
+	t.Run("a failed check is an error and removes nothing", func(t *testing.T) {
+		s, c := newPPServer(t)
+		s.custom = uploaded
+		s.getStatus = 404 // a bare 404 does not prove anything
+		r, sch := ppResource(t, c)
+		resp := ppDelete(t, r, sch, uploadedServed)
+		require.True(t, resp.Diagnostics.HasError())
+		assert.Zero(t, s.count("DELETE"))
+	})
+
 	t.Run("other failures are errors", func(t *testing.T) {
 		s, c := newPPServer(t)
+		s.custom = uploaded
 		s.deleteStatus = 404 // a bare 404 does not prove anything
 		r, sch := ppResource(t, c)
-		assert.True(t, ppDelete(t, r, sch).Diagnostics.HasError())
+		assert.True(t, ppDelete(t, r, sch, uploadedServed).Diagnostics.HasError())
 	})
 }
