@@ -324,8 +324,13 @@ func TestClient_OversizedRetryAfterIsNotWaited(t *testing.T) {
 	}
 }
 
+// The TestClient_RealNetwork_* tests check the retry and timeout limits over
+// real connections and the real clock. Their bounds are loose so that a
+// loaded machine cannot fail them; the exact arithmetic is
+// TestRetryArithmeticInFakeTime's job.
+
 // A wait that would end after the context's deadline is not started.
-func TestClient_RetryStopsBeforeContextDeadline(t *testing.T) {
+func TestClient_RealNetwork_RetryStopsBeforeContextDeadline(t *testing.T) {
 	var attempts atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts.Add(1)
@@ -353,7 +358,7 @@ func TestClient_RetryStopsBeforeContextDeadline(t *testing.T) {
 
 // The total time a GET spends retrying is bounded even when every single
 // wait is short.
-func TestClient_RetryTimeIsBounded(t *testing.T) {
+func TestClient_RealNetwork_RetryTimeIsBounded(t *testing.T) {
 	var attempts atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts.Add(1)
@@ -369,7 +374,7 @@ func TestClient_RetryTimeIsBounded(t *testing.T) {
 	_, err = c.GetClient(context.Background(), "test-client-id")
 	elapsed := time.Since(start)
 
-	// The exact attempt count is TestRetryArithmetic's job; in real time
+	// The exact attempt count is TestRetryArithmeticInFakeTime's job; in real time
 	// the call only has to end soon with one of the bounded outcomes.
 	require.Error(t, err)
 	assert.Less(t, elapsed, 10*time.Second)
@@ -491,7 +496,7 @@ func TestClient_RateLimitWithRetryAfterSeconds(t *testing.T) {
 }
 
 // Test timeout handling
-func TestClient_RequestTimeout(t *testing.T) {
+func TestClient_RealNetwork_RequestTimeout(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Sleep longer than client timeout
 		time.Sleep(2 * time.Second)
@@ -595,7 +600,7 @@ func TestClient_NonRetryableErrors(t *testing.T) {
 
 // A slow GET ends when the time allowed for the whole read runs out, even in
 // the middle of an attempt, rather than when that attempt would have ended.
-func TestClient_SlowReadEndsAtTheRetryDeadline(t *testing.T) {
+func TestClient_RealNetwork_SlowReadEndsAtTheRetryDeadline(t *testing.T) {
 	var attempts atomic.Int32
 	release := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -625,7 +630,7 @@ func TestClient_SlowReadEndsAtTheRetryDeadline(t *testing.T) {
 
 // The deadline bounds reads only: a slow read within it succeeds, and a
 // mutation is bounded by the HTTP timeout alone.
-func TestClient_RetryDeadlineLeavesFastReadsAndMutationsAlone(t *testing.T) {
+func TestClient_RealNetwork_RetryDeadlineLeavesFastReadsAndMutationsAlone(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			time.Sleep(4 * time.Second) // well past the read deadline below

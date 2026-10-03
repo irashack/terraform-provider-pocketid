@@ -92,33 +92,21 @@ const (
 	maxRetryWait = 10 * time.Second
 	// maxRetryElapsed bounds a whole GET, retries included: its attempts run
 	// under a deadline this long after the first one began (or the context's
-	// own deadline, if earlier), and no wait starts that would end after it.
+	// own deadline, if earlier), and no wait starts that would not end before
+	// it, since the attempt after the wait needs time too.
 	// NewClient raises it to the configured HTTP timeout when that is
 	// longer, so a single attempt can always use the full timeout.
 	maxRetryElapsed = 30 * time.Second
 )
 
-// retryPolicy holds the limits above. It is a field so tests can shorten it,
-// and can replace the clock (now and sleep; nil means the real one) to check
-// the retry arithmetic without depending on scheduling.
+// retryPolicy holds the limits above. It is a field so tests can shorten it;
+// the retry arithmetic is tested in fake time (testing/synctest), so the loop
+// uses the real clock throughout.
 type retryPolicy struct {
 	maxAttempts int
 	backoffUnit time.Duration
 	maxWait     time.Duration
 	maxElapsed  time.Duration
-	now         func() time.Time
-	sleep       func(ctx context.Context, d time.Duration) error
-}
-
-func (p retryPolicy) clock() (func() time.Time, func(context.Context, time.Duration) error) {
-	now, sleep := p.now, p.sleep
-	if now == nil {
-		now = time.Now
-	}
-	if sleep == nil {
-		sleep = sleepContext
-	}
-	return now, sleep
 }
 
 // sleepContext waits d, or until ctx is done, whose error it then returns.
@@ -149,8 +137,7 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body in
 	if policy.maxAttempts == 0 {
 		policy = defaultRetryPolicy
 	}
-	now, sleep := policy.clock()
-	start := now()
+	start := time.Now()
 	retryDeadline := start.Add(policy.maxElapsed)
 	if deadline, ok := ctx.Deadline(); ok && deadline.Before(retryDeadline) {
 		retryDeadline = deadline
@@ -205,8 +192,8 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body in
 		if wait > policy.maxWait {
 			return nil, fmt.Errorf("not retrying: the server asked to wait %s, longer than the %s this provider waits: %w", wait, policy.maxWait, lastErr)
 		}
-		if now().Add(wait).After(retryDeadline) {
-			return nil, fmt.Errorf("not retrying: waiting %s would pass the time allowed for this request after %d attempt(s): %w", wait, attempt, lastErr)
+		if !time.Now().Add(wait).Before(retryDeadline) {
+			return nil, fmt.Errorf("not retrying: waiting %s would use up the time allowed for this request after %d attempt(s): %w", wait, attempt, lastErr)
 		}
 
 		tflog.Warn(ctx, "Request failed with retryable error", map[string]interface{}{
@@ -216,7 +203,7 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body in
 			"backoff":      wait.String(),
 		})
 
-		if err := sleep(ctx, wait); err != nil {
+		if err := sleepContext(ctx, wait); err != nil {
 			return nil, fmt.Errorf("context cancelled during retry backoff: %w (previous attempt: %w)", err, lastErr)
 		}
 	}

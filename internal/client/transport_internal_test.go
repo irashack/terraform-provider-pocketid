@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-log/tflogtest"
@@ -609,34 +610,20 @@ func TestWinsockClass(t *testing.T) {
 	}
 }
 
-// fakeClock is a clock that only moves when the retry loop waits or a test
-// server says a request took time, so the retry arithmetic is exact.
-type fakeClock struct {
-	mu sync.Mutex
-	t  time.Time
-}
+// roundTripFunc is an in-memory transport: nothing reaches a network, so a
+// client using it can run entirely in fake time.
+type roundTripFunc func(*http.Request) (*http.Response, error)
 
-func (f *fakeClock) now() time.Time {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.t
-}
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-func (f *fakeClock) advance(d time.Duration) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.t = f.t.Add(d)
-}
-
-func (f *fakeClock) sleep(ctx context.Context, d time.Duration) error {
-	f.advance(d)
-	return ctx.Err()
-}
-
-// The retry budget, checked with a clock that moves only by the waits and
-// by each request's stated duration: exact attempt counts and stop reasons,
-// boundaries included, whatever the machine's load.
-func TestRetryArithmetic(t *testing.T) {
+// The retry budget, checked in fake time: under testing/synctest the waits
+// between attempts, each request's duration and every deadline (the retry
+// deadline, the context's, the HTTP timeout) run on the bubble's clock, and
+// the transport is in memory, so attempt counts, elapsed time and stop
+// reasons are exact, boundaries included, whatever the machine's load. The
+// TestClient_RealNetwork_* tests check the same limits over real
+// connections, with bounds loose enough for a loaded machine.
+func TestRetryArithmeticInFakeTime(t *testing.T) {
 	cases := []struct {
 		name         string
 		status       int
@@ -644,47 +631,70 @@ func TestRetryArithmetic(t *testing.T) {
 		cost         time.Duration // how long each request takes
 		maxAttempts  int
 		budget       time.Duration
-		wantAttempts int
+		ctxTimeout   time.Duration // the caller's own deadline; 0 for none
+		wantAttempts int32
 		wantElapsed  time.Duration
 		wantText     string
+		wantDeadline bool // the error is the deadline itself
 	}{
 		// Waits of 100, 200 and 400ms end at 700ms; the 800ms one would end at 1500ms.
 		{name: "budget stops the fifth", status: 503, maxAttempts: 10, budget: 1200 * time.Millisecond, wantAttempts: 4, wantElapsed: 700 * time.Millisecond, wantText: "not retrying"},
-		{name: "a wait may end exactly at the deadline", status: 503, maxAttempts: 10, budget: 700 * time.Millisecond, wantAttempts: 4, wantElapsed: 700 * time.Millisecond, wantText: "not retrying"},
-		{name: "one millisecond less", status: 503, maxAttempts: 10, budget: 699 * time.Millisecond, wantAttempts: 3, wantElapsed: 300 * time.Millisecond, wantText: "not retrying"},
+		// A wait that would end exactly at the deadline leaves no time for the attempt after it.
+		{name: "a wait may not end at the deadline", status: 503, maxAttempts: 10, budget: 700 * time.Millisecond, wantAttempts: 3, wantElapsed: 300 * time.Millisecond, wantText: "not retrying"},
+		{name: "one millisecond more", status: 503, maxAttempts: 10, budget: 701 * time.Millisecond, wantAttempts: 4, wantElapsed: 700 * time.Millisecond, wantText: "not retrying"},
 		// 300ms per request: 0-300, wait to 400, 400-700, wait to 900, 900-1200; a 400ms wait would end at 1600.
-		{name: "slow requests leave room for fewer", status: 503, cost: 300 * time.Millisecond, maxAttempts: 10, budget: 1200 * time.Millisecond, wantAttempts: 3, wantElapsed: 1200 * time.Millisecond, wantText: "not retrying"},
+		{name: "slow requests leave room for fewer", status: 503, cost: 300 * time.Millisecond, maxAttempts: 10, budget: 1250 * time.Millisecond, wantAttempts: 3, wantElapsed: 1200 * time.Millisecond, wantText: "not retrying"},
+		// The third attempt starts at 900ms and is cut off at the 1100ms deadline, not at 1200ms.
+		{name: "an attempt is cut off at the deadline", status: 503, cost: 300 * time.Millisecond, maxAttempts: 10, budget: 1100 * time.Millisecond, wantAttempts: 3, wantElapsed: 1100 * time.Millisecond, wantText: "timed out", wantDeadline: true},
 		{name: "attempt limit", status: 503, maxAttempts: 4, budget: time.Hour, wantAttempts: 4, wantElapsed: 700 * time.Millisecond, wantText: "after 4 attempts"},
+		// The caller's deadline counts when it is earlier than the budget.
+		{name: "context deadline", status: 503, maxAttempts: 10, budget: time.Hour, ctxTimeout: time.Second, wantAttempts: 4, wantElapsed: 700 * time.Millisecond, wantText: "not retrying"},
 		// Retry-After 2s: attempts at 0, 2s and 4s; the next wait would end at 6s.
 		{name: "server-asked waits", status: 429, retryAfter: "2", maxAttempts: 10, budget: 5 * time.Second, wantAttempts: 3, wantElapsed: 4 * time.Second, wantText: "not retrying"},
+		{name: "server-asked wait ending at the deadline", status: 429, retryAfter: "2", maxAttempts: 10, budget: 4 * time.Second, wantAttempts: 2, wantElapsed: 2 * time.Second, wantText: "not retrying"},
 		{name: "server asks too long", status: 429, retryAfter: "11", maxAttempts: 10, budget: time.Hour, wantAttempts: 1, wantElapsed: 0, wantText: "longer than the 10s"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			clock := &fakeClock{t: time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)}
-			start := clock.now()
-			var attempts atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				attempts.Add(1)
-				clock.advance(tc.cost)
-				if tc.retryAfter != "" {
-					w.Header().Set("Retry-After", tc.retryAfter)
-				}
-				w.WriteHeader(tc.status)
-			}))
-			defer server.Close()
-			c, err := NewClient(server.URL, "test-token", false, 30)
-			require.NoError(t, err)
-			c.retry = retryPolicy{
-				maxAttempts: tc.maxAttempts, backoffUnit: 100 * time.Millisecond, maxWait: 10 * time.Second, maxElapsed: tc.budget,
-				now: clock.now, sleep: clock.sleep,
-			}
+			synctest.Test(t, func(t *testing.T) {
+				c, err := NewClient("http://pocket-id.invalid", "test-token", false, 30)
+				require.NoError(t, err)
+				var attempts atomic.Int32
+				c.httpClient.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					attempts.Add(1)
+					if tc.cost > 0 {
+						timer := time.NewTimer(tc.cost)
+						defer timer.Stop()
+						select {
+						case <-timer.C:
+						case <-r.Context().Done():
+							return nil, r.Context().Err()
+						}
+					}
+					header := http.Header{}
+					if tc.retryAfter != "" {
+						header.Set("Retry-After", tc.retryAfter)
+					}
+					return &http.Response{StatusCode: tc.status, Header: header, Body: http.NoBody, Request: r}, nil
+				})
+				c.retry = retryPolicy{maxAttempts: tc.maxAttempts, backoffUnit: 100 * time.Millisecond, maxWait: 10 * time.Second, maxElapsed: tc.budget}
 
-			_, err = c.doRequest(context.Background(), http.MethodGet, "/api/x", nil)
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), tc.wantText)
-			assert.Equal(t, int32(tc.wantAttempts), attempts.Load())
-			assert.Equal(t, tc.wantElapsed, clock.now().Sub(start))
+				ctx := context.Background()
+				if tc.ctxTimeout > 0 {
+					var cancel context.CancelFunc
+					ctx, cancel = context.WithTimeout(ctx, tc.ctxTimeout)
+					defer cancel()
+				}
+				start := time.Now()
+				_, err = c.doRequest(ctx, http.MethodGet, "/api/x", nil)
+				elapsed := time.Since(start)
+
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantText)
+				assert.Equal(t, tc.wantDeadline, errors.Is(err, context.DeadlineExceeded), "deadline: %v", err)
+				assert.Equal(t, tc.wantAttempts, attempts.Load())
+				assert.Equal(t, tc.wantElapsed, elapsed)
+			})
 		})
 	}
 }
