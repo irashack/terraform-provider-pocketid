@@ -10,10 +10,11 @@
 3. Run the full acceptance suites on every supported server:
    `make test-acc-supported`. It runs `make test-acc-provider` (the provider and
    data-source suites on one fixture) on Pocket ID 2.14.0, 2.15.0, 2.16.0 and
-   2.17.0 in turn. This is the release gate for the full suites: CI runs them only
-   on 2.16.0 and 2.17.0, and the release workflow's `make test-acc-matrix` runs
-   only the client, application-configuration and API-contract subset on all four.
-   Record the pass counts per version and package.
+   2.17.0 in turn. This is the local pre-tag gate for the full suites. The
+   release workflow does not repeat it: its gate is `make test-acc-matrix`, the
+   client, application-configuration and API-contract subset on all four versions,
+   and CI runs the full suites only on 2.16.0 and 2.17.0. Record the pass counts per
+   version and package.
 4. Run the native proofs from TESTING.md with Terraform **and** OpenTofu:
    - `tests/native/lifecycle.py` against a build stamped with the release version,
      in a mirror.
@@ -47,7 +48,8 @@
 The GoReleaser GitHub workflow is for an explicit manual release run from
 `main-maintenance` (the branch the workflow accepts), accepting only an existing
 stable tag on that branch. It validates the tagged source, runs `make check`,
-`make vuln` and the client matrix, and creates a draft. Add the checksum-manifest
+`make vuln` and the `make test-acc-matrix` subset (not the full
+`make test-acc-supported` run of step 3), and creates a draft. Add the checksum-manifest
 digest from the run summary and the validation results to its notes before
 explicitly publishing. Existing released tags must never be moved or rebuilt in
 place. Routine CI runs on branch/PR changes. Automatic development releases,
