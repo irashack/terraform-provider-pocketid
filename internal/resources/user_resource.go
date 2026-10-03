@@ -104,14 +104,20 @@ func (r *userResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 				},
 			},
 			"first_name": schema.StringAttribute{
-				Description: "The first name of the user, at most 50 characters. Omitted means none (an empty name in Pocket ID).",
-				Optional:    true,
-				Validators:  []validator.String{usersGroupsRuneLength{max: 50}},
+				Description: "The first name of the user, at most 50 characters. Omitted means none (an empty name in Pocket ID). " +
+					"Provider 2.4.x recorded \"\" in state for an omitted name: such a user plans one in-place update to null after upgrading (also with -refresh=false), " +
+					"which leaves the name empty in Pocket ID, because that \"\" cannot be told apart from a configured \"\". " +
+					"One that 2.4.x created this way is tainted in state (its create failed) and is replaced once unless it is untainted first.",
+				Optional:   true,
+				Validators: []validator.String{usersGroupsRuneLength{max: 50}},
 			},
 			"last_name": schema.StringAttribute{
-				Description: "The last name of the user, at most 50 characters. Omitted means none (an empty name in Pocket ID).",
-				Optional:    true,
-				Validators:  []validator.String{usersGroupsRuneLength{max: 50}},
+				Description: "The last name of the user, at most 50 characters. Omitted means none (an empty name in Pocket ID). " +
+					"Provider 2.4.x recorded \"\" in state for an omitted name: such a user plans one in-place update to null after upgrading (also with -refresh=false), " +
+					"which leaves the name empty in Pocket ID, because that \"\" cannot be told apart from a configured \"\". " +
+					"One that 2.4.x created this way is tainted in state (its create failed) and is replaced once unless it is untainted first.",
+				Optional:   true,
+				Validators: []validator.String{usersGroupsRuneLength{max: 50}},
 			},
 			"display_name": schema.StringAttribute{
 				Description: "The display name of the user, at most 100 characters. When not set, it is the first and last name joined by a space, which must then fit in 100 characters too.",

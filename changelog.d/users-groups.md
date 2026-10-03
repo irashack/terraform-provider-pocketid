@@ -35,9 +35,21 @@
   claims with `{}` failed with "Provider produced inconsistent result".
 - An omitted `first_name` or `last_name` stays null instead of becoming `""`,
   which made creating a user without them fail with "Provider produced
-  inconsistent result" and then show a change on every plan. A user already
-  in that state shows one last in-place update, which changes nothing in
-  Pocket ID.
+  inconsistent result" and then show a change on every plan.
+  **Upgrade note** for users without `first_name` or `last_name` under 2.4.x,
+  which recorded `""` for them in state:
+  - A user 2.4.x *imported* (or one untainted by hand) plans one in-place
+    update of that attribute from `""` to null after upgrading, also with
+    `-refresh=false`. Applying it changes nothing in Pocket ID (the name stays
+    empty) and keeps the user; later plans are empty. The provider cannot skip
+    it: from state alone, `""` written by 2.4.x for an omitted name cannot be
+    told apart from a configured `first_name = ""`, which must stay `""`.
+  - A user 2.4.x *created* this way is tainted in state (its create failed
+    with "inconsistent result"), so every 2.4.x apply replaced it. The next
+    apply replaces it once more, deleting and recreating the account and its
+    passkeys, and later plans are empty. To keep the account, run
+    `terraform untaint` on it before applying; it then gets the in-place
+    update instead.
 - After writing custom claims, the provider compares what Pocket ID stored with
   what was configured and fails, naming the keys, if they differ (Pocket ID
   stores keys and values in Unicode NFC form).

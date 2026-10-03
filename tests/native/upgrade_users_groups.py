@@ -11,9 +11,14 @@ temporary filesystem mirror under two development version numbers. The old
 build creates groups (with and without custom claims), a user with names,
 groups and claims, a group membership for a user Terraform does not manage,
 and a one-time access token, the way configurations written for it look. The
-new build must then plan no change, apply an unrelated update cleanly, and
-plan empty again. Everything lives in a temporary directory; only the fixture
-is touched.
+new build must then plan no change (with and without a refresh), apply an
+unrelated update cleanly without changing any object's ID, and plan empty
+again. A user without first_name and last_name that the old build imported
+("" in state) shows the documented one in-place normalization update, with and
+without a refresh, keeps its ID through it, and plans empty afterwards; one the
+old build created (its create failed with "inconsistent result" and left it
+tainted) is replaced once and then plans empty. Everything lives in a
+temporary directory; only the fixture is touched.
 """
 import json
 import os
@@ -117,24 +122,76 @@ resource "pocketid_one_time_access_token" "minimal" {
         assert result.returncode in ok, tool + " " + args[0] + " exited " + str(result.returncode)
         return result
 
+    def ids():
+        resources = json.loads(run("show", "-json").stdout)["values"]["root_module"]["resources"]
+        return {r["address"]: r["values"]["id"] for r in resources}
+
+    def noname(version):
+        # A user without first_name and last_name: 2.4.104 recorded "" for
+        # them (and its create failed with "inconsistent result").
+        (work/"main.tf").write_text('terraform {\n required_providers {\n  pocketid = {\n   source  = "' + SOURCE +
+            '"\n   version = "' + version + '"\n  }\n }\n}\nprovider "pocketid" {}\n'
+            'resource "pocketid_user" "noname" {\n username = "upgrade-noname-' + suffix +
+            '"\n email    = "upgrade-noname-' + suffix + '@example.com"\n}\n')
+
     try:
         config(OLD_VERSION)
         run("init", "-input=false")
         run("apply", "-auto-approve", "-input=false")
         run("plan", "-detailed-exitcode", "-input=false")  # the old build plans empty too
+        before = ids()
 
         config(NEW_VERSION)
         run("init", "-upgrade", "-input=false")
         run("plan", "-detailed-exitcode", "-input=false")  # exit 2 would mean a planned change
+        run("plan", "-detailed-exitcode", "-refresh=false", "-input=false")
         config(NEW_VERSION, "Upgrade plain renamed")
         run("apply", "-auto-approve", "-input=false")
         run("plan", "-detailed-exitcode", "-input=false")
+        assert ids() == before, "an object's ID changed across the upgrade"
         user = [r for r in json.loads(run("show", "-json").stdout)["values"]["root_module"]["resources"]
                 if r["address"] == "pocketid_user.full"][0]["values"]
         held = api("GET", "/api/users/" + user["id"])
         assert sorted(g["id"] for g in held["userGroups"]) == sorted(user["groups"]), "groups changed"
         assert {c["key"]: c["value"] for c in held["customClaims"]} == {"level": "senior"}, "claims changed"
         run("destroy", "-auto-approve", "-input=false")
+
+        # Omitted names, imported by 2.4.104: "" in state, a change on every
+        # plan with the old build. The new build plans the documented one
+        # in-place normalization update, with and without a refresh, keeps the
+        # user's ID through it, and plans empty afterwards.
+        noname_id = api("POST", "/api/users", {"username": "upgrade-noname-" + suffix, "email": "upgrade-noname-" + suffix + "@example.com"})["id"]
+        noname(OLD_VERSION)
+        run("init", "-upgrade", "-input=false")
+        run("import", "-input=false", "pocketid_user.noname", noname_id)
+        run("plan", "-detailed-exitcode", "-input=false", ok=(2,))  # 2.4.104 never converges here
+        noname(NEW_VERSION)
+        run("init", "-upgrade", "-input=false")
+        run("plan", "-detailed-exitcode", "-refresh=false", "-input=false", ok=(2,))
+        run("plan", "-detailed-exitcode", "-input=false", ok=(2,))
+        run("apply", "-auto-approve", "-input=false")
+        assert ids()["pocketid_user.noname"] == noname_id, "the normalization update replaced the user"
+        run("plan", "-detailed-exitcode", "-input=false")
+        run("plan", "-detailed-exitcode", "-refresh=false", "-input=false")
+        run("destroy", "-auto-approve", "-input=false")
+
+        # Omitted names, created by 2.4.104: its create fails with
+        # "inconsistent result" and leaves the user tainted, so every apply
+        # replaces it. The new build replaces it once more, then plans empty.
+        noname(OLD_VERSION)
+        run("init", "-upgrade", "-input=false")
+        old_apply = run("apply", "-auto-approve", "-input=false", ok=(0, 1))
+        assert old_apply.returncode == 1 and b"inconsistent result" in old_apply.stderr, "2.4.104 no longer fails this create"
+        assert json.loads(run("state", "pull").stdout)["resources"][0]["instances"][0].get("status") == "tainted", "the failed create is not tainted"
+        noname(NEW_VERSION)
+        run("init", "-upgrade", "-input=false")
+        run("plan", "-detailed-exitcode", "-input=false", ok=(2,))
+        run("apply", "-auto-approve", "-input=false")
+        run("plan", "-detailed-exitcode", "-input=false")
+        run("plan", "-detailed-exitcode", "-refresh=false", "-input=false")
+        run("destroy", "-auto-approve", "-input=false")
     finally:
         api("DELETE", "/api/users/" + outside["id"])
-    print("PASS native " + tool + " users/groups upgrade: empty plan after switching builds, unrelated update applied, empty plan again")
+    print("PASS native " + tool + " users/groups upgrade: empty plan (refreshed and not) after switching builds, IDs kept through an unrelated update, "
+          "empty plan again; omitted names: an imported user gets one in-place normalization update (refreshed and not) keeping its ID, "
+          "a user whose 2.4.104 create failed (tainted) is replaced once; then empty plans")
