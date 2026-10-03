@@ -505,12 +505,14 @@ func (e *ResponseBodyError) Unwrap() []error {
 
 // readBounded reads at most limit bytes of the response body. A larger body
 // (by its Content-Length, or by what arrives) or an interrupted read is a
-// ResponseBodyError that does not include any of it.
+// ResponseBodyError that does not include any of it. Nor does it name the
+// length the server declared: that number is the server's, and a static API
+// key can be all digits. Only the limit, this client's own, is named.
 func readBounded(resp *http.Response, limit int64) ([]byte, *ResponseBodyError) {
 	if resp.ContentLength > limit {
 		return nil, &ResponseBodyError{
 			StatusCode: resp.StatusCode, TooLarge: true, causes: []error{errResponseTooLarge},
-			Reason: fmt.Sprintf("%s (%d bytes declared, limit %d); body not read", errResponseTooLarge, resp.ContentLength, limit),
+			Reason: fmt.Sprintf("%s (declared longer than the limit of %d bytes); body not read", errResponseTooLarge, limit),
 		}
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))

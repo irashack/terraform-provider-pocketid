@@ -209,3 +209,58 @@ func testNothingServerControlledLogged(t *testing.T, key, token string, respond 
 	assert.NotContains(t, strings.ToLower(logs.String()), strings.ToLower(key))
 	assert.NotContains(t, standard.String(), key)
 }
+
+// A static API key can be all digits, so a server can reflect it as a
+// Content-Length that Go parses as a valid (and oversized) length. The
+// size error names only this client's limit, never the declared length,
+// on the binary path and the JSON path alike; a body that turns out too
+// large as it streams in is refused without quoting any of it either.
+func TestOversizedBodyErrorsQuoteNoServerNumber(t *testing.T) {
+	const key = "4815162342108151" // a 16-digit numeric static key
+	declared := func(k string) string {
+		return "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: " + k + "\r\n\r\n" + k
+	}
+	streamed := func(k string) string { // no length: the body ends when the connection closes
+		return "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nConnection: close\r\n\r\n" + strings.Repeat(k, 4)
+	}
+	calls := map[string]struct {
+		respond func(string) string
+		call    func(c *Client, ctx context.Context) error
+	}{
+		"declared, binary read": {declared, func(c *Client, ctx context.Context) error {
+			_, _, err := c.getBinaryUncached(ctx, "/api/x", nil, 16)
+			return err
+		}},
+		"declared, JSON read": {declared, func(c *Client, ctx context.Context) error {
+			_, err := c.doRequest(ctx, http.MethodGet, "/api/x", nil)
+			return err
+		}},
+		"declared, JSON mutation": {declared, func(c *Client, ctx context.Context) error {
+			_, err := c.doRequest(ctx, http.MethodPut, "/api/x", map[string]string{})
+			return err
+		}},
+		"streamed, binary read": {streamed, func(c *Client, ctx context.Context) error {
+			_, _, err := c.getBinaryUncached(ctx, "/api/x", nil, 16)
+			return err
+		}},
+	}
+	for name, tc := range calls {
+		t.Run(name, func(t *testing.T) {
+			standard := captureStandardLog(t)
+			url, _ := rawServer(t, tc.respond)
+			var logs bytes.Buffer
+			ctx := tflogtest.RootLogger(context.Background(), &logs)
+			c, err := NewClient(url, key, false, 5)
+			require.NoError(t, err)
+
+			err = tc.call(c, ctx)
+			var bodyErr *ResponseBodyError
+			require.ErrorAs(t, err, &bodyErr)
+			assert.True(t, bodyErr.TooLarge)
+			assert.ErrorIs(t, err, errResponseTooLarge)
+			walkErrorTree(err, func(e error) { assert.NotContains(t, e.Error(), key) })
+			assert.NotContains(t, logs.String(), key)
+			assert.NotContains(t, standard.String(), key)
+		})
+	}
+}
