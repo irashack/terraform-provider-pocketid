@@ -122,9 +122,17 @@ resource "pocketid_one_time_access_token" "minimal" {
         assert result.returncode in ok, tool + " " + args[0] + " exited " + str(result.returncode)
         return result
 
-    def ids():
+    def values():
         resources = json.loads(run("show", "-json").stdout)["values"]["root_module"]["resources"]
-        return {r["address"]: r["values"]["id"] for r in resources}
+        return {r["address"]: r["values"] for r in resources}
+
+    def ids():
+        return {address: v["id"] for address, v in values().items()}
+
+    def planned(*args):
+        """The planned resource changes (a saved plan, shown as JSON)."""
+        run("plan", "-input=false", "-out=planned.tfplan", *args)
+        return json.loads(run("show", "-json", "planned.tfplan").stdout).get("resource_changes", [])
 
     def noname(version):
         # A user without first_name and last_name: 2.4.104 recorded "" for
@@ -149,6 +157,14 @@ resource "pocketid_one_time_access_token" "minimal" {
         run("apply", "-auto-approve", "-input=false")
         run("plan", "-detailed-exitcode", "-input=false")
         assert ids() == before, "an object's ID changed across the upgrade"
+        # The attribute the new build added to pocketid_user (an unresolved
+        # creation, see its documentation) is null in state written by
+        # 2.4.104: the empty plans
+        # above decoded that state, and the state this apply rewrote keeps it
+        # null.
+        for address in ("pocketid_user.full", "pocketid_user.minimal"):
+            assert "unresolved_creation" in values()[address] and values()[address]["unresolved_creation"] is None, \
+                address + ": unresolved_creation is not null after the upgrade"
         user = [r for r in json.loads(run("show", "-json").stdout)["values"]["root_module"]["resources"]
                 if r["address"] == "pocketid_user.full"][0]["values"]
         held = api("GET", "/api/users/" + user["id"])
@@ -169,6 +185,12 @@ resource "pocketid_one_time_access_token" "minimal" {
         run("init", "-upgrade", "-input=false")
         run("plan", "-detailed-exitcode", "-refresh=false", "-input=false", ok=(2,))
         run("plan", "-detailed-exitcode", "-input=false", ok=(2,))
+        # The one update must not also plan the new attribute as "known after
+        # apply": it stays null.
+        changes = planned("-refresh=false")
+        assert [c["change"]["actions"] for c in changes] == [["update"]], "the normalization is not one in-place update"
+        assert "unresolved_creation" not in (changes[0]["change"].get("after_unknown") or {}), "the update plans unresolved_creation as unknown"
+        assert changes[0]["change"]["after"]["unresolved_creation"] is None
         run("apply", "-auto-approve", "-input=false")
         assert ids()["pocketid_user.noname"] == noname_id, "the normalization update replaced the user"
         run("plan", "-detailed-exitcode", "-input=false")

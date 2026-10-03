@@ -108,15 +108,22 @@ func usersGroupsErrors(diags []*tfprotov6.Diagnostic) string {
 	return strings.Join(out, "\n")
 }
 
+// configOf is the configuration behind a planned model: Computed attributes
+// the configuration does not set are null in it.
+func configOf(planned *userResourceModel) *userResourceModel {
+	if planned == nil {
+		return nil
+	}
+	c := *planned
+	c.DisplayName = types.StringNull()
+	c.UnresolvedCreation = types.BoolNull()
+	return &c
+}
+
 // apply sends ApplyResourceChange; a nil planned model is a delete.
 func (h *usersGroupsUserHarness) apply(prior, planned *userResourceModel, private []byte) (*userResourceModel, []byte, string) {
 	h.t.Helper()
-	config := planned
-	if planned != nil {
-		c := *planned
-		c.DisplayName = types.StringNull()
-		config = &c
-	}
+	config := configOf(planned)
 	resp, err := h.server.ApplyResourceChange(context.Background(), &tfprotov6.ApplyResourceChangeRequest{
 		TypeName: "pocketid_user", PriorState: h.dynamic(prior), PlannedState: h.dynamic(planned),
 		Config: h.dynamic(config), PlannedPrivate: private,
@@ -146,18 +153,40 @@ func (h *usersGroupsUserHarness) read(current *userResourceModel, private []byte
 	return h.decode(resp.NewState), resp.Private, usersGroupsErrors(resp.Diagnostics)
 }
 
-func (h *usersGroupsUserHarness) importID(id string) []byte {
+// planFromNull sends PlanResourceChange for a resource that has no prior
+// state, which is how Terraform plans a tainted resource's replacement (and a
+// new resource): null prior state, no prior private state. It returns the
+// planned state and the planned private state the engine would carry into the
+// apply.
+func (h *usersGroupsUserHarness) planFromNull(config *userResourceModel) (*userResourceModel, []byte, string) {
+	h.t.Helper()
+	resp, err := h.server.PlanResourceChange(context.Background(), &tfprotov6.PlanResourceChangeRequest{
+		TypeName: "pocketid_user", PriorState: h.dynamic(nil), ProposedNewState: h.dynamic(configOf(config)), Config: h.dynamic(configOf(config)),
+	})
+	require.NoError(h.t, err)
+	return h.decode(resp.PlannedState), resp.PlannedPrivate, usersGroupsErrors(resp.Diagnostics)
+}
+
+// importID imports the user and refreshes it, as terraform import does, and
+// returns the resulting state and private state.
+func (h *usersGroupsUserHarness) importID(id string) (*userResourceModel, []byte) {
 	h.t.Helper()
 	resp, err := h.server.ImportResourceState(context.Background(), &tfprotov6.ImportResourceStateRequest{TypeName: "pocketid_user", ID: id})
 	require.NoError(h.t, err)
 	require.Empty(h.t, usersGroupsErrors(resp.Diagnostics))
 	require.Len(h.t, resp.ImportedResources, 1)
-	return resp.ImportedResources[0].Private
+	read, err := h.server.ReadResource(context.Background(), &tfprotov6.ReadResourceRequest{
+		TypeName: "pocketid_user", CurrentState: resp.ImportedResources[0].State, Private: resp.ImportedResources[0].Private,
+	})
+	require.NoError(h.t, err)
+	require.Empty(h.t, usersGroupsErrors(read.Diagnostics))
+	return h.decode(read.NewState), read.Private
 }
 
 func fixedIDPlanModel() *userResourceModel {
 	m := defaultsPlanModel(types.SetNull(types.StringType), types.MapNull(types.StringType))
 	m.ID = types.StringValue(fixedUserID)
+	m.UnresolvedCreation = types.BoolUnknown()
 	return &m
 }
 
@@ -175,12 +204,14 @@ func TestUserUnresolvedCreationIsNeverDeleted(t *testing.T) {
 	require.Contains(t, errs, "User creation result uncertain")
 	require.NotNil(t, state, "the ID is kept in state")
 	require.Equal(t, fixedUserID, state.ID.ValueString())
+	require.True(t, state.UnresolvedCreation.ValueBool(), "state records the condition")
 	require.Contains(t, string(private), userUnresolvedCreationKey)
 	require.Equal(t, 1, s.posts, "the create is not repeated")
 
-	// A refresh keeps the marker while the user exists.
+	// A refresh keeps both records while the user exists.
 	state, private, errs = h.read(state, private)
 	require.Empty(t, errs)
+	require.True(t, state.UnresolvedCreation.ValueBool())
 	require.Contains(t, string(private), userUnresolvedCreationKey)
 
 	require.Contains(t, h.plan(state, nil, private), "User creation unresolved", "a destroy is refused at plan time")
@@ -196,13 +227,90 @@ func TestUserUnresolvedCreationIsNeverDeleted(t *testing.T) {
 	require.Zero(t, s.deletes, "no DELETE is ever sent")
 	require.Zero(t, s.puts, "no update is ever sent")
 
-	// Import starts with fresh private state; the imported user is then
-	// managed normally.
-	imported := h.importID(fixedUserID)
-	require.NotContains(t, string(imported), userUnresolvedCreationKey)
-	_, _, errs = h.apply(state, nil, imported)
+	// Import starts with fresh state; the imported user is then managed
+	// normally.
+	imported, importedPrivate := h.importID(fixedUserID)
+	require.NotNil(t, imported)
+	require.True(t, imported.UnresolvedCreation.IsNull(), "importing clears the condition")
+	require.NotContains(t, string(importedPrivate), userUnresolvedCreationKey)
+	_, _, errs = h.apply(imported, nil, importedPrivate)
 	require.Empty(t, errs)
 	require.Equal(t, 1, s.deletes)
+}
+
+// Terraform taints a resource whose create returned an error, and plans the
+// tainted resource's replacement from a null prior state with no prior private
+// state: the plan cannot see the condition, and the destroy half of the
+// replacement is applied with the replacement plan's private state, which has
+// no marker, but with the tainted object's own state. The condition must
+// still stop the delete, or the provider could delete a user it never owned.
+func TestUserUnresolvedCreationTaintedReplacementIsRefused(t *testing.T) {
+	s := &fixedIDServer{version: "2.17.0", createStatus: http.StatusBadGateway, afterPostExisting: true}
+	h := newUsersGroupsUserHarness(t, s.start(t))
+	config := fixedIDPlanModel()
+
+	// The apply that creates the resource: the create is uncertain, the state
+	// is returned with the error, and Terraform taints it.
+	planned, plannedPrivate, errs := h.planFromNull(config)
+	require.Empty(t, errs)
+	tainted, _, errs := h.apply(nil, planned, plannedPrivate)
+	require.Contains(t, errs, "User creation result uncertain")
+	require.NotNil(t, tainted)
+
+	// The next run plans the replacement from nothing. Nothing in the plan
+	// carries the marker.
+	replacement, replacementPrivate, errs := h.planFromNull(config)
+	require.Empty(t, errs, "the plan cannot see the tainted state")
+	require.NotContains(t, string(replacementPrivate), userUnresolvedCreationKey)
+
+	// The destroy half runs first, with the tainted state and the
+	// replacement's private state.
+	_, _, errs = h.apply(tainted, nil, replacementPrivate)
+	require.Contains(t, errs, "User creation unresolved", "the tainted state is what stops the delete")
+	require.Zero(t, s.deletes, "no DELETE is sent for a user this apply may not own")
+	require.NotNil(t, replacement)
+	require.Equal(t, 1, s.posts, "the replacement's create never runs")
+}
+
+// Either record alone is enough: the state attribute (what a tainted
+// replacement carries) and the private marker (what an untainted state may
+// carry).
+func TestUserUnresolvedCreationEitherRecordRefuses(t *testing.T) {
+	for name, keep := range map[string]func(state *userResourceModel, private []byte) (*userResourceModel, []byte){
+		"state_attribute_only": func(state *userResourceModel, _ []byte) (*userResourceModel, []byte) { return state, nil },
+		"private_marker_only": func(state *userResourceModel, private []byte) (*userResourceModel, []byte) {
+			c := *state
+			c.UnresolvedCreation = types.BoolNull()
+			return &c, private
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := &fixedIDServer{version: "2.17.0", createStatus: http.StatusBadGateway, afterPostExisting: true}
+			h := newUsersGroupsUserHarness(t, s.start(t))
+			created, createdPrivate, errs := h.apply(nil, fixedIDPlanModel(), nil)
+			require.Contains(t, errs, "User creation result uncertain")
+			state, private := keep(created, createdPrivate)
+
+			_, _, errs = h.apply(state, nil, private)
+			require.Contains(t, errs, "User creation unresolved", "delete")
+			changed := *state
+			changed.IsAdmin = types.BoolValue(true)
+			_, _, errs = h.apply(state, &changed, private)
+			require.Contains(t, errs, "User creation unresolved", "update")
+			require.Zero(t, s.deletes)
+			require.Zero(t, s.puts)
+		})
+	}
+	t.Run("neither_record_deletes", func(t *testing.T) {
+		s := &fixedIDServer{version: "2.17.0", createStatus: http.StatusBadGateway, afterPostExisting: true}
+		h := newUsersGroupsUserHarness(t, s.start(t))
+		created, _, _ := h.apply(nil, fixedIDPlanModel(), nil)
+		state := *created
+		state.UnresolvedCreation = types.BoolNull()
+		_, _, errs := h.apply(&state, nil, nil)
+		require.Empty(t, errs)
+		require.Equal(t, 1, s.deletes)
+	})
 }
 
 // When whether a user with the chosen ID exists cannot be confirmed after an
@@ -214,6 +322,7 @@ func TestUserUnresolvedCreationUnconfirmedRead(t *testing.T) {
 	require.Contains(t, errs, "could not be confirmed")
 	require.NotNil(t, state)
 	require.Equal(t, fixedUserID, state.ID.ValueString())
+	require.True(t, state.UnresolvedCreation.ValueBool())
 	require.Contains(t, string(private), userUnresolvedCreationKey)
 	_, _, errs = h.apply(state, nil, private)
 	require.Contains(t, errs, "User creation unresolved")
@@ -230,6 +339,7 @@ func TestUserUnresolvedCreationReadBeforeCommit(t *testing.T) {
 	state, private, errs := h.apply(nil, fixedIDPlanModel(), nil)
 	require.Contains(t, errs, "found no user with this ID yet")
 	require.NotNil(t, state, "the ID is kept in state")
+	require.True(t, state.UnresolvedCreation.ValueBool())
 	require.Contains(t, string(private), userUnresolvedCreationKey)
 	require.Equal(t, 2, s.gets, "the preflight and the recovery read both found no user")
 
@@ -240,6 +350,7 @@ func TestUserUnresolvedCreationReadBeforeCommit(t *testing.T) {
 	state, private, errs = h.read(state, private)
 	require.Empty(t, errs)
 	require.NotNil(t, state)
+	require.True(t, state.UnresolvedCreation.ValueBool())
 	require.Contains(t, string(private), userUnresolvedCreationKey)
 	_, _, errs = h.apply(state, nil, private)
 	require.Contains(t, errs, "User creation unresolved")

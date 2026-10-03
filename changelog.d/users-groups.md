@@ -88,9 +88,14 @@
   answer, the ID is kept in state as an unresolved creation: a user found under
   that ID may be someone else's (created between the provider's check and its
   create). Until it is resolved, the provider refuses to change, delete or
-  replace that user, at plan time and at apply time. Check the user, then run
-  `terraform state rm` on the resource and either `terraform import` it with
-  that ID (if it is the intended user) or choose another `id`.
+  replace that user, at plan time and at apply time, and Terraform's planned
+  replacement of the tainted resource fails at its destroy step instead of
+  deleting the user. The condition is the new computed attribute
+  `unresolved_creation` (true then, null for every other user, including every
+  user in state from an earlier provider version, which plans no change). Check
+  the user, then run `terraform state rm` on the resource and either
+  `terraform import` it with that ID (if it is the intended user; importing
+  clears the condition) or choose another `id`.
 - `pocketid_group_membership`: when adding the user was accepted, or may have
   been, but the result cannot be confirmed (an unreadable response and a
   failed check, a server error or a lost connection), the membership is now

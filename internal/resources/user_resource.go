@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -57,6 +58,9 @@ type userResourceModel struct {
 	Disabled      types.Bool   `tfsdk:"disabled"`
 	Groups        types.Set    `tfsdk:"groups"`
 	CustomClaims  types.Map    `tfsdk:"custom_claims"`
+	// UnresolvedCreation is true while a create with a chosen ID had an
+	// unknown outcome (see userUnresolvedCreationKey), and null otherwise.
+	UnresolvedCreation types.Bool `tfsdk:"unresolved_creation"`
 }
 
 // Metadata returns the resource type name.
@@ -77,7 +81,7 @@ func (r *userResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 			"id": schema.StringAttribute{
 				Description: "The ID of the user, a lowercase UUID. Pocket ID generates it unless it is set here, which needs Pocket ID 2.12.0 or later. " +
 					"It cannot change once the user exists: a different value is a plan-time error, never a replacement, because replacing a user would delete their passkeys. " +
-					"If a create with a chosen id ends without a definite answer, the ID is kept in state as an unresolved creation, because the user under that ID may be someone else's: the provider then refuses to change, delete or replace it until it is imported (after `terraform state rm`) or removed from state.",
+					"If a create with a chosen id ends without a definite answer, the ID is kept in state as an unresolved creation, because the user under that ID may be someone else's: the provider then refuses to change, delete or replace it until it is imported (after `terraform state rm`) or removed from state; `unresolved_creation` shows that condition.",
 				Optional: true,
 				Computed: true,
 				Validators: []validator.String{
@@ -161,6 +165,14 @@ func (r *userResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 				ElementType:         types.StringType,
 				Validators:          customClaimsValidators(),
 			},
+			"unresolved_creation": schema.BoolAttribute{
+				Description:         userUnresolvedCreationDescription,
+				MarkdownDescription: userUnresolvedCreationDescription,
+				Computed:            true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
+			},
 		},
 	}
 }
@@ -192,6 +204,8 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	// A computed value must be known after the apply, whichever way it ends.
+	plan.UnresolvedCreation = types.BoolNull()
 
 	// Convert groups and claims before anything is created, so a conversion
 	// error cannot leave a new user behind.
@@ -489,9 +503,10 @@ func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		updateReq.Locale = &locale
 	}
 
-	if refuseUnresolvedUser(ctx, req.Private, state.ID.ValueString(), "change", &resp.Diagnostics) {
+	if refuseUnresolvedUser(ctx, req.Private, state.UnresolvedCreation, state.ID.ValueString(), "change", &resp.Diagnostics) {
 		return
 	}
+	plan.UnresolvedCreation = state.UnresolvedCreation
 
 	// The plan modifier refuses a changed id at plan time; one that was
 	// unknown then is refused here, before anything is written.
@@ -639,7 +654,7 @@ func (r *userResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 		return
 	}
 
-	if refuseUnresolvedUser(ctx, req.Private, state.ID.ValueString(), "delete or replace", &resp.Diagnostics) {
+	if refuseUnresolvedUser(ctx, req.Private, state.UnresolvedCreation, state.ID.ValueString(), "delete or replace", &resp.Diagnostics) {
 		return
 	}
 
@@ -728,6 +743,7 @@ func (r *userResource) uncertainFixedIDCreate(ctx context.Context, plan *userRes
 	if plan.DisplayName.IsUnknown() {
 		plan.DisplayName = types.StringValue(displayName)
 	}
+	plan.UnresolvedCreation = types.BoolValue(true)
 	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
 	resp.Diagnostics.Append(resp.Private.SetKey(ctx, userUnresolvedCreationKey, userUnresolvedCreationValue)...)
 	resp.Diagnostics.AddError("User creation result uncertain",
