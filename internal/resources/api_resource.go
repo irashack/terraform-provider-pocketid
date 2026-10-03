@@ -144,13 +144,22 @@ func (r *apiResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *
 				Optional: true,
 				Computed: true,
 				Default:  mapdefault.StaticValue(types.MapValueMust(types.ObjectType{AttrTypes: apiPermissionAttrTypes}, map[string]attr.Value{})),
+				// The keys are chosen in the configuration, so the framework's
+				// own checks of the nested attributes (a required one left
+				// out, a computed one set) would name the key in their path
+				// and message. None of the nested attributes is therefore
+				// Required or read-only; these validators enforce both rules
+				// on the map as a whole, naming no key.
 				Validators: []validator.Map{
 					mapvalidator.KeysAre(apiPermissionKeyValidator{}),
+					apiPermissionsNameRequired{},
+					apiPermissionsIDNotConfigured{},
 				},
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
 						"id": schema.StringAttribute{
-							Description: "The permission's ID. It stays the same while the key does.",
+							Description: "The permission's ID, assigned by Pocket ID; it cannot be set. It stays the same while the key does.",
+							Optional:    true,
 							Computed:    true,
 							// A key new to this API has no ID in state (null); the
 							// plain UseStateForUnknown would plan that null, and
@@ -161,8 +170,8 @@ func (r *apiResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *
 							},
 						},
 						"name": schema.StringAttribute{
-							Description: "The permission's display name, shown on the consent screen, 1 to 50 characters.",
-							Required:    true,
+							Description: "The permission's display name, shown on the consent screen, 1 to 50 characters. Required for every permission.",
+							Optional:    true,
 							Validators: []validator.String{
 								apiRuneLengthValidator{min: 1, max: client.APIPermissionNameMaxLength},
 							},

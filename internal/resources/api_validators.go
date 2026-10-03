@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"unicode/utf8"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
 )
@@ -151,4 +153,65 @@ func (v apiIdentifierValidator) ValidateString(_ context.Context, req validator.
 	if err := v.check(req.ConfigValue.ValueString()); err != nil {
 		resp.Diagnostics.AddAttributeError(apiRootPath(req.Path), "Invalid identifier", err.Error())
 	}
+}
+
+// apiPermissionsNameRequired requires a name in every permission of the
+// map. It stands in for Required on the nested attribute, whose framework
+// check would name the configured key.
+type apiPermissionsNameRequired struct{}
+
+func (apiPermissionsNameRequired) Description(context.Context) string {
+	return "requires name in every permission"
+}
+
+func (v apiPermissionsNameRequired) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (apiPermissionsNameRequired) ValidateMap(_ context.Context, req validator.MapRequest, resp *validator.MapResponse) {
+	for _, element := range apiPermissionObjects(req.ConfigValue) {
+		if name, ok := element["name"]; ok && name.IsNull() {
+			resp.Diagnostics.AddAttributeError(req.Path, "Missing permission name", "Every permission in "+req.Path.String()+" requires a name.")
+			return
+		}
+	}
+}
+
+// apiPermissionsIDNotConfigured refuses a configured permission ID, which
+// Pocket ID assigns. It stands in for the nested attribute being read-only,
+// whose framework check would name the configured key.
+type apiPermissionsIDNotConfigured struct{}
+
+func (apiPermissionsIDNotConfigured) Description(context.Context) string {
+	return "takes no id in a permission: Pocket ID assigns it"
+}
+
+func (v apiPermissionsIDNotConfigured) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (apiPermissionsIDNotConfigured) ValidateMap(_ context.Context, req validator.MapRequest, resp *validator.MapResponse) {
+	for _, element := range apiPermissionObjects(req.ConfigValue) {
+		if id, ok := element["id"]; ok && !id.IsNull() {
+			resp.Diagnostics.AddAttributeError(req.Path, "Permission ID set", "A permission in "+req.Path.String()+" sets id, which Pocket ID assigns.")
+			return
+		}
+	}
+}
+
+// apiPermissionObjects returns the attributes of every known permission in
+// a configured map; nothing for a null or unknown map.
+func apiPermissionObjects(m types.Map) []map[string]attr.Value {
+	if m.IsNull() || m.IsUnknown() {
+		return nil
+	}
+	var out []map[string]attr.Value
+	for _, element := range m.Elements() {
+		object, ok := element.(types.Object)
+		if !ok || object.IsNull() || object.IsUnknown() {
+			continue
+		}
+		out = append(out, object.Attributes())
+	}
+	return out
 }

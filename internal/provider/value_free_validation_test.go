@@ -179,3 +179,73 @@ func valueFreeObject(typ tftypes.Object, set map[string]tftypes.Value) tftypes.V
 	}
 	return tftypes.NewValue(typ, values)
 }
+
+// A map of nested objects keyed in the configuration never makes the
+// framework name a key: with a valid key that carries the synthetic key, a
+// nested attribute the rules require left out, or one Pocket ID assigns set,
+// is refused, and no diagnostic shows the key in its summary, its detail or
+// its attribute path.
+func TestValidationOfKeyedNestedObjectsNeverShowsTheKey(t *testing.T) {
+	ctx := context.Background()
+	server, err := providerserver.NewProtocol6WithError(pocketidprovider.New("test")())()
+	require.NoError(t, err)
+	schemas, err := server.GetProviderSchema(ctx, &tfprotov6.GetProviderSchemaRequest{})
+	require.NoError(t, err)
+
+	checked := 0
+	for typeName, s := range schemas.ResourceSchemas {
+		objectType := s.ValueType().(tftypes.Object)
+		for _, attribute := range s.Block.Attributes {
+			if attribute.NestedType == nil || attribute.NestedType.Nesting != tfprotov6.SchemaObjectNestingModeMap || !(attribute.Optional || attribute.Required) {
+				continue
+			}
+			mapType := objectType.AttributeTypes[attribute.Name].(tftypes.Map)
+			elementType := mapType.ElementType.(tftypes.Object)
+			config := func(set map[string]tftypes.Value) *tfprotov6.DynamicValue {
+				element := valueFreeObject(elementType, set)
+				value := tftypes.NewValue(mapType, map[string]tftypes.Value{valueFreeKey: element})
+				dynamic, err := tfprotov6.NewDynamicValue(objectType, valueFreeObject(objectType, map[string]tftypes.Value{attribute.Name: value}))
+				require.NoError(t, err)
+				return &dynamic
+			}
+			validName := map[string]tftypes.Value{}
+			for _, nested := range attribute.NestedType.Attributes {
+				if nested.Name == "name" {
+					validName["name"] = tftypes.NewValue(tftypes.String, "Read")
+				}
+			}
+			cases := map[string]map[string]tftypes.Value{"every nested attribute left out": {}}
+			for _, nested := range attribute.NestedType.Attributes {
+				if !elementType.AttributeTypes[nested.Name].Is(tftypes.String) || !nested.Computed {
+					continue
+				}
+				set := map[string]tftypes.Value{nested.Name: tftypes.NewValue(tftypes.String, "assigned")}
+				for name, value := range validName {
+					set[name] = value
+				}
+				cases["computed "+nested.Name+" set"] = set
+			}
+			for name, set := range cases {
+				what := typeName + "." + attribute.Name + ": " + name
+				t.Run(what, func(t *testing.T) {
+					resp, err := server.ValidateResourceConfig(ctx, &tfprotov6.ValidateResourceConfigRequest{TypeName: typeName, Config: config(set)})
+					require.NoError(t, err)
+					refused := false
+					for _, d := range resp.Diagnostics {
+						text := d.Summary + "\n" + d.Detail
+						if d.Attribute != nil {
+							text += "\n" + d.Attribute.String()
+						}
+						assert.NotContains(t, text, valueFreeKey)
+						if d.Severity == tfprotov6.DiagnosticSeverityError && d.Attribute != nil && strings.Contains(d.Attribute.String(), attribute.Name) {
+							refused = true
+						}
+					}
+					assert.True(t, refused, "the nested object is refused on %s", attribute.Name)
+				})
+				checked++
+			}
+		}
+	}
+	assert.GreaterOrEqual(t, checked, 2, "pocketid_api.permissions: a missing name and a set id")
+}

@@ -86,18 +86,12 @@ resource "pocketid_api" "catalog" {
 <a id="nestedatt--permissions"></a>
 ### Nested Schema for `permissions`
 
-Required:
-
-- `name` (String) The permission's display name, shown on the consent screen, 1 to 50 characters.
-
 Optional:
 
 - `allowed_for_cimd_clients` (Boolean) Whether clients registered through a Client ID Metadata Document may request this permission when `allow_cimd_clients` is set. Defaults to `false`.
 - `description` (String) A description of the permission, at most 200 characters.
-
-Read-Only:
-
-- `id` (String) The permission's ID. It stays the same while the key does.
+- `id` (String) The permission's ID, assigned by Pocket ID; it cannot be set. It stays the same while the key does.
+- `name` (String) The permission's display name, shown on the consent screen, 1 to 50 characters. Required for every permission.
 
 ## Import
 
