@@ -71,10 +71,11 @@
   if it holds the requested members that is recorded, and otherwise see
   `unresolved_user_ids` below. It also refuses a group record that lacks its
   users instead of reading it as an empty group. It holds a provider-wide lock
-  around each write; `pocketid_group_membership` and `pocketid_user` are to take
-  the same lock once their changes are integrated, and until then they do not
-  wait for it. The lock coordinates one provider process only, not another
-  Terraform run or anything outside Terraform.
+  around each read, write and verification, and `pocketid_group_membership`
+  and `pocketid_user` take the same lock around theirs, so within one apply
+  the three never overwrite each other's membership changes. The lock
+  coordinates one provider process only, not another Terraform run or
+  anything outside Terraform.
 - `pocketid_user_profile_picture` reads the stored picture past any cache
   between the provider and Pocket ID, so its recorded digest and its drift
   checks describe the picture the server holds now. Destroy restores the default

@@ -25,9 +25,8 @@ var membershipWriteMu sync.Mutex
 // group would not exclude a user-side writer from a group-side one.
 //
 // The lock coordinates one provider process, and only the resources that take
-// it: pocketid_group_members does; pocketid_group_membership and pocketid_user
-// are to, once their own changes are integrated. It does not reach another
-// process. A change made by the Pocket ID admin interface, another Terraform
+// it: pocketid_group_members, pocketid_group_membership and pocketid_user all
+// do, none of them twice. It does not reach another process. A change made by the Pocket ID admin interface, another Terraform
 // run or an onboarding service between this provider's read and its write is
 // still replaced by the write, whether it added a member (the write removes
 // it) or removed one (the write puts it back); Pocket ID has no conditional

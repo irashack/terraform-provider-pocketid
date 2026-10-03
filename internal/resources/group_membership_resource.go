@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -18,45 +17,6 @@ import (
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
 )
-
-// groupMembershipLocks serializes Create and Delete for every
-// pocketid_group_membership resource that targets the same user ID.
-//
-// Pocket-ID has no add/remove-one-member endpoint: Create and Delete both do
-// a read-modify-write against PUT /api/users/{id}/user-groups (see
-// Client.AddUserToGroup and Client.RemoveUserFromGroup). Terraform applies
-// resources concurrently within one apply (parallelism defaults to 10), and
-// the framework does not serialize calls across different resource
-// instances or even guarantee the same Go value handles them. Two
-// unsynchronized read-modify-write cycles for the same user - for example,
-// adding that user to five groups in one apply - race: the second PUT can be
-// built from a snapshot taken before the first PUT lands, and silently drops
-// the first addition. This is exactly the intended use (one user added to
-// many groups in a single apply), so it is serialized here rather than left
-// as a documented limitation.
-//
-// The map is keyed by user ID and grows for the life of the provider
-// process; entries are never removed. A provider process is short-lived
-// (one plan or apply), and the number of distinct users touched in a run is
-// bounded by the configuration, so this is not considered a practical leak.
-var (
-	groupMembershipLocksMu sync.Mutex
-	groupMembershipLocks   = map[string]*sync.Mutex{}
-)
-
-// lockForUser returns the mutex serializing group-membership mutations for
-// userID, creating it on first use.
-func lockForUser(userID string) *sync.Mutex {
-	groupMembershipLocksMu.Lock()
-	defer groupMembershipLocksMu.Unlock()
-
-	m, ok := groupMembershipLocks[userID]
-	if !ok {
-		m = &sync.Mutex{}
-		groupMembershipLocks[userID] = m
-	}
-	return m
-}
 
 // Ensure the implementation satisfies the expected interfaces.
 var (
@@ -114,7 +74,9 @@ func (r *groupMembershipResource) Schema(_ context.Context, _ resource.SchemaReq
 			"attribute uses). A concurrent writer of the same user's groups — another Terraform apply, or an " +
 			"external process — that runs between the read and the write can have its change silently " +
 			"overwritten; there is no compare-and-swap primitive that would close this window. Avoid concurrent " +
-			"writers of one user's group memberships. After the write the provider checks the user's groups: " +
+			"writers of one user's group memberships. Within one provider process this resource, `pocketid_user` and " +
+			"`pocketid_group_members` hold one lock around each read, write and verification, so their changes do not " +
+			"overwrite each other within an apply. After the write the provider checks the user's groups: " +
 			"Pocket ID ignores a group ID that names no group, so a group that does not exist (or is deleted " +
 			"during the apply) is an error naming it, never a recorded membership. If adding the user is accepted, or may have been, but the result " +
 			"cannot be confirmed, the pair is kept in state as an unresolved creation (`unresolved_creation`), because the request may still take " +
@@ -197,13 +159,16 @@ func (r *groupMembershipResource) Create(ctx context.Context, req resource.Creat
 		"user_id":  userID,
 	})
 
-	// Serialize the read-modify-write against this user's group list with
-	// every other Create/Delete for the same user, so concurrently applying
-	// several pocketid_group_membership resources for one user cannot lose
-	// an addition or a removal to a race. See groupMembershipLocks.
-	lock := lockForUser(userID)
-	lock.Lock()
-	defer lock.Unlock()
+	// Pocket-ID has no add/remove-one-member endpoint: Create and Delete do a
+	// read-modify-write of the user's whole group list (see
+	// Client.AddUserToGroup and Client.RemoveUserFromGroup), and Terraform
+	// applies resources concurrently. The read, the write and its
+	// verification therefore run under the lock every resource that writes
+	// user-group relations holds (membership_lock.go), so that neither
+	// another membership of this user nor pocketid_user or
+	// pocketid_group_members can slip a change in between and have it
+	// overwritten.
+	defer lockMembershipWrites()()
 
 	plan.ID = types.StringValue(groupMembershipID(groupID, userID))
 	if err := r.client.AddUserToGroup(ctx, userID, groupID); err != nil {
@@ -332,10 +297,9 @@ func (r *groupMembershipResource) Delete(ctx context.Context, req resource.Delet
 		"user_id":  userID,
 	})
 
-	// See Create: serialize against every other Create/Delete for this user.
-	lock := lockForUser(userID)
-	lock.Lock()
-	defer lock.Unlock()
+	// See Create: the check, the read-modify-write and its verification run
+	// under the membership lock.
+	defer lockMembershipWrites()()
 
 	// An unresolved addition is only removed when it is seen: a user outside
 	// the group (or a missing one) may be a request that has not landed yet,

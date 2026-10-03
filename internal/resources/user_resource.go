@@ -269,6 +269,21 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 
+	// The create sets the user's groups (the planned ones, or Pocket ID's
+	// signup default groups), and the steps below verify or correct them. From
+	// the create to the last of those steps no other write of user-group
+	// relations of this process may run (membership_lock.go): a group-side
+	// writer could otherwise replace a group's members from a list read
+	// before this user joined it.
+	unlockMembership := lockMembershipWrites()
+	membershipLocked := true
+	releaseMembership := func() {
+		if membershipLocked {
+			membershipLocked = false
+			unlockMembership()
+		}
+	}
+	defer releaseMembership()
 	userResp, err := r.client.CreateUser(ctx, createReq)
 	if err != nil && createReq.ID != "" && !client.IsDefiniteRejection(err) {
 		r.uncertainFixedIDCreate(ctx, &plan, displayName, err, resp)
@@ -315,6 +330,7 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 			return
 		}
 	}
+	releaseMembership()
 	plan.Groups = groupIDsToState(ctx, groupIDs, plan.Groups)
 
 	// The create response does not show default claims, so the claims are
@@ -592,7 +608,9 @@ func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, r
 			tflog.Debug(ctx, "Updating user groups", map[string]any{
 				"groups": plannedGroupIDs,
 			})
+			unlockMembership := lockMembershipWrites()
 			held, err := r.setGroups(ctx, plan.ID.ValueString(), plannedGroupIDs)
+			unlockMembership()
 			if err != nil {
 				plan.Groups = groupIDsToState(ctx, held, plan.Groups)
 				var mismatch *client.UserGroupsMismatchError
@@ -810,13 +828,12 @@ func (r *userResource) ldapRestrictedChanges(ctx context.Context, plan, state *u
 }
 
 // setGroups replaces the user's groups with exactly groupIDs and verifies the
-// result (see client.SetUserGroups). It holds the same per-user lock as
-// pocketid_group_membership, so the two never interleave their
-// read-modify-write cycles for one user within an apply.
+// result (see client.SetUserGroups). The caller holds lockMembershipWrites
+// across the write and its verification, so that pocketid_group_membership
+// and pocketid_group_members never interleave their read-modify-write cycles
+// with it within an apply; setGroups does not take it itself (the lock is
+// not reentrant, and Create holds it from the create onwards).
 func (r *userResource) setGroups(ctx context.Context, userID string, groupIDs []string) ([]string, error) {
-	lock := lockForUser(userID)
-	lock.Lock()
-	defer lock.Unlock()
 	return r.client.SetUserGroups(ctx, userID, groupIDs)
 }
 
