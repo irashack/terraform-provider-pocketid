@@ -16,14 +16,37 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// What these tests guarantee about their own output, and what they do not.
+//
 // Acceptance tests handle real credentials the fixture generates. The stock
 // assertions print what they compare when they fail (TestCheckResourceAttr
 // prints both values, TestMatchResourceAttr the one it got, testify's Equal
-// and Len their operands), so a regression that stores or returns a wrong
-// value would put a working credential, or the whole value in a field meant
-// for its first four characters, into the test log. The checks here report
-// only fixed text, lengths and character-class counts. Use them for every
-// assertion on a secret, token or password, and for a secret's prefix.
+// and Len their operands, plancheck.ExpectUnknownValue a known value it
+// finds), so a regression that stores or returns a wrong value would put a
+// working credential, or the whole value in a field meant for its first four
+// characters, into the test log. The checks here report only fixed text,
+// lengths and character-class counts. Use them for every assertion on a
+// secret, token or password, and for a secret's prefix.
+//
+// The guarantee is that our assertions never print a secret, a token or a
+// password. A secret's prefix is not sensitive by design: Pocket ID keeps it
+// in clear text so operators can tell secrets apart, and the provider keeps
+// it in a non-sensitive attribute. What plugin-testing itself prints on a
+// failure can therefore show a prefix, and we do not rewrite it: the raw
+// human-readable plan it falls back to when a step's plan is not empty, and
+// the whole diagnostic when an ExpectError pattern does not match. Steps that
+// must converge carry testAccConverged, so a plan that is not empty is first
+// reported as addresses and actions; the harness output is the fallback. The
+// disposable fixture keeps a failing run's raw output only in its optional
+// private log (POCKETID_FIXTURE_FAILURE_LOG), never in the public output.
+
+// testAccConverged is the plan check list for PostApplyPreRefresh and
+// PostApplyPostRefresh of every step that must leave nothing to change.
+// plancheck.ExpectEmptyPlan reports only addresses and planned actions, and
+// runs before plugin-testing prints the raw plan of a step whose plan is not
+// empty (testing_new_config.go in v1.16.0). For a PlanOnly step the harness
+// skips PreApply checks, so these two are the ones that apply.
+var testAccConverged = []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()}
 
 // Formats the fixture's server produces: a generated client secret, and the
 // prefix Pocket ID keeps of it.

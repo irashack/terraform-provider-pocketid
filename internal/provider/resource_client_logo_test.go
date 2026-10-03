@@ -126,7 +126,8 @@ func TestAccResourceClientLogo_lifecycle(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: config,
+				ConfigPlanChecks: resource.ConfigPlanChecks{PostApplyPreRefresh: testAccConverged, PostApplyPostRefresh: testAccConverged},
+				Config:           config,
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("pocketid_client_logo.light", "variant", "light"),
 					resource.TestCheckResourceAttr("pocketid_client_logo.light", "sha256", testAccClientLogoHash(lightV1)),
@@ -147,6 +148,8 @@ func TestAccResourceClientLogo_lifecycle(t *testing.T) {
 				PreConfig: func() { testAccClientLogoWrite(t, lightFile, lightV2) },
 				Config:    config,
 				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PostApplyPreRefresh:  testAccConverged,
+					PostApplyPostRefresh: testAccConverged,
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction("pocketid_client_logo.light", plancheck.ResourceActionUpdate),
 						plancheck.ExpectResourceAction("pocketid_client_logo.dark", plancheck.ResourceActionNoop),
@@ -165,6 +168,8 @@ func TestAccResourceClientLogo_lifecycle(t *testing.T) {
 				},
 				Config: config,
 				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PostApplyPreRefresh:  testAccConverged,
+					PostApplyPostRefresh: testAccConverged,
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction("pocketid_client_logo.dark", plancheck.ResourceActionUpdate),
 						plancheck.ExpectResourceAction("pocketid_client_logo.light", plancheck.ResourceActionNoop),
@@ -180,6 +185,8 @@ func TestAccResourceClientLogo_lifecycle(t *testing.T) {
 				PreConfig: func() { require.NoError(t, c.DeleteClientLogo(context.Background(), clientID, true)) },
 				Config:    config,
 				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PostApplyPreRefresh:  testAccConverged,
+					PostApplyPostRefresh: testAccConverged,
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction("pocketid_client_logo.light", plancheck.ResourceActionCreate),
 						plancheck.ExpectResourceAction("pocketid_client_logo.dark", plancheck.ResourceActionNoop),
@@ -193,6 +200,8 @@ func TestAccResourceClientLogo_lifecycle(t *testing.T) {
 				PreConfig: func() { testAccClientLogoWrite(t, darkPNG, dark) },
 				Config:    testAccClientLogoConfig(name, lightFile, darkPNG),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PostApplyPreRefresh:  testAccConverged,
+					PostApplyPostRefresh: testAccConverged,
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction("pocketid_client_logo.dark", plancheck.ResourceActionUpdate),
 						plancheck.ExpectResourceAction("pocketid_client_logo.light", plancheck.ResourceActionNoop),
@@ -219,13 +228,15 @@ func TestAccResourceClientLogo_lifecycle(t *testing.T) {
 				ImportStateVerifyIgnore: []string{"source"},
 			},
 			{
+				ConfigPlanChecks: resource.ConfigPlanChecks{PostApplyPreRefresh: testAccConverged, PostApplyPostRefresh: testAccConverged},
 				// Destroying the dark logo leaves the light one.
 				Config: testAccClientLogoConfig(name, lightFile, ""),
 				Check:  testAccClientLogoServer(&clientID, true, false, nil),
 			},
 			{
-				Config: testAccClientLogoConfig(name, "", ""),
-				Check:  testAccClientLogoServer(&clientID, false, false, nil),
+				ConfigPlanChecks: resource.ConfigPlanChecks{PostApplyPreRefresh: testAccConverged, PostApplyPostRefresh: testAccConverged},
+				Config:           testAccClientLogoConfig(name, "", ""),
+				Check:            testAccClientLogoServer(&clientID, false, false, nil),
 			},
 		},
 	})

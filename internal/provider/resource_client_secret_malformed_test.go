@@ -114,6 +114,7 @@ resource "pocketid_client" "app" {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
+				ConfigPlanChecks: resource.ConfigPlanChecks{PostApplyPreRefresh: testAccConverged, PostApplyPostRefresh: testAccConverged},
 				// The client alone: whatever secrets it holds are not this resource's.
 				Config: config(false),
 				Check: resource.ComposeAggregateTestCheckFunc(
@@ -148,6 +149,8 @@ resource "pocketid_client" "app" {
 				},
 				Config: config(true),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PostApplyPreRefresh:  testAccConverged,
+					PostApplyPostRefresh: testAccConverged,
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction(testAccClientSecretAddr, plancheck.ResourceActionDestroyBeforeCreate),
 						plancheck.ExpectResourceAction("pocketid_client.app", plancheck.ResourceActionNoop),

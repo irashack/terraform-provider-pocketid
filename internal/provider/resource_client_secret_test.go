@@ -191,7 +191,8 @@ resource "pocketid_client_secret" "app" {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: config("1"),
+				ConfigPlanChecks: resource.ConfigPlanChecks{PostApplyPreRefresh: testAccConverged, PostApplyPostRefresh: testAccConverged},
+				Config:           config("1"),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestMatchResourceAttr(testAccClientSecretAddr, "id", regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)),
 					resource.TestCheckResourceAttrPair(testAccClientSecretAddr, "client_id", "pocketid_client.app", "id"),
@@ -216,6 +217,8 @@ resource "pocketid_client_secret" "app" {
 			{
 				Config: config("2"),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PostApplyPreRefresh:  testAccConverged,
+					PostApplyPostRefresh: testAccConverged,
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction(testAccClientSecretAddr, plancheck.ResourceActionCreateBeforeDestroy),
 						plancheck.ExpectResourceAction("pocketid_client.app", plancheck.ResourceActionNoop),
@@ -300,7 +303,8 @@ resource "pocketid_client_secret" "app" {
 		TerraformVersionChecks:   []tfversion.TerraformVersionCheck{tfversion.SkipBelow(tfversion.Version1_11_0)},
 		Steps: []resource.TestStep{
 			{
-				Config: config(values[0], "1"),
+				ConfigPlanChecks: resource.ConfigPlanChecks{PostApplyPreRefresh: testAccConverged, PostApplyPostRefresh: testAccConverged},
+				Config:           config(values[0], "1"),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckNoResourceAttr(testAccClientSecretAddr, "secret"),
 					resource.TestCheckNoResourceAttr(testAccClientSecretAddr, "secret_wo"),
@@ -315,6 +319,8 @@ resource "pocketid_client_secret" "app" {
 			{
 				Config: config(values[1], "2"),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PostApplyPreRefresh:  testAccConverged,
+					PostApplyPostRefresh: testAccConverged,
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction(testAccClientSecretAddr, plancheck.ResourceActionCreateBeforeDestroy),
 					},
@@ -328,9 +334,15 @@ resource "pocketid_client_secret" "app" {
 				),
 			},
 			{
-				// The value alone is not in the plan: nothing changes.
+				// The value alone is not in the plan: nothing changes. A
+				// regression is reported as addresses and actions, before the
+				// harness prints its raw plan.
 				Config:   config(values[2], "2"),
 				PlanOnly: true,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PostApplyPreRefresh:  testAccConverged,
+					PostApplyPostRefresh: testAccConverged,
+				},
 			},
 		},
 	})
@@ -360,7 +372,8 @@ resource "pocketid_client_secret" "app" {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: config(offset),
+				ConfigPlanChecks: resource.ConfigPlanChecks{PostApplyPreRefresh: testAccConverged, PostApplyPostRefresh: testAccConverged},
+				Config:           config(offset),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr(testAccClientSecretAddr, "expires_at", offset),
 					resource.TestCheckResourceAttr(testAccClientSecretAddr, "is_active", "true"),
@@ -382,7 +395,9 @@ resource "pocketid_client_secret" "app" {
 			{
 				Config: config(zulu),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
-					PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(testAccClientSecretAddr, plancheck.ResourceActionUpdate)},
+					PostApplyPreRefresh:  testAccConverged,
+					PostApplyPostRefresh: testAccConverged,
+					PreApply:             []plancheck.PlanCheck{plancheck.ExpectResourceAction(testAccClientSecretAddr, plancheck.ResourceActionUpdate)},
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr(testAccClientSecretAddr, "expires_at", zulu),
@@ -392,7 +407,9 @@ resource "pocketid_client_secret" "app" {
 			{
 				Config: config(later),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
-					PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(testAccClientSecretAddr, plancheck.ResourceActionDestroyBeforeCreate)},
+					PostApplyPreRefresh:  testAccConverged,
+					PostApplyPostRefresh: testAccConverged,
+					PreApply:             []plancheck.PlanCheck{plancheck.ExpectResourceAction(testAccClientSecretAddr, plancheck.ResourceActionDestroyBeforeCreate)},
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr(testAccClientSecretAddr, "expires_at", later),
@@ -426,7 +443,8 @@ resource "pocketid_client_secret" "app" {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: config,
+				ConfigPlanChecks: resource.ConfigPlanChecks{PostApplyPreRefresh: testAccConverged, PostApplyPostRefresh: testAccConverged},
+				Config:           config,
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr(testAccClientSecretAddr, "is_active", "true"),
 					testAccClientSecretResCapture(testAccClientSecretAddr, "id", &secretID),
@@ -436,7 +454,9 @@ resource "pocketid_client_secret" "app" {
 				PreConfig: func() { time.Sleep(time.Until(expires.Add(2 * time.Second))) },
 				Config:    config,
 				ConfigPlanChecks: resource.ConfigPlanChecks{
-					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+					PostApplyPreRefresh:  testAccConverged,
+					PostApplyPostRefresh: testAccConverged,
+					PreApply:             []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr(testAccClientSecretAddr, "is_active", "false"),
@@ -464,7 +484,8 @@ resource "pocketid_client_secret" "app" {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: config,
+				ConfigPlanChecks: resource.ConfigPlanChecks{PostApplyPreRefresh: testAccConverged, PostApplyPostRefresh: testAccConverged},
+				Config:           config,
 				Check: resource.ComposeAggregateTestCheckFunc(
 					testAccClientSecretResCapture("pocketid_client.app", "id", &clientID),
 					testAccClientSecretResCapture(testAccClientSecretAddr, "id", &secretID),
@@ -478,7 +499,9 @@ resource "pocketid_client_secret" "app" {
 				},
 				Config: config,
 				ConfigPlanChecks: resource.ConfigPlanChecks{
-					PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(testAccClientSecretAddr, plancheck.ResourceActionCreate)},
+					PostApplyPreRefresh:  testAccConverged,
+					PostApplyPostRefresh: testAccConverged,
+					PreApply:             []plancheck.PlanCheck{plancheck.ExpectResourceAction(testAccClientSecretAddr, plancheck.ResourceActionCreate)},
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(
 					testAccClientSecretResChanged(&secretID),
@@ -533,11 +556,13 @@ resource "pocketid_client_secret" "app" {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: config,
-				Check:  resource.ComposeAggregateTestCheckFunc(testAccClientSecretResOnServer(), unmanagedKept),
+				ConfigPlanChecks: resource.ConfigPlanChecks{PostApplyPreRefresh: testAccConverged, PostApplyPostRefresh: testAccConverged},
+				Config:           config,
+				Check:            resource.ComposeAggregateTestCheckFunc(testAccClientSecretResOnServer(), unmanagedKept),
 			},
 			{
-				Config: testAccProviderConfig(),
+				ConfigPlanChecks: resource.ConfigPlanChecks{PostApplyPreRefresh: testAccConverged, PostApplyPostRefresh: testAccConverged},
+				Config:           testAccProviderConfig(),
 				Check: resource.ComposeAggregateTestCheckFunc(unmanagedKept, func(*terraform.State) error {
 					listed, err := testAccClientSecretResList(created.ID)
 					if err != nil {
@@ -623,7 +648,8 @@ func TestAccResourceClientSecret_clientWithoutSecrets(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				PreConfig: func() { require.NoError(t, count(0)(nil)) },
+				ConfigPlanChecks: resource.ConfigPlanChecks{PostApplyPreRefresh: testAccConverged, PostApplyPostRefresh: testAccConverged},
+				PreConfig:        func() { require.NoError(t, count(0)(nil)) },
 				Config: testAccProviderConfig() + fmt.Sprintf(`
 resource "pocketid_client_secret" "app" {
   client_id = %q
@@ -632,8 +658,9 @@ resource "pocketid_client_secret" "app" {
 				Check: resource.ComposeAggregateTestCheckFunc(testAccClientSecretResOnServer(), count(1)),
 			},
 			{
-				Config: testAccProviderConfig(),
-				Check:  count(0),
+				ConfigPlanChecks: resource.ConfigPlanChecks{PostApplyPreRefresh: testAccConverged, PostApplyPostRefresh: testAccConverged},
+				Config:           testAccProviderConfig(),
+				Check:            count(0),
 			},
 		},
 	})
@@ -675,6 +702,8 @@ resource "pocketid_client_secret" "supplied" {
 			{
 				Config: config,
 				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PostApplyPreRefresh:  testAccConverged,
+					PostApplyPostRefresh: testAccConverged,
 					PreApply: []plancheck.PlanCheck{
 						testAccExpectUnknownSensitive("pocketid_client_secret.generated", tfjsonpath.New("secret")),
 						testAccExpectUnknownSensitive("pocketid_client_secret.supplied", tfjsonpath.New("secret")),
