@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.0.1 — 2026-10-03
+
+3.0.0 was tagged but never released: its release run failed one acceptance test
+on the CI runner, and pushed tags are not moved. 3.0.1 is 3.0.0 with the fix;
+use 3.0.1, and read the 3.0.0 section below for what changed from 2.4.x.
+
+- A test-fixture fix only. The `pocketid_scim_sync` acceptance test serves a SCIM
+  endpoint from the host for the Pocket ID container to call, and a Linux runner
+  could not reach it (the host name was undefined and the listener was bound to
+  loopback). The fixture now adds the name and the test binds an address the
+  container can reach there; macOS behavior is unchanged.
+- The provider's behavior is unchanged from 3.0.0: no resource, data source,
+  attribute or plan changes, and the same upgrade steps from 2.4.104.
+
 ## 3.0.0 — 2026-10-03
 
 The first release of this provider as a project of its own (see
@@ -54,7 +68,7 @@ changes, listed first; state written by 2.4.103 and 2.4.104 keeps working, and
 
 ### Upgrading from 2.4.104
 
-Follow [INSTALL.md](INSTALL.md) ("Upgrade from 2.4.104 to 3.0.0"); run the first
+Follow [INSTALL.md](INSTALL.md) ("Upgrade from 2.4.104 to 3.0.1"); run the first
 plan with a refresh. What can show up once, and is not a change to Pocket ID:
 
 - New computed attributes (`client_secret_id`, `has_dark_logo`, `client_type`,

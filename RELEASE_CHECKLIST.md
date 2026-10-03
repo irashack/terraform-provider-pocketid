@@ -56,7 +56,14 @@ scheduled sweeps, cleanup and contributor-edit jobs are not enabled in this
 project. Do not publish a registry identity until it is actually registered with
 the required signing setup.
 
-## Release v3.0.0
+## Release v3.0.1
+
+v3.0.0 was tagged and pushed but never released: its release workflow run failed
+`TestAccResourceScimSync_runsTheSyncDuringTheApply` on the Linux runner, whose
+container could not reach the test's SCIM server. Pushed tags are not moved, so its
+content ships as 3.0.1 with a test-fixture fix; the provider's behavior is
+unchanged, and everything below about 3.0.0 holds for 3.0.1 (the changelog's 3.0.0
+section stays the list of changes from 2.4.x).
 
 A major release: the changelog's 3.0.0 section collects the deliberate breaking
 changes (`allowed_user_groups` as a set, an immutable `client_id`, the Go module
@@ -71,9 +78,9 @@ runs") lists the 3.0.0 matrix: every `tests/native/*.py` script on 2.17.0 with
 Terraform and OpenTofu, `lifecycle.py` also on 2.14.0, the old provider taken
 from the verified 2.4.104 archive (its unpacked binary for
 `upgrade_users_groups.py`). Publication, as for earlier releases, is
-owner-run: push the branch and tag, run the release workflow for `v3.0.0`, verify
+owner-run: push the branch and tag, run the release workflow for `v3.0.1`, verify
 the draft's assets and the downloaded binary, then publish. Then follow INSTALL.md's
-upgrade section for 3.0.0.
+upgrade section for 3.0.1.
 
 ## Earlier releases
 

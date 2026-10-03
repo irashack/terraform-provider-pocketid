@@ -12,14 +12,14 @@ terraform {
   required_providers {
     pocketid = {
       source  = "registry.terraform.io/irashack/pocketid"
-      version = "3.0.0"
+      version = "3.0.1"
     }
   }
 }
 ```
 
 Download the exact version's archive and SHA256SUMS from
-[release v3.0.0](https://github.com/irashack/terraform-provider-pocketid/releases/tag/v3.0.0).
+[release v3.0.1](https://github.com/irashack/terraform-provider-pocketid/releases/tag/v3.0.1).
 Verify the SHA256SUMS file against the immutable digest recorded in the release
 notes, then verify the selected archive against that file. Checksums detect
 content changes; they are not a registry GPG signature. This release is unsigned.
@@ -27,14 +27,14 @@ content changes; they are not a registry GPG signature. This release is unsigned
 For example, for `darwin_arm64` (use `linux_amd64` or `linux_arm64` as appropriate):
 
 ```sh
-version=3.0.0
+version=3.0.1
 platform=darwin_arm64
 archive=terraform-provider-pocketid_${version}_${platform}.zip
 sums=terraform-provider-pocketid_${version}_SHA256SUMS
 release=https://github.com/irashack/terraform-provider-pocketid/releases/download/v${version}
 curl --fail --location --output "$archive" "$release/$archive"
 curl --fail --location --output "$sums" "$release/$sums"
-# Set this to the literal SHA256SUMS digest from the v3.0.0 release notes:
+# Set this to the literal SHA256SUMS digest from the v3.0.1 release notes:
 expected_manifest_sha256=REPLACE_WITH_RELEASE_DIGEST
 printf '%s  %s\n' "$expected_manifest_sha256" "$sums" | shasum -a 256 -c -
 awk -v file="$archive" '$2 == file { print }' "$sums" | shasum -a 256 -c -
@@ -70,9 +70,10 @@ tofu providers lock -fs-mirror="$mirror" \
 
 Keep the exact version and checksum pins; do not silently select a newer tag.
 
-## Upgrade from 2.4.104 to 3.0.0
+## Upgrade from 2.4.104 to 3.0.1
 
-3.0.0 is a major release. Unlike the earlier patch upgrades it does **not** plan
+3.0.1 is 3.0.0 (tagged but never released) with a test-fixture fix, and it is a
+major release from 2.4.104. Unlike the earlier patch upgrades it does **not** plan
 empty for every configuration, because it contains deliberate breaking changes
 (listed below and marked **Breaking** in the 3.0.0 section of
 [CHANGELOG.md](CHANGELOG.md)). State written by 2.4.103 and 2.4.104 keeps working:
@@ -86,7 +87,7 @@ ID servers are 2.14.0 through 2.17.0; upgrade an older server first.
 1. Back up state with its configured backend and retain the encryption key
    separately. Start from a clean 2.4.104 plan, so every difference you see later
    comes from this upgrade.
-2. Optionally, run the native upgrade proofs yourself from a checkout of the 3.0.0
+2. Optionally, run the native upgrade proofs yourself from a checkout of the 3.0.1
    source. They need Docker, Python 3 and Go, and use a disposable Pocket ID with
    synthetic data, never your instance or your state. Each lets the verified
    published 2.4.104 archive write state, takes that state over with the new build
@@ -102,8 +103,8 @@ ID servers are 2.14.0 through 2.17.0; upgrade an older server first.
      plain password by 2.4.104, taken over, then moved to `smtp_password_wo`.
 
    [TESTING.md](TESTING.md) has the commands and what each proves.
-3. Verify and add the v3.0.0 archive to the existing native mirror, leaving earlier
-   versions intact. Change only the exact version pin to `3.0.0`, run
+3. Verify and add the v3.0.1 archive to the existing native mirror, leaving earlier
+   versions intact. Change only the exact version pin to `3.0.1`, run
    `tofu init -upgrade` through the root's normal entry point and commit the
    lockfile.
 4. Run a **refreshed** plan (no `-refresh=false`) and compare every difference with
@@ -191,7 +192,7 @@ Plan and apply with a refresh for the first run after upgrading; state written b
   `client_id` rename Pocket ID ignored.
 - Users with omitted names plan the one in-place update above also without a refresh.
 
-**What 3.0.0 refuses that 2.4.104 accepted**
+**What 3.0.1 refuses that 2.4.104 accepted**
 
 Besides the plan-time rules above:
 

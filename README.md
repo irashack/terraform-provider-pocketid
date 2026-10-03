@@ -5,12 +5,13 @@ groups, APIs and instance settings as code. This is an independent provider. It
 began in September 2026 as a maintenance fork of
 [Trozz/terraform-provider-pocketid](https://github.com/Trozz/terraform-provider-pocketid)
 and has been its own project since 2026-10-02, with its own version numbers and no
-tracking of upstream. Release **3.0.0**, its first as an independent project,
+tracking of upstream. Release **3.0.1**, its first as an independent project (3.0.0
+was tagged but never released; 3.0.1 is the same provider with a test-fixture fix),
 supports Pocket ID **2.14.0 through 2.17.0**. Its archives are published on
 [GitHub releases](https://github.com/irashack/terraform-provider-pocketid/releases)
 and installed through the native filesystem mirror in [INSTALL.md](INSTALL.md) under
 the source address `registry.terraform.io/irashack/pocketid`; it is not published to a
-provider registry. 3.0.0 has deliberate breaking changes from 2.4.x, each marked
+provider registry. It has deliberate breaking changes from 2.4.x, each marked
 **Breaking** in the 3.0.0 section of [CHANGELOG.md](CHANGELOG.md). This is not an
 official Pocket ID or Trozz release.
 
@@ -26,7 +27,7 @@ terraform {
   required_providers {
     pocketid = {
       source  = "registry.terraform.io/irashack/pocketid"
-      version = "3.0.0"
+      version = "3.0.1"
     }
   }
 }
@@ -244,7 +245,7 @@ records it. What this provider does that upstream does not, or does differently:
 - **State compatibility from 2.4.104.** State written by 2.4.103 and 2.4.104 keeps
   working under the same source address, with no `state replace-provider` and no
   state upgrader, and plans empty except for the documented breaking and one-time
-  changes ([INSTALL.md](INSTALL.md#upgrade-from-24104-to-300)); from older
+  changes ([INSTALL.md](INSTALL.md#upgrade-from-24104-to-301)); from older
   releases, upgrade to 2.4.104 first. The only upstream state this project has run
   against is upstream 2.3.0 on Pocket ID 2.13.0; later upstream state is untested.
 - **Supported versions and test matrix.** Pocket ID 2.14.0 through 2.17.0 is
@@ -307,7 +308,7 @@ a plan before applying. The ones most configurations meet:
 - Go importers: the module is `github.com/irashack/terraform-provider-pocketid`.
   Configurations are unaffected.
 
-[INSTALL.md](INSTALL.md#upgrade-from-24104-to-300) has the step-by-step upgrade, the
+[INSTALL.md](INSTALL.md#upgrade-from-24104-to-301) has the step-by-step upgrade, the
 breaking changes to look for and the `-refresh=false` caveats. The state-compatibility
 rule (Convention 5) is checked by the native upgrade scripts: they start from state
 written by a published release, take it over with the new build and require an empty
