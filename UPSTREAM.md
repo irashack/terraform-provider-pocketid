@@ -1,150 +1,174 @@
-# Upstream review — 2026-09-06
+# Origin and independence
 
-This is a point-in-time review, not an automatic merge policy. Upstream is
-[Trozz/terraform-provider-pocketid](https://github.com/Trozz/terraform-provider-pocketid).
-The fork release 2.3.1 starts at `44c32e0` (v2.3.0). Upstream `main` was `c3dcfcb`,
-two commits ahead of that base: dependency PR #84 and Actions PR #85.
+This provider is an independent project. It began in September 2026 as a
+maintenance fork of
+[Trozz/terraform-provider-pocketid](https://github.com/Trozz/terraform-provider-pocketid)
+("upstream"), and from release 3.0.0 it is maintained on its own terms. This
+file records where it came from, what independence means in practice, and where
+its behavior differs from upstream's. It is not a review of upstream's open
+work; the reviews made while this was still a fork (2026-09-06 to 2026-10-02)
+are in this file's git history.
 
-## Open issues and pull requests
+## Origin and attribution
 
-All seven open PRs and both open issues were inspected through the GitHub API.
-The dependency changes below are in the working source after 2.3.1; they are not
-included in the already published 2.3.1 archives. No upstream PR was merged remotely.
+- The first release, 2.3.1, started at upstream v2.3.0 (`44c32e0`). The complete
+  history, with every upstream author's commits under their own name, is kept in
+  this repository's git history.
+- [LICENSE](LICENSE) is upstream's MIT license with its notice, "Copyright (c)
+  2024 trozz", unchanged. The license requires that notice and permission text
+  to stay with every copy or substantial portion of the software, so it stays in
+  the source, in every release archive, and in anything derived from this
+  repository.
+- Release 2.3.1 includes Mathieu Lemay's
+  [PR #97](https://github.com/Trozz/terraform-provider-pocketid/pull/97) (secret
+  creation on Pocket ID 2.14 and later) and Yusaku Mizobuchi's tests. Release
+  2.4.102 includes upstream's #116 (preserve client settings the provider does
+  not expose) with its authorship kept, and takes the copy-first shape of #103's
+  application-configuration update. Release 2.4.104 adapts #122 (the secret
+  Pocket ID 2.17.0 creates with a client).
+- Two 3.0.0 changes follow proposals made upstream, adapted to this provider's
+  conventions: `allowed_user_groups` as a set (#92), and choosing a user's ID
+  when creating it (#90). The rest of #90, a configurable client secret, is not
+  adopted; see below.
+- Dependency and workflow updates that upstream's pull requests proposed were
+  taken or replaced by this repository's own pins.
 
-| Item | Disposition and next step |
-|---|---|
-| [#96: client creation on 2.14](https://github.com/Trozz/terraform-provider-pocketid/issues/96) / [#97: compatibility fix](https://github.com/Trozz/terraform-provider-pocketid/pull/97) | Already incorporated in 2.3.1, with stricter version checks, no mutation retries and partial-creation protection. Latest PR head inspected: `97aeedf`. |
-| [#92: allowed groups as a set](https://github.com/Trozz/terraform-provider-pocketid/pull/92) | Real recurring-plan bug; highest-priority functional follow-up. The patch changes the resource and two data sources from list to set. It does not add a schema-version migration or an old-binary state upgrade test, and indexed expressions change meaning/validity. Before adoption, test existing 2.3.1 state with native Terraform and OpenTofu, omitted/empty groups, reordered groups, real membership changes, import and secret continuity. Decide and document the versioning contract. Do not silently ship as a schema-preserving patch. |
-| [#90: declarative IDs and secrets](https://github.com/Trozz/terraform-provider-pocketid/pull/90) | Defer as a separate feature. Its inspected client code still posts to singular `/secret`, and creation cleanup discards deletion errors. Direct application conflicts with the fork's 2.14 selection and ambiguous-failure guarantees. Separate user-ID support from secret rotation, define multi-secret semantics and test 2.12/2.13/2.14 failure/recovery paths before adoption. |
-| [#87: x/net](https://github.com/Trozz/terraform-provider-pocketid/pull/87) | Integrated the proposed `v0.57.0` and its required Go dependency updates, superseding merged #84's `v0.55.0`. |
-| [#98: Go minor dependencies](https://github.com/Trozz/terraform-provider-pocketid/pull/98) | Integrated plugin-log `v0.11.0` and testify `v1.12.1`; resolved checksums using Go modules. |
-| [#99: gRPC](https://github.com/Trozz/terraform-provider-pocketid/pull/99) | Integrated `v1.83.1` and its genproto update. This supersedes the now-closed #95. |
-| [#94: Actions updates](https://github.com/Trozz/terraform-provider-pocketid/pull/94) | Selected checkout, setup-go and attestation revisions used by our two workflows. Did not restore removed upstream jobs to consume their updates. SHA comments corrected where upstream labels were stale. |
-| [#25: registry documentation](https://github.com/Trozz/terraform-provider-pocketid/issues/25) | Local docs exist, but this fork is not registry-published. Corrected active examples and provider docs to the fork source/version and linked mirror installation. Registry signing/registration remains a separate release milestone. |
+## Independent maintenance from 3.0.0
 
-## Actions: retain two workflows
+- **No tracking.** This project does not follow upstream's releases, rebase onto
+  them or merge them on a schedule. Release numbers are this project's own: its
+  2.4.0 and 2.4.1 already shared numbers with upstream releases of the same name
+  but not their content, and a 3.x release of either project says nothing about
+  the other.
+- **Upstream changes are ideas.** They are read like any other source of ideas
+  and taken when they fit this project's conventions, with authorship kept.
+  None is owed.
+- **Upstream may merge back.** Everything here is MIT licensed. Upstream is
+  welcome to take any of it, with or without asking. This project does not keep
+  patches for upstream, wait for its review, or plan to return users to it.
+- **Issues go here.** Report bugs in this repository's
+  [Issues](https://github.com/irashack/terraform-provider-pocketid/issues) and
+  vulnerabilities through [private reporting](SECURITY.md). Upstream's contact
+  addresses and support commitments do not apply. It is a volunteer project
+  with no response-time guarantee.
+- **Names.** The provider address is `registry.terraform.io/irashack/pocketid`
+  and the Go module is `github.com/irashack/terraform-provider-pocketid` (it was
+  upstream's module path until 3.0.0). This is not an official Pocket ID or
+  Trozz release.
 
-GitHub settings were checked: Actions enabled, both workflows active, and the
-existing [Maintenance CI run](https://github.com/irashack/terraform-provider-pocketid/actions/runs/34022442647)
-passed. That run predates this cleanup and does not validate these changes.
-Issues and private vulnerability reporting were disabled; both were enabled in
-this pass. Reports use GitHub Issues and private vulnerability reporting. GitHub
-account notification delivery settings were not changed.
+## Moving from upstream's provider
 
-| Upstream workflow | Fork decision |
-|---|---|
-| `ci.yml` | Keep unit/race tests, vet/lint, build and disposable acceptance. Add workflow validation and reachable Go vulnerability checks. Run older client contracts and broader 2.14 acceptance once each. Add timeouts, manual dispatch and cancellation of superseded CI runs. |
-| `validation.yml`, `pre-commit.yml`, `conventional-commits.yml` | Consolidate useful format checks into Make/CI. Retire duplicate shell validators and PR-comment plumbing; do not require a bot-enforced commit-title format. Local hooks are optional and use the same targets. |
-| `security.yml`, `codeql.yml` | Retain Go vulnerability detection in CI. Do not restore the overlapping Trivy/gosec/CodeQL/SARIF workflow stack during this pass. The existing lint suite covers static checks; this is not a claim that it duplicates every scanner. |
-| `release.yml` | Keep manual release, stable-tag/branch validation, tests on tagged source, pinned GoReleaser, checksums and attestations. Produce a draft for final artifact verification. No registry signing key is configured. |
-| `pre-release.yml`, `cleanup-prereleases.yml` | Keep removed. Automatic dev releases and scheduled deletion are unnecessary for this fork. |
-| `contributors.yml` | Keep removed. Preserve authorship in git and LICENSE without a bot writing to PR branches. |
+Use the state-replacement procedure in
+[INSTALL.md](INSTALL.md#existing-upstream-managed-resources) and require a plan
+with no replacements or secret rotation. The only upstream state this project
+has run against is upstream 2.3.0, on Pocket ID 2.13.0, which 3.0.0 no longer
+supports (see [TESTING.md](TESTING.md)). State written by later upstream
+releases, and its upgrade to 3.0.0, is not tested. Expect the differences below
+in the first plan, and read the 3.0.0 section of [CHANGELOG.md](CHANGELOG.md).
 
-Dependabot remains the single update proposal mechanism, with weekly grouped
-compatible Go updates and Actions updates. Go tools invoked from Make are explicitly
-versioned and need manual version review; Dependabot does not update those pins.
-Removed unused Codecov configuration, CI-comment scripts, old fixed-port fixture,
-tracked scan cache and redundant validators. The disposable fixture is canonical.
+## Behavioral differences
 
-Application-config HTTP 400 failures are fixed in candidate 2.3.2 by preserving
-the required WebAuthn fields and CIMD allowlist. Both supported server versions
-now run application-config acceptance; the full 2.14 suite has no exclusion.
+This describes what this provider does. Where upstream's behavior is known from
+the review of its 2.4.x and 2.5.0 releases (2026-09-23 and 2026-10-02) it is
+named; otherwise assume upstream still behaves as its v2.3.0 base did, which has
+not been re-checked against every later release. Resources and data sources that
+exist only here are listed in [README.md](README.md#what-you-can-manage), not
+compared one by one.
 
-## Pocket ID 2.15.0 — 2026-09-20
+**Failure handling**
 
-Upstream `main` is unchanged since the review above (`c3dcfcb`, no release after
-v2.3.0), so nothing there addresses 2.15.0. The fork's release 2.4.0 adds federated
-identity `replay_protection` and `public_keys`; upstream has the same silent reset of
-both on every client update, which is worth offering back. Evidence is in
-[TESTING.md](TESTING.md).
+- Changes (POST, PUT, DELETE and file uploads) are never retried. Reads are
+  retried up to four attempts, each one request on a fresh connection.
+  Upstream retries POST, PUT and DELETE after a server error or a connection
+  reset, which can leave an orphaned secret or a duplicate object.
+- When a create fails after Pocket ID made the object, the provider deletes it
+  and says so only when the deletion is confirmed; otherwise the object's ID
+  (and any generated secret) stays in state and the error says so. Upstream
+  discards the cleanup delete's error and reports the object as deleted.
+- A client, user, group or SCIM service provider that no longer exists leaves
+  state, and its delete succeeds, only on Pocket ID's own structured not-found
+  answer. Any other 404 (a wrong base URL, a proxy's error page) is an error.
+- After Pocket ID accepts a change that silently ignores part of it (a group ID
+  that names no group, a permission key an API does not have, custom claims it
+  stores differently), the provider compares what the server holds and fails
+  naming the difference.
+- Lists of users, groups and clients are read completely, not as the first page.
+  Identifiers are checked before a request is sent: users, groups, client
+  secrets and SCIM service providers need UUIDs, and client IDs follow Pocket
+  ID's rule.
+- Redirects are not followed with the API key. Errors and logs never contain a
+  response body, reason phrase or malformed-response text.
 
-## Upstream 2.4.0–2.4.2 — 2026-09-23
+**Secrets**
 
-Upstream released 2.4.0, 2.4.1 and 2.4.2 on 2026-09-21 and 22 (`main` at `292900b`).
-They merge #90, #92 and #97, fix application-config preservation in #103 by copying the
-full server object, and in #116 stop client updates from resetting description,
-skip-consent, token lifetimes and logos. The fork took #116 and #103's
-copy-first application configuration as 2.4.102. Upstream's
-version numbers now overlap the fork's, with different content, so fork patch releases
-on the 2.4 line are numbered from 2.4.101.
+- `pocketid_client.client_secret` is computed. It cannot be configured, unlike
+  upstream's `client_secret` input (#90). A custom or rotating secret is a
+  separate `pocketid_client_secret` (with write-only `secret_wo`), and
+  `generate_secret = false` keeps `pocketid_client` from holding one.
+- The secret Pocket ID 2.17.0 creates with a new confidential client is revoked,
+  so the client holds exactly the secret in state.
+- `smtp_password_wo`, `ldap_bind_password_wo`, `token_wo` (SCIM) and `secret_wo`
+  keep secrets out of plan and state. The `pocketid_application_config` data
+  source no longer has `smtp_password` or `ldap_bind_password`, and the resource
+  does not copy a password you did not configure into state. The
+  `pocketid_signup_tokens` and `pocketid_api_keys` data sources never expose a
+  token or key value.
 
-Upstream had no open pull requests. Still missing upstream and worth offering, most
-valuable first:
+**Clients**
 
-1. Federated identity `replay_protection` and `public_keys`. Every client update still
-   disables replay protection (a server setting since 2.12) and drops explicit keys;
-   #116 does not touch the identity list.
-2. Mutation retries. Upstream retries POST/PUT/DELETE after a 5xx or connection reset.
-   A retried secret POST leaves an orphaned secret that #117's revocation never
-   reaches; a retried create duplicates a client or fails on its fixed ID; a retried
-   DELETE fails on 404.
-3. A failed client creation. Upstream discards the cleanup delete's error and always
-   says the client was deleted.
-4. Secret endpoint selection falls back to the singular endpoint on any version-read
-   error, and only after the client exists.
+- `allowed_user_groups` is a set (as in upstream's #92). `is_group_restricted`
+  is explicit and fails closed: removing a client's groups leaves it admitting
+  nobody, and opening a restricted client needs `is_group_restricted = false`.
+  A group ID that names no group fails the apply.
+- `client_id` always equals the client's real ID and is validated. A different
+  configured value replaces the client; before, the new value was recorded while
+  the server kept the old ID.
+- `launch_url`, `description`, `skip_consent` and the two token lifetimes are
+  left alone when not configured. Federated identities keep `replay_protection`
+  and `public_keys`, and `backchannel_logout_url` is managed. Upstream's client
+  update, as examined on 2026-10-02, resets the first two on every update and
+  clears a back-channel logout URL set in the admin UI.
+- `is_public = true` with `pkce_enabled = false` is refused at plan time; a
+  public client may use pushed authorization requests. Changing `is_public`
+  generates or revokes the held secret in place. Clients registered from a
+  Client ID Metadata Document are refused rather than managed.
+- A client's logo is a `pocketid_client_logo` uploaded from a file, not the
+  `logo_url` and `dark_logo_url` attributes of upstream's #121. With a logo URL
+  Pocket ID saves the client first and can then fail the download without
+  returning the client's ID, which does not fit this provider's rule that a
+  failed create never loses track of what it made.
 
-Upstream's application-config fix starts from a copy of the server configuration,
-which is more robust than the fork's field-by-field copy; 2.4.102 adopts that shape
-and keeps the fork's four extra attributes. #92 needs no state upgrader (a stored list decodes as a set) but
-breaks index expressions on `allowed_user_groups`.
+**Users and groups**
 
-## Pocket ID 2.17.0 and upstream 2.5.0 — 2026-10-02
+- A user holds exactly the `groups` and `custom_claims` configured, including
+  none. Pocket ID's signup default groups and claims are no longer added to
+  users the provider creates.
+- A user's `id` can be chosen when it is created and cannot change afterward.
+  Changing it is a plan-time error; upstream's #90 replaces the user, which
+  deletes their passkeys.
+- Plan-time validators follow Pocket ID's own rules for usernames, names, group
+  names, custom claim keys and values, and one-time token lifetimes. `email` is
+  optional for instances that do not require one.
+- For a user or group Pocket ID synchronizes from LDAP, an update that Pocket ID
+  would silently ignore fails before anything is written, naming the attributes.
+- `pocketid_group_members` owns a group's whole membership; the existing
+  `pocketid_group_membership` stays non-authoritative. They must not be combined
+  for one group.
 
-Upstream released 2.5.0 (`main` at `6f55403`). The fork's 2.4.104 adds Pocket ID
-2.17.0 support. Every upstream commit not in `main-maintenance`
-(`git log main-maintenance..upstream/main`), newest first:
+**Application configuration**
 
-| Commit | Disposition |
-|---|---|
-| `6f55403` #124 CI on release branches | Not taken: upstream workflows the fork does not run; the fork's CI covers `main-maintenance` and its PRs. |
-| `2cb6472` #121 client `logo_url`, `dark_logo_url`, `has_dark_logo` | Deferred: a new feature, not 2.17.0 support. With a logo URL, Pocket ID saves the client before downloading the logo and, if the download fails, returns an error without the client's ID; the fork's creation guarantees would have to cover that first. The fork already carries the logo fields through updates (#116). |
-| `75757e4` #122 auto-created client secret | Taken, adapted, in 2.4.104: `autoCreateOidcClientSecret` round-trips but is omitted for servers that do not report it; the server's secret is revoked before the provider's is generated, a failed revoke is verified by a read and follows the fork's rollback/retain rules instead of an unchecked delete. |
-| `0f8d371` #123 wait for health before seeding | Equivalent already: `scripts/disposable-pocketid.py` waits for `/healthz` before seeding. |
-| `292900b` #120 pre-release cleanup ordering | Not applicable: the fork removed the pre-release and cleanup workflows. |
-| `4065eb1` #119 changelog base for releases | Not applicable: fork releases are manual drafts with hand-written notes. |
-| `b9241a7` #118 wait for the SQLite lock when seeding | Equivalent already: the fixture stops the container before touching SQLite. |
-| `a5b2aee` #117 revoke the superseded secret on rotation | Not ported: the fork has no in-place rotation. `client_secret` is computed only and set once by Create; Update and Read never call the secret endpoint, so a new secret exists only after replacement, which deletes the client and every secret with it. Revisit only if rotation is added (with #90). |
-| `7ef0a33` #116 preserve unexposed client settings | Taken in 2.4.102. |
-| `8ee7139` #115 stop excluding `docs/` from the source archive | Deferred: matters only for registry ingestion, and the fork is not registry-published. Take it with registry registration. |
-| `ae85945` #100 gRPC 1.83.2 | Equivalent already (2.4.0). |
-| `ce02f39` #101 Actions updates | Equivalent already: the fork's two workflows use the same checkout, setup-go and attestation revisions; the other updated actions are in workflows the fork removed. |
-| `fb4b371` #98 Go minor updates | Taken in 2.3.2. |
-| `d36c845` #105 CI cleanup and security scans | Not applicable: workflows the fork removed. |
-| `b22c287` #87 x/net 0.57.0 | Superseded: the fork has 0.58.0. |
-| `027c807` #97 secret creation on 2.14+ | Equivalent already: incorporated in 2.3.1 with stricter checks. |
-| `5e38935` #104 409 for a duplicate group | Equivalent already: since 2.3.1 the fork's tests expect a status-only HTTP 409. |
-| `258b269` #103 application-config preservation | Taken (copy-first shape) in 2.4.102. |
-| `354560f` #102 release asset names in the CI fixture | Not applicable: the fork's fixture runs official versioned images. |
-| `6e8de90` #90 declarative IDs and secrets | Deferred, as reviewed on 2026-09-06. |
-| `db8372f` #92 allowed groups as a set | Deferred, as reviewed on 2026-09-06 and 2026-09-23 (breaks index expressions). |
-| `c3dcfcb` #85 Actions updates | Superseded by the fork's own pins (see #101). |
-| `fa85772` #84 x/net 0.55.0 | Superseded by 0.58.0. |
+- Every setting Pocket ID reports is sent back unchanged, including ones this
+  provider version does not know, so a Pocket ID release that adds a required
+  setting does not break updates (2.17.0's `autoCreateOidcClientSecret` did).
+  Unset settings stay as the server has them, with no change in the plan.
+- Values are checked at plan time with Pocket ID's rules, and what the server
+  stored is checked afterward. An empty value that Pocket ID would replace with
+  a default is refused, and `session_duration` must be at least 1.
+- Application images are the separate resource `pocketid_application_image`,
+  sent without retries. A user's profile picture is the separate resource
+  `pocketid_user_profile_picture`.
 
-The fork's `go.mod` is at or ahead of upstream 2.5.0 for every module; `go mod
-tidy` changes nothing. Upstream has no change for `backchannel_logout_url`
-(Pocket ID 2.17.0 OIDC Back-Channel Logout): every upstream client update still
-clears a URL set in the admin UI, which is worth offering back together with
-items 1 to 4 above.
+**Servers**
 
-Open upstream items noted, not acted on:
-
-- [#125](https://github.com/Trozz/terraform-provider-pocketid/pull/125), user
-  profile pictures and application images (open PR): a multipart upload path
-  that resends request bodies inside upstream's retry loop. Review against the
-  fork's no-mutation-retry rule before any adoption.
-- [#111](https://github.com/Trozz/terraform-provider-pocketid/issues/111), group
-  membership and allowed clients from the group side (open issue): the fork's
-  2.4.103 `pocketid_group_membership` covers non-authoritative membership;
-  authoritative group-side membership and allowed clients remain open.
-
-## Remaining work
-
-1. Offer the items above upstream, now including `backchannel_logout_url`. When
-   they are released there, return to `trozz/pocketid` rather than porting #90,
-   #92 and #117 here.
-2. Register/sign the fork only if independent distribution continues; until then
-   the verified filesystem mirror remains the supported install path.
-
-Return to upstream when a stable upstream release passes the old/new API and
-native lifecycle tests, then rehearse supported state-provider replacement with
-no client replacement or secret rotation. See [CONTRIBUTING.md](CONTRIBUTING.md).
+- Supported Pocket ID servers are 2.14.0 through 2.17.0. Upstream's own range is
+  its own to state.
