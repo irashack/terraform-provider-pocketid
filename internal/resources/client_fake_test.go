@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -405,4 +406,13 @@ func requireNoSecret(t *testing.T, diags diag.Diagnostics, values ...string) {
 			require.NotContains(t, d.Summary()+d.Detail(), v)
 		}
 	}
+}
+
+// stringSet builds a set of strings.
+func stringSet(values ...string) types.Set {
+	elements := make([]attr.Value, 0, len(values))
+	for _, v := range values {
+		elements = append(elements, types.StringValue(v))
+	}
+	return types.SetValueMust(types.StringType, elements)
 }

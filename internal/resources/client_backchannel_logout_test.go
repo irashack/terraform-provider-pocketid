@@ -239,12 +239,7 @@ func TestClientUpdateBackchannelLogoutURL(t *testing.T) {
 			planned.Name = types.StringValue("fixture-renamed")
 			planned.BackchannelLogoutURL = tc.planned
 
-			state := tfsdk.State{Schema: schemaResp.Schema}
-			require.False(t, state.Set(ctx, &prior).HasError())
-			plan := tfsdk.Plan{Schema: schemaResp.Schema}
-			require.False(t, plan.Set(ctx, &planned).HasError())
-			resp := resource.UpdateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
-			r.Update(ctx, resource.UpdateRequest{Plan: plan, State: state}, &resp)
+			resp, after := runUpdate(t, r, prior, planned, configOf(planned))
 
 			require.Equal(t, tc.wantErr, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
 			if tc.wantErr {
@@ -261,8 +256,6 @@ func TestClientUpdateBackchannelLogoutURL(t *testing.T) {
 			}
 			// State always records the plan; a value kept from outside
 			// Terraform shows up on the next refresh instead.
-			var after clientResourceModel
-			require.False(t, resp.State.Get(ctx, &after).HasError())
 			assert.Equal(t, tc.planned, after.BackchannelLogoutURL)
 		})
 	}

@@ -105,7 +105,7 @@ func lifecycleModel() clientResourceModel {
 	return clientResourceModel{
 		Name: types.StringValue("fixture"), ClientID: types.StringNull(), ID: types.StringUnknown(),
 		CallbackURLs:       types.ListValueMust(types.StringType, []attr.Value{types.StringValue("https://example.invalid/callback")}),
-		LogoutCallbackURLs: types.ListNull(types.StringType), AllowedUserGroups: types.ListNull(types.StringType),
+		LogoutCallbackURLs: types.ListNull(types.StringType), AllowedUserGroups: types.SetNull(types.StringType),
 		FederatedIdentities: types.ListNull(types.ObjectType{AttrTypes: federatedIdentityAttrTypes}),
 		IsPublic:            types.BoolValue(false), PkceEnabled: types.BoolValue(true), HasLogo: types.BoolUnknown(),
 		RequiresReauthentication: types.BoolValue(false), RequiresPushedAuthorizationRequests: types.BoolValue(false),
@@ -381,7 +381,7 @@ func TestClientCreateGroupFailureCleanupUnconfirmed(t *testing.T) {
 			schemaResp := resource.SchemaResponse{}
 			r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
 			model := lifecycleModel()
-			model.AllowedUserGroups = types.ListValueMust(types.StringType, []attr.Value{types.StringValue("group-1")})
+			model.AllowedUserGroups = types.SetValueMust(types.StringType, []attr.Value{types.StringValue("group-1")})
 			plan := tfsdk.Plan{Schema: schemaResp.Schema}
 			require.False(t, plan.Set(ctx, &model).HasError())
 			response := resource.CreateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}

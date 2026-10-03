@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -55,7 +56,7 @@ type clientResourceModel struct {
 	BackchannelLogoutURL                types.String `tfsdk:"backchannel_logout_url"`
 	IsPublic                            types.Bool   `tfsdk:"is_public"`
 	PkceEnabled                         types.Bool   `tfsdk:"pkce_enabled"`
-	AllowedUserGroups                   types.List   `tfsdk:"allowed_user_groups"`
+	AllowedUserGroups                   types.Set    `tfsdk:"allowed_user_groups"`
 	HasLogo                             types.Bool   `tfsdk:"has_logo"`
 	RequiresReauthentication            types.Bool   `tfsdk:"requires_reauthentication"`
 	RequiresPushedAuthorizationRequests types.Bool   `tfsdk:"requires_pushed_authorization_requests"`
@@ -135,7 +136,7 @@ func (r *clientResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				},
 			},
 			"logout_callback_urls": schema.ListAttribute{
-				Description: "List of allowed logout callback URLs for the OIDC client.",
+				Description: "List of allowed logout callback URLs for the OIDC client. Omitting it and setting it to `[]` both mean none.",
 				Optional:    true,
 				ElementType: types.StringType,
 				Validators: []validator.List{
@@ -172,9 +173,12 @@ func (r *clientResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Default:  booldefault.StaticBool(false),
 			},
 			"launch_url": schema.StringAttribute{
-				Description: "Optional launch URL associated with the client.",
+				Description: "The URL the Pocket ID dashboard opens for this client. When omitted, the client keeps the launch URL it has (set in the admin UI, or earlier by Terraform) and state shows it; an update never clears it. Set it to `\"\"` to remove it.",
 				Optional:    true,
 				Computed:    true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"federated_identities": schema.ListNestedAttribute{
 				Description: "List of federated identities (workload identity federation) allowed to authenticate as this client.",
@@ -225,14 +229,17 @@ func (r *clientResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Computed:    true,
 				Default:     booldefault.StaticBool(true),
 			},
-			"allowed_user_groups": schema.ListAttribute{
-				Description: "List of user group IDs that are allowed to use this client. If empty, all users can use this client.",
+			"allowed_user_groups": schema.SetAttribute{
+				Description: "IDs of the user groups whose members may use this client. If empty, all users can use this client. Omitting it and setting it to `[]` both mean none.",
 				Optional:    true,
 				ElementType: types.StringType,
 			},
 			"has_logo": schema.BoolAttribute{
 				Description: "Whether the client has a logo configured.",
 				Computed:    true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"generate_secret": schema.BoolAttribute{
 				Description: "Whether this resource generates a client secret for a confidential client and stores it in `client_secret`. Defaults to true. " +
@@ -410,7 +417,9 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 	plan.HasLogo = apiModel.HasLogo
 	plan.RequiresReauthentication = apiModel.RequiresReauthentication
 	plan.FederatedIdentities = apiModel.FederatedIdentities
-	plan.LaunchURL = apiModel.LaunchURL
+	if plan.LaunchURL.IsUnknown() {
+		plan.LaunchURL = apiModel.LaunchURL
+	}
 	// Preserve the configured PAR value when the server does not return the field
 	// (Pocket-ID <= v2.8.0). Only override from the API when it is present.
 	if clientResp.RequiresPushedAuthorizationRequests != nil {
@@ -520,11 +529,7 @@ func (r *clientResource) Read(ctx context.Context, req resource.ReadRequest, res
 		state.RequiresPushedAuthorizationRequests = types.BoolValue(false)
 	}
 	state.FederatedIdentities = federatedIdentitiesToList(ctx, clientResp.Credentials.FederatedIdentities)
-	if clientResp.LaunchURL != "" {
-		state.LaunchURL = types.StringValue(clientResp.LaunchURL)
-	} else {
-		state.LaunchURL = types.StringNull()
-	}
+	state.LaunchURL = launchURLFromServer(clientResp.LaunchURL, state.LaunchURL)
 	state.BackchannelLogoutURL = optionalString(clientResp.BackchannelLogoutURL)
 
 	// Update callback URLs
@@ -532,27 +537,11 @@ func (r *clientResource) Read(ctx context.Context, req resource.ReadRequest, res
 	resp.Diagnostics.Append(diags...)
 	state.CallbackURLs = callbackURLs
 
-	// Update logout callback URLs
-	if len(clientResp.LogoutCallbackURLs) > 0 {
-		logoutCallbackURLs, diags := types.ListValueFrom(ctx, types.StringType, clientResp.LogoutCallbackURLs)
-		resp.Diagnostics.Append(diags...)
-		state.LogoutCallbackURLs = logoutCallbackURLs
-	} else {
-		state.LogoutCallbackURLs = types.ListNull(types.StringType)
-	}
-
-	// Update allowed user groups
-	if len(clientResp.AllowedUserGroups) > 0 {
-		var groupIDs []string
-		for _, group := range clientResp.AllowedUserGroups {
-			groupIDs = append(groupIDs, group.ID)
-		}
-		allowedGroups, diags := types.ListValueFrom(ctx, types.StringType, groupIDs)
-		resp.Diagnostics.Append(diags...)
-		state.AllowedUserGroups = allowedGroups
-	} else {
-		state.AllowedUserGroups = types.ListNull(types.StringType)
-	}
+	// An empty list reads as null unless state holds an explicit empty
+	// value, so that omitting the attribute and setting it to [] are both
+	// stable.
+	state.LogoutCallbackURLs = stringListFromServer(clientResp.LogoutCallbackURLs, state.LogoutCallbackURLs)
+	state.AllowedUserGroups = groupSetFromServer(clientResp.AllowedUserGroups, state.AllowedUserGroups)
 
 	// client_secret is never returned by Pocket ID after creation, so it
 	// stays as stored. State written before generate_secret existed always
@@ -593,6 +582,10 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 	var state clientResourceModel
 	diags = req.State.Get(ctx, &state)
 	resp.Diagnostics.Append(diags...)
+
+	// The configuration says which optional settings are managed.
+	var config clientResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -649,16 +642,10 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 		IsPublic:                            plan.IsPublic.ValueBool(),
 		RequiresReauthentication:            plan.RequiresReauthentication.ValueBool(),
 		RequiresPushedAuthorizationRequests: plan.RequiresPushedAuthorizationRequests.ValueBool(),
-		LaunchURL: func() *string {
-			if !plan.LaunchURL.IsNull() && !plan.LaunchURL.IsUnknown() && plan.LaunchURL.ValueString() != "" {
-				v := plan.LaunchURL.ValueString()
-				return &v
-			}
-			return nil
-		}(),
-		PkceEnabled:       plan.PkceEnabled.ValueBool(),
-		IsGroupRestricted: isGroupRestricted,
-		Credentials:       buildCredentialsFromPlan(ctx, &plan, currentIdentities),
+		LaunchURL:                           launchURLForUpdate(config.LaunchURL, plan.LaunchURL, current.LaunchURL),
+		PkceEnabled:                         plan.PkceEnabled.ValueBool(),
+		IsGroupRestricted:                   isGroupRestricted,
+		Credentials:                         buildCredentialsFromPlan(ctx, &plan, currentIdentities),
 	}
 	if err := checkFederatedPublicKeysSupport(ctx, r.client, updateReq.Credentials); err != nil {
 		resp.Diagnostics.AddAttributeError(path.Root("federated_identities"), "Unsupported federated identity configuration", err.Error())
@@ -697,18 +684,20 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
-	// Update state values
-	plan.HasLogo = types.BoolValue(clientResp.HasLogo)
+	// Update state values. Planned values that were known are kept: an
+	// unconfigured setting changed outside Terraform since the last refresh
+	// was sent back unchanged and shows up on the next refresh.
+	if plan.HasLogo.IsUnknown() {
+		plan.HasLogo = types.BoolValue(clientResp.HasLogo)
+	}
 	plan.RequiresReauthentication = types.BoolValue(clientResp.RequiresReauthentication)
 	plan.FederatedIdentities = federatedIdentitiesToList(ctx, clientResp.Credentials.FederatedIdentities)
 	// Preserve the configured PAR value unless the server returns the field.
 	if clientResp.RequiresPushedAuthorizationRequests != nil {
 		plan.RequiresPushedAuthorizationRequests = types.BoolValue(*clientResp.RequiresPushedAuthorizationRequests)
 	}
-	if clientResp.LaunchURL != "" {
-		plan.LaunchURL = types.StringValue(clientResp.LaunchURL)
-	} else {
-		plan.LaunchURL = types.StringNull()
+	if plan.LaunchURL.IsUnknown() {
+		plan.LaunchURL = optionalString(clientResp.LaunchURL)
 	}
 
 	// Handle allowed user groups
@@ -719,7 +708,7 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 	}
 
 	var currentGroupIDs []string
-	if !state.AllowedUserGroups.IsNull() {
+	if !state.AllowedUserGroups.IsNull() && !state.AllowedUserGroups.IsUnknown() {
 		diags = state.AllowedUserGroups.ElementsAs(ctx, &currentGroupIDs, false)
 		resp.Diagnostics.Append(diags...)
 	}
@@ -1005,16 +994,7 @@ func mapAPIClientToModel(ctx context.Context, api *client.OIDCClient) clientReso
 		model.LogoutCallbackURLs = types.ListNull(types.StringType)
 	}
 
-	if len(api.AllowedUserGroups) > 0 {
-		var groupIDs []string
-		for _, g := range api.AllowedUserGroups {
-			groupIDs = append(groupIDs, g.ID)
-		}
-		allowed, _ := types.ListValueFrom(ctx, types.StringType, groupIDs)
-		model.AllowedUserGroups = allowed
-	} else {
-		model.AllowedUserGroups = types.ListNull(types.StringType)
-	}
+	model.AllowedUserGroups = groupSetFromServer(api.AllowedUserGroups, types.SetNull(types.StringType))
 
 	if api.LaunchURL != "" {
 		model.LaunchURL = types.StringValue(api.LaunchURL)

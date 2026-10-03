@@ -140,8 +140,8 @@ func TestClientResource_SchemaValidation(t *testing.T) {
 	assert.True(t, hasLogoAttr.Computed, "has_logo should be computed")
 
 	// Allowed user groups
-	allowedGroupsAttr, ok := attrs["allowed_user_groups"].(schema.ListAttribute)
-	assert.True(t, ok, "allowed_user_groups should be ListAttribute")
+	allowedGroupsAttr, ok := attrs["allowed_user_groups"].(schema.SetAttribute)
+	assert.True(t, ok, "allowed_user_groups should be SetAttribute")
 	assert.True(t, allowedGroupsAttr.Optional, "allowed_user_groups should be optional")
 }
 
@@ -229,47 +229,6 @@ func TestClientResource_NilClient(t *testing.T) {
 		r.Metadata(ctx, req, resp)
 		assert.Equal(t, "pocketid_client", resp.TypeName)
 	})
-}
-
-// Test Update method for Client Resource
-func TestClientResource_Update(t *testing.T) {
-	ctx := context.Background()
-
-	updateCalled := false
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "PATCH" && r.URL.Path == "/api/v1/clients/client-123" {
-			updateCalled = true
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{
-				"id": "client-123",
-				"name": "updated-client",
-				"callbackURLs": ["https://example.com/callback"],
-				"logoutCallbackURLs": ["https://example.com/logout"],
-				"isPublic": true,
-				"pkceEnabled": false,
-				"hasLogo": false,
-				"allowedUserGroups": []
-			}`))
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	})
-
-	testClient := createMockServer(t, handler)
-	r := resources.NewClientResource()
-
-	// Configure the resource
-	configurable := r.(resource.ResourceWithConfigure)
-	configResp := &resource.ConfigureResponse{}
-	configurable.Configure(ctx, resource.ConfigureRequest{
-		ProviderData: testClient,
-	}, configResp)
-	require.False(t, configResp.Diagnostics.HasError())
-
-	// We can't easily test the full Update method without complex state setup
-	// But we can verify the resource is properly configured
-	assert.True(t, updateCalled || true) // This is a placeholder
 }
 
 // Test API error responses

@@ -26,3 +26,17 @@
   fails instead. `client_id` is validated as Pocket ID does: 2 to 128 letters,
   digits, `.`, `_` or `-`. Existing state plans empty whether or not
   `client_id` was configured.
+- **Breaking:** `allowed_user_groups` is now a set on `pocketid_client` and on
+  the `pocketid_client` and `pocketid_clients` data sources. The order of the
+  group IDs no longer shows as a change, so a `sort()` around the list is no
+  longer needed (it still works). Expressions that index into it
+  (`allowed_user_groups[0]`) must change, for example to
+  `tolist(...)[0]` or a `for` expression. Existing state needs no migration.
+- `pocketid_client.launch_url` is now left alone when it is not configured:
+  an unrelated update no longer clears a launch URL set in the admin UI, and
+  plans no longer show it as "known after apply". **Breaking:** removing
+  `launch_url` from the configuration no longer removes the URL; set
+  `launch_url = ""` to remove it.
+- `has_logo` no longer shows as "known after apply" on every update, and
+  `logout_callback_urls = []` and `allowed_user_groups = []` no longer show a
+  change on every plan; omitting them and setting them to `[]` both mean none.

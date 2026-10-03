@@ -198,14 +198,14 @@ output "spa_client_id" {
 
 ### Optional
 
-- `allowed_user_groups` (List of String) List of user group IDs that are allowed to use this client. If empty, all users can use this client.
+- `allowed_user_groups` (Set of String) IDs of the user groups whose members may use this client. If empty, all users can use this client. Omitting it and setting it to `[]` both mean none.
 - `backchannel_logout_url` (String) URL to which Pocket ID sends an OpenID Connect Back-Channel Logout token when a user's access to this client is revoked: the user is disabled or deleted, loses access through a group change, or revokes the authorization, or the client is deleted. Must be an absolute http or https URL without a fragment; a public client (is_public = true) requires https. Requires Pocket ID 2.17.0 or later. When omitted, the client has no back-channel logout URL.
 - `client_id` (String) The client ID: 2 to 128 letters, digits, `.`, `_` or `-`. When omitted, Pocket ID generates one. Always equal to `id` once the client exists, including after import. Pocket ID cannot change a client's ID, so configuring a different value replaces the client.
 - `federated_identities` (Attributes List) List of federated identities (workload identity federation) allowed to authenticate as this client. (see [below for nested schema](#nestedatt--federated_identities))
 - `generate_secret` (Boolean) Whether this resource generates a client secret for a confidential client and stores it in `client_secret`. Defaults to true. Set it to false when the client's secrets are managed elsewhere, for example by `pocketid_client_secret`; the client then holds no secret from this resource. Changing it from true to false revokes the secret this resource generated (a client whose secret cannot be told apart from its other secrets is left unchanged, with an error listing them); changing it from false to true generates one. A client imported, or created before this attribute existed, without a secret in state does not get one generated. Pocket ID 2.17.0 and later also create a secret of their own for a new confidential client; this resource always revokes that one.
 - `is_public` (Boolean) Whether this is a public client (no client secret). Defaults to false.
-- `launch_url` (String) Optional launch URL associated with the client.
-- `logout_callback_urls` (List of String) List of allowed logout callback URLs for the OIDC client.
+- `launch_url` (String) The URL the Pocket ID dashboard opens for this client. When omitted, the client keeps the launch URL it has (set in the admin UI, or earlier by Terraform) and state shows it; an update never clears it. Set it to `""` to remove it.
+- `logout_callback_urls` (List of String) List of allowed logout callback URLs for the OIDC client. Omitting it and setting it to `[]` both mean none.
 - `pkce_enabled` (Boolean) Whether PKCE is enabled for this client. Defaults to true.
 - `requires_pushed_authorization_requests` (Boolean) Whether this client requires Pushed Authorization Requests (PAR, RFC 9126). Defaults to false. Applies to confidential clients only — Pocket-ID coerces this to false for public clients (is_public = true). Enforced only by Pocket-ID versions that support PAR (v2.9.0+); on older versions the value is stored in state but not enforced.
 - `requires_reauthentication` (Boolean) Whether this client requires reauthentication for certain flows. Defaults to false.

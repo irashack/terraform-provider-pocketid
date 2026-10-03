@@ -76,3 +76,45 @@ func checkUnmanagedClientFieldsPreserved(id string) error {
 	}
 	return nil
 }
+
+// testAccModifyClient changes a client directly through the API, the way an
+// administrator would in the Pocket ID UI: every other setting is sent back
+// as the server holds it.
+func testAccModifyClient(id string, change func(*client.OIDCClientCreateRequest)) error {
+	c, err := testClient()
+	if err != nil {
+		return err
+	}
+	current, err := c.GetClient(context.Background(), id)
+	if err != nil {
+		return err
+	}
+	req := &client.OIDCClientCreateRequest{
+		Name:                        current.Name,
+		CallbackURLs:                current.CallbackURLs,
+		LogoutCallbackURLs:          current.LogoutCallbackURLs,
+		IsPublic:                    current.IsPublic,
+		RequiresReauthentication:    current.RequiresReauthentication,
+		PkceEnabled:                 current.PkceEnabled,
+		IsGroupRestricted:           current.IsGroupRestricted,
+		Credentials:                 client.OIDCClientCredentials{FederatedIdentities: current.Credentials.FederatedIdentities},
+		Description:                 current.Description,
+		SkipConsent:                 current.SkipConsent,
+		AccessTokenDurationMinutes:  current.AccessTokenDurationMinutes,
+		RefreshTokenDurationMinutes: current.RefreshTokenDurationMinutes,
+	}
+	if current.RequiresPushedAuthorizationRequests != nil {
+		req.RequiresPushedAuthorizationRequests = *current.RequiresPushedAuthorizationRequests
+	}
+	if current.LaunchURL != "" {
+		launch := current.LaunchURL
+		req.LaunchURL = &launch
+	}
+	if current.BackchannelLogoutURL != "" {
+		backchannel := current.BackchannelLogoutURL
+		req.BackchannelLogoutURL = &backchannel
+	}
+	change(req)
+	_, err = c.UpdateClient(context.Background(), id, req)
+	return err
+}
