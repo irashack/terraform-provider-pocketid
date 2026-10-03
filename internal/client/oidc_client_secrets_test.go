@@ -170,7 +170,7 @@ func TestIssue96PocketID214(t *testing.T) {
 		case "POST /api/oidc/clients/fixture/secrets":
 			posts.Add(1)
 			w.WriteHeader(http.StatusCreated)
-			_, _ = fmt.Fprint(w, `{"id":"99999999-9999-4999-8999-999999999999","createdAt":"2026-08-01T00:00:00Z","secret":"synthetic-secret"}`)
+			_, _ = fmt.Fprint(w, `{"id":"99999999-9999-4999-8999-999999999999","prefix":"synt","createdAt":"2026-08-01T00:00:00Z","secret":"synthetic-secret"}`)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -627,6 +627,88 @@ func TestClient_ListClientSecrets_Validated(t *testing.T) {
 			assert.Nil(t, secrets)
 			assert.NotContains(t, err.Error(), leaked)
 			assert.NotContains(t, err.Error(), "not-a-uuid")
+		})
+	}
+}
+
+// A create response's prefix must be exactly what Pocket ID derives from the
+// value (clientSecretPrefix, 2.14.0 to 2.17.0): empty for a value of four
+// bytes or fewer, otherwise its first four bytes. A response that puts a
+// whole short value in the non-sensitive prefix is refused with only the ID
+// kept, and the value is repeated nowhere.
+func TestClient_CreateClientSecret_PrefixIsWhatTheServerDerives(t *testing.T) {
+	const secretID = "99999999-9999-4999-8999-999999999999"
+	for name, tc := range map[string]struct {
+		value, prefix string
+		ok            bool
+	}{
+		"3 bytes, empty prefix":           {"abc", "", true},
+		"3 bytes, value as prefix":        {"abc", "abc", false},
+		"4 bytes, empty prefix":           {"abcd", "", true},
+		"4 bytes, identical prefix":       {"abcd", "abcd", false},
+		"5 bytes, first four":             {"abcde", "abcd", true},
+		"5 bytes, empty prefix":           {"abcde", "", false},
+		"5 bytes, value as prefix":        {"abcde", "abcde", false},
+		"5 bytes, another prefix":         {"abcde", "abcx", false},
+		"5 bytes, last four":              {"abcde", "bcde", false},
+		"long value, first four":          {"GENERATEDgenerated0123456789abcd", "GENE", true},
+		"long value, empty prefix":        {"GENERATEDgenerated0123456789abcd", "", false},
+		"long value, value as prefix":     {"GENERATEDgenerated0123456789abcd", "GENERATEDgenerated0123456789abcd", false},
+		"long value, three-byte prefix":   {"GENERATEDgenerated0123456789abcd", "GEN", false},
+		"no value, a prefix":              {"", "abcd", true},
+		"no value, no prefix":             {"", "", true},
+		"no value, a prefix too long":     {"", "abcde", false},
+		"no value, a prefix too short":    {"", "abc", false},
+		"unprintable first four bytes":    {"ab\x01dxyz", "ab\x01d", false},
+		"multibyte first four bytes":      {"éxyz123", "éxy", false},
+		"printable punctuation and space": {" ~!:rest", " ~!:", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			body, err := json.Marshal(map[string]any{"id": secretID, "prefix": tc.prefix, "createdAt": "2026-10-02T10:00:00Z", "isActive": true, "secret": tc.value})
+			require.NoError(t, err)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == "GET" {
+					_, _ = fmt.Fprint(w, `{"currentVersion":"2.17.0"}`)
+					return
+				}
+				w.WriteHeader(http.StatusCreated)
+				_, _ = w.Write(body)
+			}))
+			defer server.Close()
+			c, err := client.NewClient(server.URL, "synthetic-token", false, 2)
+			require.NoError(t, err)
+
+			for which, create := range map[string]func() (*client.ClientSecret, error){
+				"CreateClientSecret":   func() (*client.ClientSecret, error) { return c.CreateClientSecret(context.Background(), "c1", nil) },
+				"GenerateClientSecret": func() (*client.ClientSecret, error) { return c.GenerateClientSecret(context.Background(), "c1", nil) },
+			} {
+				secret, err := create()
+				switch {
+				case tc.ok && tc.value != "":
+					require.NoError(t, err, which)
+					assert.Equal(t, tc.value, secret.Value, which)
+					assert.Equal(t, tc.prefix, secret.Prefix, which)
+				case tc.ok:
+					// No value in the response: the secret exists, only its value is lost.
+					require.ErrorIs(t, err, client.ErrCreatedSecretValueMissing, which)
+					if which == "CreateClientSecret" {
+						require.NotNil(t, secret)
+						assert.Equal(t, tc.prefix, secret.Prefix)
+					}
+				default:
+					require.Error(t, err, which)
+					if tc.value != "" {
+						assert.NotContains(t, err.Error(), tc.value, which)
+					}
+					if which == "CreateClientSecret" {
+						require.ErrorIs(t, err, client.ErrCreatedSecretMalformed)
+						require.NotNil(t, secret)
+						assert.Equal(t, client.ClientSecret{ClientSecretMetadata: client.ClientSecretMetadata{ID: secretID}}, *secret, "the ID and nothing else")
+					} else {
+						assert.Nil(t, secret, which)
+					}
+				}
+			}
 		})
 	}
 }

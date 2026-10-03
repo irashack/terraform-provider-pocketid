@@ -631,6 +631,23 @@ func TestClientSecretResource_MetadataChecked(t *testing.T) {
 		assert.True(t, state.Secret.IsNull())
 		assert.NotContains(t, resp.State.Raw.String(), clientSecretTestGen)
 	})
+	// Pocket ID derives an empty prefix from a value of four bytes or fewer,
+	// so a response that repeats such a value as its prefix is not Pocket
+	// ID's: the value must not reach the non-sensitive prefix attribute.
+	t.Run("create response with a four-character value as its own prefix", func(t *testing.T) {
+		const short = "Zq7K"
+		fake := clientSecretFake{version: "2.17.0", postStatus: http.StatusCreated,
+			postBody: `{"id":"` + clientSecretTestID + `","prefix":"` + short + `","createdAt":"2026-10-02T10:00:00Z","isActive":true,"secret":"` + short + `"}`}
+		resp, state := clientSecretCreate(t, fake.serve(t), clientSecretPlanned())
+		require.True(t, resp.Diagnostics.HasError())
+		assert.Contains(t, clientSecretDiagText(resp.Diagnostics), "only its ID is kept")
+		assert.NotContains(t, clientSecretDiagText(resp.Diagnostics), short)
+		require.NotNil(t, state, "the new secret's identity is kept so the next apply revokes it")
+		assert.Equal(t, clientSecretTestID, state.ID.ValueString())
+		assert.True(t, state.Prefix.IsNull())
+		assert.True(t, state.Secret.IsNull())
+		assert.NotContains(t, resp.State.Raw.String(), short)
+	})
 	t.Run("create refuses an unusable list", func(t *testing.T) {
 		fake := clientSecretFake{version: "2.17.0", listed: []string{leakedList}}
 		resp, state := clientSecretCreate(t, fake.serve(t), clientSecretPlanned())

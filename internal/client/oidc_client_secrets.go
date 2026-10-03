@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"golang.org/x/mod/semver"
@@ -45,15 +44,14 @@ var ErrCreatedSecretMalformed = errors.New("the server created a client secret b
 // from the response.
 var ErrMalformedSecretList = errors.New("the client secret list Pocket ID returned is malformed")
 
-// clientSecretPrefixLength is how many leading characters of a secret Pocket
-// ID keeps in clear text (model.OidcClientSecretPrefixLength, 2.14.0 to
-// 2.17.0); the prefix is empty only for a secret migrated from the
-// single-secret column.
+// clientSecretPrefixLength is how many leading bytes of a secret Pocket ID
+// keeps in clear text (model.OidcClientSecretPrefixLength, 2.14.0 to 2.17.0).
 const clientSecretPrefixLength = 4
 
-// validClientSecretPrefix applies Pocket ID's contract for a prefix: empty,
-// or exactly four printable ASCII characters (a secret's first four).
-// Anything else, such as a whole secret, is never stored or printed.
+// validClientSecretPrefix applies Pocket ID's contract for a stored prefix:
+// empty (a secret migrated from the single-secret column has none), or exactly
+// four printable ASCII characters. Anything else, such as a whole secret, is
+// never stored or printed.
 func validClientSecretPrefix(prefix string) bool {
 	if prefix == "" {
 		return true
@@ -69,13 +67,25 @@ func validClientSecretPrefix(prefix string) bool {
 	return true
 }
 
+// secretPrefixOf is the prefix Pocket ID derives from a secret's value
+// (clientSecretPrefix in service/oidc_service.go, identical in 2.14.0 to
+// 2.17.0): empty when the value is four bytes or shorter, otherwise its first
+// four bytes. A value of four bytes or fewer thus never appears in its own
+// prefix.
+func secretPrefixOf(value string) string {
+	if len(value) <= clientSecretPrefixLength {
+		return ""
+	}
+	return value[:clientSecretPrefixLength]
+}
+
 // ClientSecretMetadata describes one secret of an OIDC client, without its
 // value, as GET /api/oidc/clients/{id}/secrets lists it (OidcClientSecretDto,
 // Pocket ID 2.14.0+, unchanged to 2.17.0).
 type ClientSecretMetadata struct {
 	ID string `json:"id"`
-	// Prefix is the secret's first characters in clear text
-	// (OidcClientSecretPrefixLength, 4), empty for a secret migrated from
+	// Prefix is the secret's first four characters in clear text
+	// (OidcClientSecretPrefixLength), empty for a secret migrated from
 	// the single-secret column of earlier versions.
 	Prefix    string     `json:"prefix"`
 	CreatedAt time.Time  `json:"createdAt"`
@@ -245,11 +255,12 @@ func secretCreateBody(opts *ClientSecretOptions) (any, error) {
 
 // decodeCreatedSecret reads OidcClientSecretCreatedDto. A response without a
 // usable (UUID) ID returns no result. One with a usable ID but other fields
-// that cannot be read, or a prefix outside Pocket ID's contract (or not the
-// start of the returned value), returns only that ID, with
-// ErrCreatedSecretMalformed. One with an ID but no value returns the
-// metadata together with ErrCreatedSecretValueMissing. No error carries any
-// of the response.
+// that cannot be read, or a prefix that is not exactly what Pocket ID derives
+// (empty for a value of four bytes or fewer, else the value's first four
+// bytes; with no value in the response, any prefix in the contract), returns
+// only that ID, with ErrCreatedSecretMalformed. One with an ID but no value
+// returns the metadata together with ErrCreatedSecretValueMissing. No error
+// carries any of the response.
 func decodeCreatedSecret(response []byte) (*ClientSecret, error) {
 	var result struct {
 		ClientSecretMetadata
@@ -272,7 +283,7 @@ func decodeCreatedSecret(response []byte) (*ClientSecret, error) {
 		}
 		return nil, fmt.Errorf("secret creation returned no usable secret ID; result uncertain, inspect the client's secrets before recovery: %w", err)
 	}
-	if !validClientSecretPrefix(result.Prefix) || (result.Secret != "" && result.Prefix != "" && !strings.HasPrefix(result.Secret, result.Prefix)) {
+	if !validClientSecretPrefix(result.Prefix) || (result.Secret != "" && result.Prefix != secretPrefixOf(result.Secret)) {
 		return &ClientSecret{ClientSecretMetadata: ClientSecretMetadata{ID: result.ID}},
 			fmt.Errorf("secret creation returned secret %s with a prefix outside Pocket ID's contract; result uncertain, inspect the client before recovery: %w", result.ID, ErrCreatedSecretMalformed)
 	}
