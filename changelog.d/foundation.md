@@ -41,3 +41,7 @@
   without being read in full. Error messages and the provider's logs never
   include response content: not the body, not the server's reason phrase, and
   not the text of a malformed response (a fixed description is given instead).
+- The provider opens a new connection for every request to Pocket ID instead
+  of reusing one. This keeps anything a server sends outside a response out of
+  the logs, and makes each attempt exactly one request; the cost is one TCP
+  (and TLS) handshake per request, which is small next to a Terraform run.

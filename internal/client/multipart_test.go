@@ -206,22 +206,24 @@ func TestUpload_ErrorsAndRedaction(t *testing.T) {
 	}
 }
 
-// keepAliveServer answers the first request on each connection with 204 and
-// keeps the connection open, then reads the next request on it and closes the
-// connection without answering: the stale reused connection Go's transport
-// would replay a replayable request on. It counts the requests it read.
-func keepAliveServer(t *testing.T) (string, *atomic.Int32) {
+// staleConnectionServer answers the first request on each connection with
+// 204, leaving the connection open, then reads any further request on it
+// and closes the connection without answering: the stale kept-alive
+// connection Go's transport would replay a replayable request on. It counts
+// connections and requests.
+func staleConnectionServer(t *testing.T) (string, *atomic.Int32, *atomic.Int32) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = listener.Close() })
-	var requests atomic.Int32
+	var connections, requests atomic.Int32
 	go func() {
 		for {
 			conn, err := listener.Accept()
 			if err != nil {
 				return
 			}
+			connections.Add(1)
 			go func() {
 				defer func() { _ = conn.Close() }()
 				reader := bufio.NewReader(conn)
@@ -240,34 +242,36 @@ func keepAliveServer(t *testing.T) (string, *atomic.Int32) {
 			}()
 		}
 	}()
-	return "http://" + listener.Addr().String(), &requests
+	return "http://" + listener.Addr().String(), &connections, &requests
 }
 
-// A request with a body is never sent a second time by Go's transport when
-// the reused connection it went out on turns out to be dead, whatever the
-// method: the body has no GetBody to replay it from.
-func TestSend_BodyNeverReplayedOnAReusedConnection(t *testing.T) {
+// No request goes out on a connection an earlier request used, so none can
+// meet a stale connection and be replayed: every send, with or without a
+// body, opens its own connection and is read by the server exactly once.
+func TestSend_EachRequestOnItsOwnConnection(t *testing.T) {
 	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut} {
 		t.Run(method, func(t *testing.T) {
-			url, requests := keepAliveServer(t)
+			url, connections, requests := staleConnectionServer(t)
 			c, err := NewClient(url, "test-token", false, 5)
 			require.NoError(t, err)
 
-			_, err = c.send(context.Background(), method, "/api/x", "application/json", []byte(`{"a":1}`))
-			require.NoError(t, err)
-			_, err = c.send(context.Background(), method, "/api/x", "application/json", []byte(`{"a":2}`))
-			require.Error(t, err, "the second request goes out on the reused connection, which closes")
-			assert.Equal(t, int32(2), requests.Load(), "the failed request is not sent again")
+			for _, payload := range [][]byte{nil, []byte(`{"a":1}`), nil, []byte(`{"a":2}`)} {
+				_, err = c.send(context.Background(), method, "/api/x", "application/json", payload)
+				require.NoError(t, err)
+			}
+			assert.Equal(t, int32(4), connections.Load())
+			assert.Equal(t, int32(4), requests.Load())
 		})
 	}
 	t.Run("upload", func(t *testing.T) {
-		url, requests := keepAliveServer(t)
+		url, connections, requests := staleConnectionServer(t)
 		c, err := NewClient(url, "test-token", false, 5)
 		require.NoError(t, err)
 		_, err = c.upload(context.Background(), http.MethodPost, "/api/x", pngFile(), 0)
 		require.NoError(t, err)
 		_, err = c.upload(context.Background(), http.MethodPut, "/api/x", pngFile(), 0)
-		require.Error(t, err)
+		require.NoError(t, err)
+		assert.Equal(t, int32(2), connections.Load())
 		assert.Equal(t, int32(2), requests.Load())
 	})
 }

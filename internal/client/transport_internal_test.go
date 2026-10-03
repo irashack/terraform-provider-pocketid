@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -263,10 +265,9 @@ func TestRawWireReflectionNeverReachesErrorsOrLogs(t *testing.T) {
 					require.Error(t, err)
 				}
 				if err != nil {
-					assert.NotContains(t, err.Error(), key)
-					for unwrapped := errors.Unwrap(err); unwrapped != nil; unwrapped = errors.Unwrap(unwrapped) {
-						assert.NotContains(t, unwrapped.Error(), key, "no wrapped error carries it either")
-					}
+					walkErrorTree(err, func(e error) {
+						assert.NotContains(t, e.Error(), key, "neither the error nor anything it wraps carries it")
+					})
 				}
 				assert.NotEmpty(t, logs.String())
 				assert.NotContains(t, logs.String(), key)
@@ -412,4 +413,111 @@ func TestNewClientRetryDeadline(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, want, c.retry.maxElapsed, "timeout %d", timeout)
 	}
+}
+
+// walkErrorTree calls visit for err and every error it wraps, following both
+// Unwrap() error and Unwrap() []error.
+func walkErrorTree(err error, visit func(error)) {
+	if err == nil {
+		return
+	}
+	visit(err)
+	switch wrapped := err.(type) {
+	case interface{ Unwrap() []error }:
+		for _, inner := range wrapped.Unwrap() {
+			walkErrorTree(inner, visit)
+		}
+	case interface{ Unwrap() error }:
+		walkErrorTree(wrapped.Unwrap(), visit)
+	}
+}
+
+// captureStandardLog redirects Go's standard logger, which net/http writes
+// some connection events to, for the rest of the test.
+func captureStandardLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf syncBuffer
+	previous := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(previous) })
+	return &buf.Buffer
+}
+
+// syncBuffer is a bytes.Buffer safe for the logger's writes from other
+// goroutines; it is read only after they are done.
+type syncBuffer struct {
+	sync.Mutex
+	bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.Lock()
+	defer b.Unlock()
+	return b.Buffer.Write(p)
+}
+
+// A server that keeps writing after its response (here: a second response
+// carrying the key it received) reaches neither the provider's log nor Go's
+// standard logger: every connection is closed after one response, so
+// nothing reads from it while it is idle. Every request also goes out on a
+// connection of its own.
+func TestNothingReadFromAnIdleConnection(t *testing.T) {
+	const key = "fixture-api-key-0123456789abcdef"
+	standard := captureStandardLog(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	var connections, requests atomic.Int32
+	var closeHeaders atomic.Int32
+	done := make(chan struct{}, 8)
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			connections.Add(1)
+			go func() {
+				defer func() { _ = conn.Close(); done <- struct{}{} }()
+				reader := bufio.NewReader(conn)
+				for {
+					req, err := http.ReadRequest(reader)
+					if err != nil {
+						return
+					}
+					_, _ = io.Copy(io.Discard, req.Body)
+					requests.Add(1)
+					if req.Close {
+						closeHeaders.Add(1)
+					}
+					received := req.Header.Get("X-API-KEY")
+					_, _ = io.WriteString(conn, "HTTP/1.1 204 No Content\r\n\r\n")
+					time.Sleep(50 * time.Millisecond)
+					_, _ = io.WriteString(conn, "HTTP/1.1 200 OK "+received+"\r\nContent-Length: 0\r\n\r\n")
+				}
+			}()
+		}
+	}()
+
+	var logs bytes.Buffer
+	ctx := tflogtest.RootLogger(context.Background(), &logs)
+	c, err := NewClient("http://"+listener.Addr().String(), key, false, 5)
+	require.NoError(t, err)
+	for i := 0; i < 3; i++ {
+		_, err = c.doRequest(ctx, http.MethodDelete, "/api/x", nil)
+		require.NoError(t, err)
+	}
+	for i := 0; i < 3; i++ {
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the server never saw its connection close")
+		}
+	}
+
+	assert.Equal(t, int32(3), connections.Load(), "one connection per request")
+	assert.Equal(t, int32(3), requests.Load())
+	assert.Equal(t, int32(3), closeHeaders.Load(), "each request asks for the connection to be closed")
+	assert.NotContains(t, standard.String(), key)
+	assert.NotContains(t, logs.String(), key)
 }
