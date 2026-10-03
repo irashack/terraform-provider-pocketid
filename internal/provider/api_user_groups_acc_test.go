@@ -47,3 +47,14 @@ func TestAccAPI_userGroupUpdatesReportResult(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, read.UserGroups)
 }
+
+// LDAPEnabled reads the public application configuration; the fixture has
+// LDAP disabled.
+func TestAccAPI_ldapEnabledReadable(t *testing.T) {
+	testAccPreCheck(t)
+	c, err := testClient()
+	require.NoError(t, err)
+	enabled, err := c.LDAPEnabled(context.Background())
+	require.NoError(t, err)
+	assert.False(t, enabled)
+}

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -67,22 +66,19 @@ func (r *groupResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 				Description:         "The unique name identifier of the user group. This is used as the technical identifier.",
 				MarkdownDescription: "The unique name identifier of the user group. This is used as the technical identifier and will be included in tokens.",
 				Required:            true,
-				Validators: []validator.String{
-					stringvalidator.LengthAtLeast(1),
-				},
+				Validators:          []validator.String{usersGroupsRuneLength{min: 2, max: 255}},
 			},
 			"friendly_name": schema.StringAttribute{
-				Description: "The friendly display name of the user group.",
+				Description: "The friendly display name of the user group, 2 to 50 characters.",
 				Required:    true,
-				Validators: []validator.String{
-					stringvalidator.LengthBetween(1, 50),
-				},
+				Validators:  []validator.String{usersGroupsRuneLength{min: 2, max: 50}},
 			},
 			"custom_claims": schema.MapAttribute{
-				Description:         "Custom claims to include in the OIDC tokens of users in this group, as a map of claim name to value. Reserved claim names (e.g. 'email', 'groups', 'sub') are rejected by Pocket-ID.",
-				MarkdownDescription: "Custom claims to include in the OIDC tokens of users in this group, as a map of claim name to value. Authoritative: the group has exactly these claims, and none when the attribute is omitted or `{}`. Reserved claim names (e.g. `email`, `groups`, `sub`) are rejected by Pocket-ID.",
+				Description:         "Custom claims to include in the OIDC tokens of users in this group, as a map of claim name to value. Keys and values must not be empty, and reserved claim names (such as 'email', 'groups', 'sub', 'type') are rejected at plan time, as Pocket-ID would reject them.",
+				MarkdownDescription: "Custom claims to include in the OIDC tokens of users in this group, as a map of claim name to value. Authoritative: the group has exactly these claims, and none when the attribute is omitted or `{}`. Keys and values must not be empty, and reserved claim names (such as `email`, `groups`, `sub`, `type`) are rejected at plan time, as Pocket-ID would reject them.",
 				Optional:            true,
 				ElementType:         types.StringType,
+				Validators:          customClaimsValidators(),
 			},
 		},
 	}
@@ -247,25 +243,34 @@ func (r *groupResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		return
 	}
 
-	// Update the group
-	updateReq := &client.UserGroupCreateRequest{
-		Name:         plan.Name.ValueString(),
-		FriendlyName: plan.FriendlyName.ValueString(),
-	}
+	// Update the group's names only when they change: Pocket ID refuses any
+	// update of a group LDAP manages, while it still accepts its claims.
+	if !plan.Name.Equal(state.Name) || !plan.FriendlyName.Equal(state.FriendlyName) {
+		updateReq := &client.UserGroupCreateRequest{
+			Name:         plan.Name.ValueString(),
+			FriendlyName: plan.FriendlyName.ValueString(),
+		}
 
-	tflog.Debug(ctx, "Updating user group", map[string]any{
-		"id":           plan.ID.ValueString(),
-		"name":         updateReq.Name,
-		"friendlyName": updateReq.FriendlyName,
-	})
+		tflog.Debug(ctx, "Updating user group", map[string]any{
+			"id":           plan.ID.ValueString(),
+			"name":         updateReq.Name,
+			"friendlyName": updateReq.FriendlyName,
+		})
 
-	_, err := r.client.UpdateUserGroup(ctx, plan.ID.ValueString(), updateReq)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error updating user group",
-			"Could not update user group, unexpected error: "+err.Error(),
-		)
-		return
+		_, err := r.client.UpdateUserGroup(ctx, plan.ID.ValueString(), updateReq)
+		if client.HasErrorCode(err, client.CodeLDAPUserGroupUpdate) {
+			resp.Diagnostics.AddError("User group is managed by LDAP",
+				"Pocket ID refuses to change the name or friendly name of user group "+plan.ID.ValueString()+
+					" because it is synchronized from LDAP and LDAP is enabled. Change it in the directory, or make the configuration match it; nothing was changed.")
+			return
+		}
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Error updating user group",
+				"Could not update user group, unexpected error: "+err.Error(),
+			)
+			return
+		}
 	}
 
 	// Handle custom claims. The API performs a full replace, so any change to the
@@ -325,6 +330,12 @@ func (r *groupResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	// Delete the group. A group Pocket ID confirms is already gone needs no
 	// deletion; any other error, including a generic 404, stays an error.
 	err := r.client.DeleteUserGroup(ctx, state.ID.ValueString())
+	if client.HasErrorCode(err, client.CodeLDAPUserGroupUpdate) {
+		resp.Diagnostics.AddError("User group is managed by LDAP",
+			"Pocket ID refuses to delete user group "+state.ID.ValueString()+" because it is synchronized from LDAP and LDAP is enabled. "+
+				"Remove it from the directory, or remove it from Terraform state without destroying it (a removed block or terraform state rm).")
+		return
+	}
 	if err != nil && client.IsNotFound(err, client.ResourceUserGroup) {
 		tflog.Warn(ctx, "User group was already deleted", map[string]any{
 			"id": state.ID.ValueString(),

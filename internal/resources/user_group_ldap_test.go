@@ -1,0 +1,217 @@
+package resources
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"sync"
+	"testing"
+
+	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/stretchr/testify/require"
+
+	"github.com/irashack/terraform-provider-pocketid/internal/client"
+)
+
+const (
+	ldapFixtureUserID  = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	ldapFixtureGroupID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+)
+
+// usersGroupsLDAPServer serves one user and one group that carry an LDAP ID,
+// with LDAP enabled or not, and refuses group updates and deletes the way
+// Pocket ID does while LDAP is enabled. It counts every request.
+func usersGroupsLDAPServer(t *testing.T, ldapEnabled bool) (*client.Client, map[string]int) {
+	t.Helper()
+	var mu sync.Mutex
+	calls := map[string]int{}
+	user := map[string]any{
+		"id": ldapFixtureUserID, "username": "ldap.user", "email": "ldap@example.invalid", "firstName": "L",
+		"lastName": "User", "displayName": "L User", "ldapId": "uid=ldap", "userGroups": []any{}, "customClaims": []any{},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		key := r.Method + " " + r.URL.Path
+		calls[key]++
+		w.Header().Set("Content-Type", "application/json")
+		switch key {
+		case "GET /api/application-configuration":
+			_, _ = fmt.Fprintf(w, `[{"key":"appName","type":"string","value":"Pocket ID"},{"key":"ldapEnabled","type":"bool","value":"%t"}]`, ldapEnabled)
+		case "GET /api/users/" + ldapFixtureUserID:
+			_ = json.NewEncoder(w).Encode(user)
+		case "PUT /api/users/" + ldapFixtureUserID:
+			var req map[string]any
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+			if !ldapEnabled {
+				for k, v := range req {
+					user[k] = v
+				}
+			} else {
+				user["locale"] = req["locale"]
+			}
+			_ = json.NewEncoder(w).Encode(user)
+		case "PUT /api/custom-claims/user-group/" + ldapFixtureGroupID:
+			_, _ = fmt.Fprint(w, `[{"key":"team","value":"a"}]`)
+		case "PUT /api/user-groups/" + ldapFixtureGroupID, "DELETE /api/user-groups/" + ldapFixtureGroupID:
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = fmt.Fprint(w, `{"error":"LDAP user groups can't be updated","code":"ldap_user_group_update"}`)
+		case "DELETE /api/users/" + ldapFixtureUserID:
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = fmt.Fprint(w, `{"error":"LDAP users can't be updated","code":"ldap_user_update"}`)
+		default:
+			t.Errorf("unexpected request %s", key)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	t.Cleanup(server.Close)
+	c, err := client.NewClient(server.URL, "synthetic-token", false, 5)
+	require.NoError(t, err)
+	return c, calls
+}
+
+func ldapUserModel() userResourceModel {
+	return userResourceModel{
+		ID: types.StringValue(ldapFixtureUserID), Username: types.StringValue("ldap.user"),
+		Email: types.StringValue("ldap@example.invalid"), FirstName: types.StringValue("L"), LastName: types.StringValue("User"),
+		DisplayName: types.StringValue("L User"), EmailVerified: types.BoolValue(false), IsAdmin: types.BoolValue(false),
+		Locale: types.StringNull(), Disabled: types.BoolValue(false),
+		Groups: types.SetNull(types.StringType), CustomClaims: types.MapNull(types.StringType),
+	}
+}
+
+func runLDAPUserUpdate(t *testing.T, c *client.Client, change func(*userResourceModel)) resource.UpdateResponse {
+	t.Helper()
+	ctx := context.Background()
+	r := &userResource{client: c}
+	sr := resource.SchemaResponse{}
+	r.Schema(ctx, resource.SchemaRequest{}, &sr)
+	prior := tfsdk.State{Schema: sr.Schema}
+	base := ldapUserModel()
+	require.False(t, prior.Set(ctx, &base).HasError())
+	planned := ldapUserModel()
+	change(&planned)
+	plan := tfsdk.Plan{Schema: sr.Schema}
+	require.False(t, plan.Set(ctx, &planned).HasError())
+	resp := resource.UpdateResponse{State: prior}
+	r.Update(ctx, resource.UpdateRequest{Plan: plan, State: prior}, &resp)
+	return resp
+}
+
+// A change Pocket ID would silently drop for an LDAP user is refused before
+// anything is written; the locale, which it does apply, goes through.
+func TestUserUpdateLDAPManaged(t *testing.T) {
+	t.Run("restricted_change_refused", func(t *testing.T) {
+		c, calls := usersGroupsLDAPServer(t, true)
+		resp := runLDAPUserUpdate(t, c, func(m *userResourceModel) {
+			m.Username = types.StringValue("renamed")
+			m.IsAdmin = types.BoolValue(true)
+		})
+		require.True(t, resp.Diagnostics.HasError())
+		require.Equal(t, "User is managed by LDAP", resp.Diagnostics.Errors()[0].Summary())
+		require.Contains(t, resp.Diagnostics.Errors()[0].Detail(), "username, is_admin")
+		require.Zero(t, calls["PUT /api/users/"+ldapFixtureUserID], "nothing is written")
+	})
+	t.Run("locale_allowed", func(t *testing.T) {
+		c, calls := usersGroupsLDAPServer(t, true)
+		resp := runLDAPUserUpdate(t, c, func(m *userResourceModel) { m.Locale = types.StringValue("fr") })
+		require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
+		require.Equal(t, 1, calls["PUT /api/users/"+ldapFixtureUserID])
+	})
+	t.Run("ldap_disabled", func(t *testing.T) {
+		c, calls := usersGroupsLDAPServer(t, false)
+		resp := runLDAPUserUpdate(t, c, func(m *userResourceModel) { m.Username = types.StringValue("renamed") })
+		require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
+		require.Equal(t, 1, calls["PUT /api/users/"+ldapFixtureUserID])
+	})
+	t.Run("delete_refused_explained", func(t *testing.T) {
+		c, _ := usersGroupsLDAPServer(t, true)
+		ctx := context.Background()
+		r := &userResource{client: c}
+		sr := resource.SchemaResponse{}
+		r.Schema(ctx, resource.SchemaRequest{}, &sr)
+		state := tfsdk.State{Schema: sr.Schema}
+		m := ldapUserModel()
+		require.False(t, state.Set(ctx, &m).HasError())
+		resp := resource.DeleteResponse{State: state}
+		r.Delete(ctx, resource.DeleteRequest{State: state}, &resp)
+		require.True(t, resp.Diagnostics.HasError())
+		require.Equal(t, "User is managed by LDAP", resp.Diagnostics.Errors()[0].Summary())
+	})
+}
+
+// A claims-only change to an LDAP group does not touch the group itself,
+// which Pocket ID would refuse; a name change is refused with a clear error.
+func TestGroupUpdateLDAPManaged(t *testing.T) {
+	ctx := context.Background()
+	base := groupResourceModel{
+		ID: types.StringValue(ldapFixtureGroupID), Name: types.StringValue("ldap-group"),
+		FriendlyName: types.StringValue("LDAP group"), CustomClaims: types.MapNull(types.StringType),
+	}
+	run := func(t *testing.T, change func(*groupResourceModel)) (resource.UpdateResponse, map[string]int) {
+		c, calls := usersGroupsLDAPServer(t, true)
+		r := &groupResource{client: c}
+		sr := resource.SchemaResponse{}
+		r.Schema(ctx, resource.SchemaRequest{}, &sr)
+		prior := tfsdk.State{Schema: sr.Schema}
+		require.False(t, prior.Set(ctx, &base).HasError())
+		planned := base
+		change(&planned)
+		plan := tfsdk.Plan{Schema: sr.Schema}
+		require.False(t, plan.Set(ctx, &planned).HasError())
+		resp := resource.UpdateResponse{State: prior}
+		r.Update(ctx, resource.UpdateRequest{Plan: plan, State: prior}, &resp)
+		return resp, calls
+	}
+	t.Run("claims_only", func(t *testing.T) {
+		resp, calls := run(t, func(m *groupResourceModel) {
+			m.CustomClaims = types.MapValueMust(types.StringType, map[string]attr.Value{"team": types.StringValue("a")})
+		})
+		require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
+		require.Zero(t, calls["PUT /api/user-groups/"+ldapFixtureGroupID])
+	})
+	t.Run("rename_refused", func(t *testing.T) {
+		resp, calls := run(t, func(m *groupResourceModel) { m.FriendlyName = types.StringValue("Renamed") })
+		require.True(t, resp.Diagnostics.HasError())
+		require.Equal(t, "User group is managed by LDAP", resp.Diagnostics.Errors()[0].Summary())
+		require.Zero(t, calls["PUT /api/custom-claims/user-group/"+ldapFixtureGroupID])
+	})
+	t.Run("delete_refused_explained", func(t *testing.T) {
+		c, _ := usersGroupsLDAPServer(t, true)
+		r := &groupResource{client: c}
+		sr := resource.SchemaResponse{}
+		r.Schema(ctx, resource.SchemaRequest{}, &sr)
+		state := tfsdk.State{Schema: sr.Schema}
+		require.False(t, state.Set(ctx, &base).HasError())
+		resp := resource.DeleteResponse{State: state}
+		r.Delete(ctx, resource.DeleteRequest{State: state}, &resp)
+		require.True(t, resp.Diagnostics.HasError())
+		require.Equal(t, "User group is managed by LDAP", resp.Diagnostics.Errors()[0].Summary())
+	})
+}
+
+// An omitted email is not sent (Pocket ID rejects ""), and stays null.
+func TestUserCreateWithoutEmail(t *testing.T) {
+	ctx := context.Background()
+	s := &usersGroupsDefaultsServer{}
+	r := &userResource{client: s.start(t)}
+	sr := resource.SchemaResponse{}
+	r.Schema(ctx, resource.SchemaRequest{}, &sr)
+	model := defaultsPlanModel(types.SetNull(types.StringType), types.MapNull(types.StringType))
+	model.Email = types.StringNull()
+	plan := tfsdk.Plan{Schema: sr.Schema}
+	require.False(t, plan.Set(ctx, &model).HasError())
+	resp := resource.CreateResponse{State: tfsdk.State{Schema: sr.Schema}}
+	r.Create(ctx, resource.CreateRequest{Plan: plan}, &resp)
+	require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
+	_, sent := s.created["email"]
+	require.False(t, sent, "no email key is sent")
+	var state userResourceModel
+	require.False(t, resp.State.Get(ctx, &state).HasError())
+	require.True(t, state.Email.IsNull())
+}

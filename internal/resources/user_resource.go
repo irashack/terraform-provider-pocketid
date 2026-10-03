@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"regexp"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -67,7 +69,9 @@ func (r *userResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 		Description: "Manages a user in Pocket-ID.",
 		MarkdownDescription: `Manages a user in Pocket-ID.
 
-~> **Important** Users must complete passkey registration through the Pocket-ID web interface. This resource only creates the user account; authentication setup must be done separately.`,
+~> **Important** Users must complete passkey registration through the Pocket-ID web interface. This resource only creates the user account; authentication setup must be done separately.
+
+~> **LDAP** While LDAP is enabled, Pocket ID lets the API change only the locale of a user synchronized from LDAP (one with an LDAP ID); it silently keeps every other field. The provider checks this before an update and fails, naming the fields, instead of applying a change that would not take effect. Pocket ID also refuses to delete such a user unless it is disabled.`,
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The ID of the user.",
@@ -77,12 +81,13 @@ func (r *userResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 				},
 			},
 			"username": schema.StringAttribute{
-				Description: "The username for the user. Must be unique.",
+				Description: "The username for the user. Must be unique. 1 to 50 characters: letters, digits, '_', '.', '@' and '-', starting and ending with a letter or digit.",
 				Required:    true,
+				Validators:  usernameValidators(),
 			},
 			"email": schema.StringAttribute{
-				Description: "The email address of the user.",
-				Required:    true,
+				Description: "The email address of the user. Optional only when the instance does not require an email address (application configuration require_user_email = \"false\"); Pocket ID requires one by default.",
+				Optional:    true,
 				Validators: []validator.String{
 					stringvalidator.RegexMatches(
 						regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`),
@@ -91,17 +96,20 @@ func (r *userResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 				},
 			},
 			"first_name": schema.StringAttribute{
-				Description: "The first name of the user. Omitted means none (an empty name in Pocket ID).",
+				Description: "The first name of the user, at most 50 characters. Omitted means none (an empty name in Pocket ID).",
 				Optional:    true,
+				Validators:  []validator.String{usersGroupsRuneLength{max: 50}},
 			},
 			"last_name": schema.StringAttribute{
-				Description: "The last name of the user. Omitted means none (an empty name in Pocket ID).",
+				Description: "The last name of the user, at most 50 characters. Omitted means none (an empty name in Pocket ID).",
 				Optional:    true,
+				Validators:  []validator.String{usersGroupsRuneLength{max: 50}},
 			},
 			"display_name": schema.StringAttribute{
-				Description: "The display name of the user. Computed from first and last name if not set.",
+				Description: "The display name of the user, at most 100 characters. When not set, it is the first and last name joined by a space, which must then fit in 100 characters too.",
 				Computed:    true,
 				Optional:    true,
+				Validators:  []validator.String{usersGroupsRuneLength{max: 100}},
 			},
 			"email_verified": schema.BoolAttribute{
 				Description: "Whether the user's email address is verified. Defaults to false.",
@@ -133,10 +141,11 @@ func (r *userResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 				ElementType: types.StringType,
 			},
 			"custom_claims": schema.MapAttribute{
-				Description:         "Custom claims to include in the user's OIDC tokens, as a map of claim name to value. Authoritative: the user has exactly these claims, and none when the attribute is omitted or empty. Pocket ID gives every new user the instance's signup default custom claims; the provider replaces them right after creation, before the new account has a passkey or a session. Reserved claim names (e.g. 'email', 'groups', 'sub') are rejected by Pocket-ID.",
-				MarkdownDescription: "Custom claims to include in the user's OIDC tokens, as a map of claim name to value. Authoritative: the user has exactly these claims, and none when the attribute is omitted or `{}`. Pocket ID gives every new user the instance's signup default custom claims; the provider replaces them right after creation, before the new account has a passkey or a session. Reserved claim names (e.g. `email`, `groups`, `sub`) are rejected by Pocket-ID.",
+				Description:         "Custom claims to include in the user's OIDC tokens, as a map of claim name to value. Authoritative: the user has exactly these claims, and none when the attribute is omitted or empty. Pocket ID gives every new user the instance's signup default custom claims; the provider replaces them right after creation, before the new account has a passkey or a session. Keys and values must not be empty, and reserved claim names (such as 'email', 'groups', 'sub', 'type') are rejected at plan time, as Pocket-ID would reject them.",
+				MarkdownDescription: "Custom claims to include in the user's OIDC tokens, as a map of claim name to value. Authoritative: the user has exactly these claims, and none when the attribute is omitted or `{}`. Pocket ID gives every new user the instance's signup default custom claims; the provider replaces them right after creation, before the new account has a passkey or a session. Keys and values must not be empty, and reserved claim names (such as `email`, `groups`, `sub`, `type`) are rejected at plan time, as Pocket-ID would reject them.",
 				Optional:            true,
 				ElementType:         types.StringType,
+				Validators:          customClaimsValidators(),
 			},
 		},
 	}
@@ -229,10 +238,12 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 
 	userResp, err := r.client.CreateUser(ctx, createReq)
 	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error creating user",
-			"Could not create user, unexpected error: "+err.Error(),
-		)
+		detail := "Could not create user, unexpected error: " + err.Error()
+		var status *client.HTTPError
+		if createReq.Email == "" && errors.As(err, &status) && status.StatusCode == http.StatusBadRequest {
+			detail += ". Pocket ID requires an email address unless require_user_email is \"false\" in the application configuration."
+		}
+		resp.Diagnostics.AddError("Error creating user", detail)
 		return
 	}
 
@@ -295,7 +306,7 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 // stays null, "" stays ""), as does a missing locale.
 func setUserFieldsFromAPI(model *userResourceModel, user *client.User) {
 	model.Username = types.StringValue(user.Username)
-	model.Email = types.StringValue(user.Email)
+	model.Email = optionalStringToState(user.Email, model.Email)
 	model.FirstName = optionalStringToState(user.FirstName, model.FirstName)
 	model.LastName = optionalStringToState(user.LastName, model.LastName)
 	model.DisplayName = types.StringValue(user.DisplayName)
@@ -416,6 +427,20 @@ func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	if !plan.Locale.IsNull() {
 		locale := plan.Locale.ValueString()
 		updateReq.Locale = &locale
+	}
+
+	// While LDAP is enabled Pocket ID changes only the locale of a user
+	// synchronized from LDAP and silently keeps the other fields; refuse
+	// such a change before anything is written.
+	if fields, err := r.ldapRestrictedChanges(ctx, plan.ID.ValueString(), updateReq); err != nil {
+		resp.Diagnostics.AddError("Error updating user", "Could not check whether the user is managed by LDAP: "+err.Error())
+		return
+	} else if len(fields) > 0 {
+		resp.Diagnostics.AddError("User is managed by LDAP",
+			"User "+plan.ID.ValueString()+" is synchronized from LDAP and LDAP is enabled, so Pocket ID would keep its "+
+				strings.Join(fields, ", ")+" unchanged (it lets the API change only the locale of such a user). "+
+				"Change these in the directory, or make the configuration match the user; nothing was changed.")
+		return
 	}
 
 	tflog.Debug(ctx, "Updating user", map[string]any{
@@ -549,6 +574,12 @@ func (r *userResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 	// Delete the user. A user Pocket ID confirms is already gone needs no
 	// deletion; any other error, including a generic 404, stays an error.
 	err := r.client.DeleteUser(ctx, state.ID.ValueString())
+	if client.HasErrorCode(err, client.CodeLDAPUserUpdate) {
+		resp.Diagnostics.AddError("User is managed by LDAP",
+			"Pocket ID refuses to delete user "+state.ID.ValueString()+" because it is synchronized from LDAP, LDAP is enabled and the user is not disabled. "+
+				"Disable the user first (disabled = true), remove it from the directory, or remove it from Terraform state without destroying it.")
+		return
+	}
 	if err != nil && client.IsNotFound(err, client.ResourceUser) {
 		tflog.Warn(ctx, "User was already deleted", map[string]any{
 			"id": state.ID.ValueString(),
@@ -566,6 +597,43 @@ func (r *userResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 	tflog.Debug(ctx, "Deleted user", map[string]any{
 		"id": state.ID.ValueString(),
 	})
+}
+
+// ldapRestrictedChanges returns the attributes the update would change that
+// Pocket ID keeps unchanged for a user synchronized from LDAP while LDAP is
+// enabled (UserService.UpdateUserInternal applies only the locale then). It
+// returns none for any other user.
+func (r *userResource) ldapRestrictedChanges(ctx context.Context, userID string, update *client.UserCreateRequest) ([]string, error) {
+	current, err := r.client.GetUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if current.LdapID == nil || *current.LdapID == "" {
+		return nil, nil
+	}
+	enabled, err := r.client.LDAPEnabled(ctx)
+	if err != nil || !enabled {
+		return nil, err
+	}
+	var fields []string
+	for _, f := range []struct {
+		name    string
+		changed bool
+	}{
+		{"username", update.Username != current.Username},
+		{"email", update.Email != current.Email},
+		{"first_name", update.FirstName != current.FirstName},
+		{"last_name", update.LastName != current.LastName},
+		{"display_name", update.DisplayName != current.DisplayName},
+		{"email_verified", update.EmailVerified != current.EmailVerified},
+		{"is_admin", update.IsAdmin != current.IsAdmin},
+		{"disabled", update.Disabled != current.Disabled},
+	} {
+		if f.changed {
+			fields = append(fields, f.name)
+		}
+	}
+	return fields, nil
 }
 
 // setGroups replaces the user's groups with exactly groupIDs and verifies the

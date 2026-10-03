@@ -112,12 +112,12 @@ output "department_groups" {
 
 ### Required
 
-- `friendly_name` (String) The friendly display name of the user group.
+- `friendly_name` (String) The friendly display name of the user group, 2 to 50 characters.
 - `name` (String) The unique name identifier of the user group. This is used as the technical identifier and will be included in tokens.
 
 ### Optional
 
-- `custom_claims` (Map of String) Custom claims to include in the OIDC tokens of users in this group, as a map of claim name to value. Authoritative: the group has exactly these claims, and none when the attribute is omitted or `{}`. Reserved claim names (e.g. `email`, `groups`, `sub`) are rejected by Pocket-ID.
+- `custom_claims` (Map of String) Custom claims to include in the OIDC tokens of users in this group, as a map of claim name to value. Authoritative: the group has exactly these claims, and none when the attribute is omitted or `{}`. Keys and values must not be empty, and reserved claim names (such as `email`, `groups`, `sub`, `type`) are rejected at plan time, as Pocket-ID would reject them.
 
 ### Read-Only
 

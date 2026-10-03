@@ -30,8 +30,10 @@ type User struct {
 
 // UserCreateRequest represents a request to create or update a user
 type UserCreateRequest struct {
-	Username      string  `json:"username"`
-	Email         string  `json:"email"`
+	Username string `json:"username"`
+	// Email is omitted when empty: Pocket ID stores no address (null), and
+	// rejects "" as an invalid one.
+	Email         string  `json:"email,omitempty"`
 	FirstName     string  `json:"firstName,omitempty"`
 	LastName      string  `json:"lastName,omitempty"`
 	DisplayName   string  `json:"displayName,omitempty"`

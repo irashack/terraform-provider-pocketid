@@ -15,11 +15,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// usersGroupsSetSignupDefaults makes every user created through the API from
-// now on receive groupID and the claim dept=default, as an administrator
-// configures in Pocket ID's settings, and restores the configuration when
-// the test ends.
-func usersGroupsSetSignupDefaults(t *testing.T, groupID string) {
+// usersGroupsPatchAppConfig changes the given application configuration
+// keys, as an administrator would in Pocket ID's settings, and restores the
+// whole configuration when the test ends.
+func usersGroupsPatchAppConfig(t *testing.T, changes map[string]string) {
 	t.Helper()
 	var all []struct{ Key, Value string }
 	status, err := testAccAPI("GET", "/api/application-configuration/all", nil, &all)
@@ -33,17 +32,28 @@ func usersGroupsSetSignupDefaults(t *testing.T, groupID string) {
 	for k, v := range original {
 		changed[k] = v
 	}
-	ids, _ := json.Marshal([]string{groupID})
-	changed["signupDefaultUserGroupIDs"] = string(ids)
-	changed["signupDefaultCustomClaims"] = `[{"key":"dept","value":"default"}]`
+	for k, v := range changes {
+		changed[k] = v
+	}
 	status, err = testAccAPI("PUT", "/api/application-configuration", changed, nil)
 	require.NoError(t, err)
-	require.Equal(t, 200, status, "setting signup defaults")
+	require.Equal(t, 200, status, "changing the application configuration")
 	t.Cleanup(func() {
 		status, err := testAccAPI("PUT", "/api/application-configuration", original, nil)
 		if err != nil || status != 200 {
 			t.Errorf("restoring the application configuration returned %d (%v)", status, err)
 		}
+	})
+}
+
+// usersGroupsSetSignupDefaults makes every user created through the API from
+// now on receive groupID and the claim dept=default.
+func usersGroupsSetSignupDefaults(t *testing.T, groupID string) {
+	t.Helper()
+	ids, _ := json.Marshal([]string{groupID})
+	usersGroupsPatchAppConfig(t, map[string]string{
+		"signupDefaultUserGroupIDs": string(ids),
+		"signupDefaultCustomClaims": `[{"key":"dept","value":"default"}]`,
 	})
 }
 

@@ -41,3 +41,23 @@
 - After writing custom claims, the provider compares what Pocket ID stored with
   what was configured and fails, naming the keys, if they differ (Pocket ID
   stores keys and values in Unicode NFC form).
+- `pocketid_user.email` is now optional, for instances that do not require
+  an email address (`require_user_email = "false"`). Pocket ID requires one by
+  default, and the error then says so. Existing configurations are unaffected.
+- **Breaking:** more values Pocket ID would reject are now refused at plan time
+  instead of failing the apply: a `username` that breaks Pocket ID's rule (1
+  to 50 letters, digits, `_`, `.`, `@`, `-`, starting and ending with a letter
+  or digit), a `first_name` or `last_name` over 50 characters, a
+  `display_name` over 100, a group `name` shorter than 2 or longer than 255
+  characters, a group `friendly_name` shorter than 2 or longer than 50, a
+  custom claim with an empty key or value or a reserved name (such as `email`,
+  `groups`, `sub` or `type`), and a one-time access token `ttl` outside
+  1 second to 744h (now checked at plan time). Lengths are counted in
+  characters, as Pocket ID counts them, so names with accented letters are no
+  longer cut short at 50 bytes.
+- A user or group that Pocket ID synchronizes from LDAP, while LDAP is
+  enabled: changing anything but a user's `locale` (or its groups and custom
+  claims) now fails before anything is written, naming the attributes, because
+  Pocket ID would silently keep them. Changing only a group's custom claims no
+  longer sends a group update Pocket ID refuses for LDAP groups, and refused
+  deletions explain why.

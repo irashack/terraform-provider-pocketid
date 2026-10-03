@@ -5,6 +5,7 @@ subcategory: ""
 description: |-
   Manages a user in Pocket-ID.
   ~> Important Users must complete passkey registration through the Pocket-ID web interface. This resource only creates the user account; authentication setup must be done separately.
+  ~> LDAP While LDAP is enabled, Pocket ID lets the API change only the locale of a user synchronized from LDAP (one with an LDAP ID); it silently keeps every other field. The provider checks this before an update and fails, naming the fields, instead of applying a change that would not take effect. Pocket ID also refuses to delete such a user unless it is disabled.
 ---
 
 # pocketid_user (Resource)
@@ -12,6 +13,8 @@ description: |-
 Manages a user in Pocket-ID.
 
 ~> **Important** Users must complete passkey registration through the Pocket-ID web interface. This resource only creates the user account; authentication setup must be done separately.
+
+~> **LDAP** While LDAP is enabled, Pocket ID lets the API change only the locale of a user synchronized from LDAP (one with an LDAP ID); it silently keeps every other field. The provider checks this before an update and fails, naming the fields, instead of applying a change that would not take effect. Pocket ID also refuses to delete such a user unless it is disabled.
 
 ## Example Usage
 
@@ -107,19 +110,19 @@ resource "pocketid_user" "with_claims" {
 
 ### Required
 
-- `email` (String) The email address of the user.
-- `username` (String) The username for the user. Must be unique.
+- `username` (String) The username for the user. Must be unique. 1 to 50 characters: letters, digits, '_', '.', '@' and '-', starting and ending with a letter or digit.
 
 ### Optional
 
-- `custom_claims` (Map of String) Custom claims to include in the user's OIDC tokens, as a map of claim name to value. Authoritative: the user has exactly these claims, and none when the attribute is omitted or `{}`. Pocket ID gives every new user the instance's signup default custom claims; the provider replaces them right after creation, before the new account has a passkey or a session. Reserved claim names (e.g. `email`, `groups`, `sub`) are rejected by Pocket-ID.
+- `custom_claims` (Map of String) Custom claims to include in the user's OIDC tokens, as a map of claim name to value. Authoritative: the user has exactly these claims, and none when the attribute is omitted or `{}`. Pocket ID gives every new user the instance's signup default custom claims; the provider replaces them right after creation, before the new account has a passkey or a session. Keys and values must not be empty, and reserved claim names (such as `email`, `groups`, `sub`, `type`) are rejected at plan time, as Pocket-ID would reject them.
 - `disabled` (Boolean) Whether the user account is disabled. Defaults to false.
-- `display_name` (String) The display name of the user. Computed from first and last name if not set.
+- `display_name` (String) The display name of the user, at most 100 characters. When not set, it is the first and last name joined by a space, which must then fit in 100 characters too.
+- `email` (String) The email address of the user. Optional only when the instance does not require an email address (application configuration require_user_email = "false"); Pocket ID requires one by default.
 - `email_verified` (Boolean) Whether the user's email address is verified. Defaults to false.
-- `first_name` (String) The first name of the user. Omitted means none (an empty name in Pocket ID).
+- `first_name` (String) The first name of the user, at most 50 characters. Omitted means none (an empty name in Pocket ID).
 - `groups` (Set of String) IDs of the groups the user belongs to. Authoritative: the user is in exactly these groups, and in none when the attribute is omitted or empty. On creation the groups are sent with the request, which keeps Pocket ID from adding the instance's signup default groups; when no groups are set, Pocket ID adds those defaults to the new user and the provider removes them right after, before the new account has a passkey or a session. Pocket ID ignores an ID that names no group, so the provider checks the user's groups after each change and fails, naming the group, if one was not applied.
 - `is_admin` (Boolean) Whether the user has administrator privileges. Defaults to false.
-- `last_name` (String) The last name of the user. Omitted means none (an empty name in Pocket ID).
+- `last_name` (String) The last name of the user, at most 50 characters. Omitted means none (an empty name in Pocket ID).
 - `locale` (String) The locale preference for the user (e.g., 'en', 'fr').
 
 ### Read-Only

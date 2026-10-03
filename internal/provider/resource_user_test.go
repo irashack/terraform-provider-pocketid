@@ -6,6 +6,7 @@ package provider_test
 import (
 	"fmt"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -563,6 +564,110 @@ resource "pocketid_user" "test" {
 `, missingGroupID),
 				ExpectError: regexp.MustCompile(`(?s)not\s+in\s+group\(s\)\s+` + missingGroupID),
 			},
+		},
+	})
+}
+
+// Pocket ID's own rules are applied at plan time, before anything is sent.
+func TestAccResourceUserGroup_planTimeValidation(t *testing.T) {
+	cases := map[string]struct{ config, pattern string }{
+		"username": {`resource "pocketid_user" "t" {
+  username = "-bad"
+  email    = "bad@example.com"
+}`, `start and end with a letter or digit`},
+		"reserved_claim": {`resource "pocketid_user" "t" {
+  username      = "reserved-claim"
+  email         = "reserved-claim@example.com"
+  custom_claims = { type = "x" }
+}`, `value must be none of`},
+		"empty_claim_value": {`resource "pocketid_group" "t" {
+  name          = "empty-claim"
+  friendly_name = "Empty claim"
+  custom_claims = { team = "" }
+}`, `length must be at least 1`},
+		"group_name": {`resource "pocketid_group" "t" {
+  name          = "a"
+  friendly_name = "Short name"
+}`, `name must be 2 to 255 characters long`},
+		"long_first_name": {`resource "pocketid_user" "t" {
+  username   = "long-name"
+  email      = "long-name@example.com"
+  first_name = "` + strings.Repeat("a", 51) + `"
+}`, `first_name must be at most 50 characters long`},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			resource.Test(t, resource.TestCase{
+				PreCheck:                 func() { testAccPreCheck(t) },
+				ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+				Steps: []resource.TestStep{{
+					Config:      tc.config,
+					PlanOnly:    true,
+					ExpectError: regexp.MustCompile(tc.pattern),
+				}},
+			})
+		})
+	}
+}
+
+// Names are limited in characters, not bytes, as on the server: 50
+// two-byte characters are accepted by both.
+func TestAccResourceUser_multibyteNames(t *testing.T) {
+	name := strings.Repeat("é", 50)
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: fmt.Sprintf(`
+resource "pocketid_user" "test" {
+  username   = "multibyte-names"
+  email      = "multibyte-names@example.com"
+  first_name = %q
+  last_name  = "x"
+}
+`, name),
+				Check: resource.TestCheckResourceAttr("pocketid_user.test", "first_name", name),
+			},
+		},
+	})
+}
+
+// A user without an email address: refused by default (Pocket ID requires
+// one), created and stable once the instance no longer requires it.
+func TestAccResourceUser_withoutEmail(t *testing.T) {
+	config := `
+resource "pocketid_user" "test" {
+  username = "no-email-user"
+}
+`
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      config,
+				ExpectError: regexp.MustCompile(`require_user_email`),
+			},
+			{
+				PreConfig: func() { usersGroupsPatchAppConfig(t, map[string]string{"requireUserEmail": "false"}) },
+				Config:    config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckNoResourceAttr("pocketid_user.test", "email"),
+					func(s *terraform.State) error {
+						var user struct{ Email *string }
+						id := s.RootModule().Resources["pocketid_user.test"].Primary.ID
+						if status, err := testAccAPI("GET", "/api/users/"+id, nil, &user); err != nil || status != 200 {
+							return fmt.Errorf("reading the user returned %d (%v)", status, err)
+						}
+						if user.Email != nil {
+							return fmt.Errorf("the server holds an email address for the user")
+						}
+						return nil
+					},
+				),
+			},
+			{Config: config, PlanOnly: true},
 		},
 	})
 }

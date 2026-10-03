@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
@@ -74,6 +75,7 @@ func (r *OneTimeAccessTokenResource) Schema(ctx context.Context, req resource.Sc
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
+				Validators: []validator.String{oneTimeTokenTTLValidator{}},
 			},
 			"token": schema.StringAttribute{
 				MarkdownDescription: "The one-time access token value. Returned only on creation.",
@@ -118,25 +120,14 @@ func (r *OneTimeAccessTokenResource) Create(ctx context.Context, req resource.Cr
 		return
 	}
 
-	// Validate the ttl duration up front to give a clear error before calling the API.
+	// The schema validates ttl at plan time; a value that was unknown then
+	// is checked here, before calling the API.
 	ttlStr := data.TTL.ValueString()
-	ttl, err := time.ParseDuration(ttlStr)
-	if err != nil {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("ttl"),
-			"Invalid ttl",
-			fmt.Sprintf("The ttl value must be a Go duration string such as \"15m\" or \"1h\": %s", err),
-		)
+	if err := checkOneTimeTokenTTL(ttlStr); err != nil {
+		resp.Diagnostics.AddAttributeError(path.Root("ttl"), "Invalid ttl", err.Error())
 		return
 	}
-	if ttl <= time.Second || ttl > maxOneTimeAccessTokenTTL {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("ttl"),
-			"Invalid ttl",
-			"The ttl must be greater than 1 second and at most 744h (31 days).",
-		)
-		return
-	}
+	ttl, _ := time.ParseDuration(ttlStr)
 
 	tflog.Debug(ctx, "creating one-time access token", map[string]interface{}{
 		"user_id": data.UserID.ValueString(),

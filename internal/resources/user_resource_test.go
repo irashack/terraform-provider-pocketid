@@ -51,7 +51,7 @@ func TestUserResource_Schema(t *testing.T) {
 
 	emailAttr, ok := schemaResponse.Schema.Attributes["email"]
 	assert.True(t, ok, "email attribute should exist")
-	assert.True(t, emailAttr.IsRequired(), "email should be required")
+	assert.True(t, emailAttr.IsOptional(), "email is optional: Pocket ID allows a user without one unless it requires email addresses")
 
 	// Verify computed attributes
 	idAttr, ok := schemaResponse.Schema.Attributes["id"]
@@ -96,7 +96,7 @@ func TestUserResource_SchemaValidation(t *testing.T) {
 
 	emailAttr, ok := attrs["email"].(schema.StringAttribute)
 	assert.True(t, ok, "email should be StringAttribute")
-	assert.True(t, emailAttr.Required, "email should be required")
+	assert.True(t, emailAttr.Optional, "email should be optional")
 
 	// Computed attributes
 	idAttr, ok := attrs["id"].(schema.StringAttribute)
