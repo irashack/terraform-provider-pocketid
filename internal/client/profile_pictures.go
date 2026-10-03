@@ -2,11 +2,6 @@ package client
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"net/http"
-	"strconv"
-	"time"
 )
 
 // UserProfilePictureMaxBytes is the largest profile picture file the client
@@ -60,53 +55,16 @@ func (c *Client) ResetUserProfilePicture(ctx context.Context, userID string) err
 // Pocket ID lets any cache keep this picture for 15 minutes and serve it stale
 // for an hour more (utils.SetCacheControlHeader, 2.14.0 to 2.17.0), and the
 // upload goes to another URL, so a cache between the provider and the server can
-// answer with the picture from before an upload. Each call therefore uses a URL
-// no cache has seen (a random nocache parameter, which Pocket ID ignores) and
-// asks caches to revalidate (Cache-Control: no-cache, Pragma: no-cache).
+// answer with the picture from before an upload. The read therefore goes
+// through getBinaryUncached: a URL no cache has seen (a random nocache
+// parameter, which Pocket ID ignores) and request headers that ask caches to
+// revalidate (Cache-Control: no-cache, Pragma: no-cache). It is sent once,
+// never retried.
 func (c *Client) GetUserProfilePicture(ctx context.Context, userID string) ([]byte, error) {
 	id, err := uuidSegment("user", userID)
 	if err != nil {
 		return nil, err
 	}
-	return c.profilePictureUncached().doRequest(ctx, "GET", "/api/users/"+id+"/profile-picture.png?nocache="+profilePictureNonce(), nil)
-}
-
-// profilePictureNonce returns a value no earlier request used.
-func profilePictureNonce() string {
-	var nonce [12]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		// crypto/rand does not fail on supported platforms; a time-based value
-		// still differs between requests.
-		return strconv.FormatInt(time.Now().UnixNano(), 36)
-	}
-	return hex.EncodeToString(nonce[:])
-}
-
-// profilePictureUncached returns a copy of c whose requests carry the headers
-// that make caches revalidate. Requests are built in transport.go, so the
-// headers are added on the way out instead.
-func (c *Client) profilePictureUncached() *Client {
-	httpClient := *c.httpClient
-	base := httpClient.Transport
-	if base == nil {
-		base = http.DefaultTransport
-	}
-	httpClient.Transport = profilePictureNoCacheTransport{base: base}
-	uncached := *c
-	uncached.httpClient = &httpClient
-	return &uncached
-}
-
-// profilePictureNoCacheTransport adds Cache-Control: no-cache and
-// Pragma: no-cache to every request it sends.
-type profilePictureNoCacheTransport struct {
-	base http.RoundTripper
-}
-
-func (t profilePictureNoCacheTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	// A RoundTripper must not change the caller's request.
-	req = req.Clone(req.Context())
-	req.Header.Set("Cache-Control", "no-cache")
-	req.Header.Set("Pragma", "no-cache")
-	return t.base.RoundTrip(req)
+	body, _, err := c.getBinaryUncached(ctx, "/api/users/"+id+"/profile-picture.png", nil, 0)
+	return body, err
 }

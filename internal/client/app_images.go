@@ -2,15 +2,12 @@ package client
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"sort"
-	"strconv"
-	"time"
 )
 
 // ApplicationImage names one of Pocket ID's application images
@@ -110,56 +107,38 @@ func (image ApplicationImage) Deletable() bool {
 // remove; nothing is sent.
 var ErrApplicationImageNotDeletable = errors.New("this image cannot be removed: Pocket ID only replaces it")
 
-func (image ApplicationImage) endpoint(custom bool) (string, error) {
+// route returns the image's path and the query that selects it (the light or
+// dark logo).
+func (image ApplicationImage) route() (string, url.Values, error) {
 	route, ok := applicationImageRoutes[image]
 	if !ok {
-		return "", fmt.Errorf("%w: unknown application image %q", ErrInvalidIdentifier, string(image))
+		return "", nil, fmt.Errorf("%w: unknown application image %q", ErrInvalidIdentifier, string(image))
 	}
-	endpoint := "/api/application-images/" + route.path
-	query := ""
+	query := url.Values{}
 	if route.light != "" {
-		query = "light=" + route.light
+		query.Set("light", route.light)
 	}
-	if custom {
-		// Pocket ID 2.15.0+ answers a GET without it with its bundled
-		// logo when none was uploaded; 2.14.0 ignores it and never does.
-		if query != "" {
-			query += "&"
-		}
-		query += "default=false"
-		// Pocket ID lets caches keep an image for 15 minutes and serve it
-		// stale for a day (utils.SetCacheControlHeader). A URL no cache
-		// has seen gets the image as it is now, so an upload is not
-		// checked against, nor a refresh compared with, an older copy, by
-		// a cache whose key includes the query string. A cache that leaves
-		// this parameter out of its key still can answer from its copy;
-		// request headers asking caches not to (Cache-Control: no-cache)
-		// need a per-request header option in transport.go. Pocket ID
-		// ignores the parameter.
-		query += "&nocache=" + applicationImageNonce()
-	}
-	if query != "" {
-		endpoint += "?" + query
-	}
-	return endpoint, nil
+	return "/api/application-images/" + route.path, query, nil
 }
 
-// applicationImageNonce returns a value no earlier request used.
-func applicationImageNonce() string {
-	var nonce [12]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		// crypto/rand does not fail on supported platforms; a time-based
-		// value still differs between requests.
-		return strconv.FormatInt(time.Now().UnixNano(), 36)
+// endpoint is the image's path and query as one string, for an upload or a
+// removal.
+func (image ApplicationImage) endpoint() (string, error) {
+	path, query, err := image.route()
+	if err != nil {
+		return "", err
 	}
-	return hex.EncodeToString(nonce[:])
+	if len(query) > 0 {
+		path += "?" + query.Encode()
+	}
+	return path, nil
 }
 
 // UploadApplicationImage replaces image with content, a file whose type is
 // given by extension (lower case, one Pocket ID accepts for the image). It is
 // sent once and never retried.
 func (c *Client) UploadApplicationImage(ctx context.Context, image ApplicationImage, extension string, content []byte) error {
-	endpoint, err := image.endpoint(false)
+	endpoint, err := image.endpoint()
 	if err != nil {
 		return err
 	}
@@ -176,25 +155,33 @@ func (c *Client) UploadApplicationImage(ctx context.Context, image ApplicationIm
 }
 
 // GetApplicationImage returns the image that was uploaded for image, as
-// Pocket ID serves it now (each request has a URL of its own, so a cache
-// keyed on the whole URL does not answer it) (it strips metadata from JPEG, PNG and WebP files on
+// Pocket ID serves it now (it strips metadata from JPEG, PNG and WebP files on
 // upload, so the bytes can differ from the file sent). When there is none, the
 // error satisfies IsNotFound(err, ResourceImage). Pocket ID copies its bundled
 // e-mail logo, favicon and background into place at startup unless an
 // administrator deleted them, so those are always found.
+//
+// Pocket ID lets caches keep an image for 15 minutes and serve it stale for a
+// day (utils.SetCacheControlHeader), so the read goes through
+// getBinaryUncached: a URL no cache has seen and request headers that ask
+// caches to revalidate. Like every image read it is sent once, never retried.
 func (c *Client) GetApplicationImage(ctx context.Context, image ApplicationImage) ([]byte, error) {
-	endpoint, err := image.endpoint(true)
+	path, query, err := image.route()
 	if err != nil {
 		return nil, err
 	}
-	return c.doRequest(ctx, http.MethodGet, endpoint, nil)
+	// Pocket ID 2.15.0+ answers a GET without it with its bundled logo when
+	// none was uploaded; 2.14.0 ignores it and never does.
+	query.Set("default", "false")
+	body, _, err := c.getBinaryUncached(ctx, path, query, 0)
+	return body, err
 }
 
 // DeleteApplicationImage removes image. An image that is already gone
 // answers IsNotFound(err, ResourceImage). For an image Pocket ID cannot remove
 // it returns ErrApplicationImageNotDeletable without a request.
 func (c *Client) DeleteApplicationImage(ctx context.Context, image ApplicationImage) error {
-	endpoint, err := image.endpoint(false)
+	endpoint, err := image.endpoint()
 	if err != nil {
 		return err
 	}

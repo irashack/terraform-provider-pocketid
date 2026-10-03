@@ -19,12 +19,14 @@ import (
 func TestApplicationImageRoutes(t *testing.T) {
 	type request struct{ method, uri string }
 	var got request
+	var cacheControl, pragma string
 	var uploaded struct {
 		field, fileName, contentType string
 		content                      []byte
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got = request{r.Method, r.URL.RequestURI()}
+		cacheControl, pragma = r.Header.Get("Cache-Control"), r.Header.Get("Pragma")
 		if r.Method == http.MethodPut {
 			require.NoError(t, r.ParseMultipartForm(1<<20))
 			for field, files := range r.MultipartForm.File {
@@ -56,8 +58,8 @@ func TestApplicationImageRoutes(t *testing.T) {
 		extension        string
 		contentType      string
 	}{
-		{client.ApplicationImageLogoLight, "/api/application-images/logo?light=true", "/api/application-images/logo?light=true&default=false", "/api/application-images/logo?light=true", "svg", "image/svg+xml"},
-		{client.ApplicationImageLogoDark, "/api/application-images/logo?light=false", "/api/application-images/logo?light=false&default=false", "/api/application-images/logo?light=false", "png", "image/png"},
+		{client.ApplicationImageLogoLight, "/api/application-images/logo?light=true", "/api/application-images/logo?default=false&light=true", "/api/application-images/logo?light=true", "svg", "image/svg+xml"},
+		{client.ApplicationImageLogoDark, "/api/application-images/logo?light=false", "/api/application-images/logo?default=false&light=false", "/api/application-images/logo?light=false", "png", "image/png"},
 		{client.ApplicationImageEmailLogo, "/api/application-images/email", "/api/application-images/email?default=false", "", "jpg", "image/jpeg"},
 		{client.ApplicationImageBackground, "/api/application-images/background", "/api/application-images/background?default=false", "/api/application-images/background", "webp", "image/webp"},
 		{client.ApplicationImageFavicon, "/api/application-images/favicon", "/api/application-images/favicon?default=false", "", "ico", "image/x-icon"},
@@ -76,7 +78,9 @@ func TestApplicationImageRoutes(t *testing.T) {
 			assert.Equal(t, []byte("image-bytes"), body)
 			assert.Equal(t, http.MethodGet, got.method)
 			first := got.uri
-			require.Regexp(t, "^"+regexp.QuoteMeta(tc.get)+"&nocache=[0-9a-f]{24}$", first)
+			require.Regexp(t, "^"+regexp.QuoteMeta(tc.get)+"&nocache=[0-9a-f]{32}$", first)
+			assert.Equal(t, "no-cache", cacheControl, "the read asks caches to revalidate")
+			assert.Equal(t, "no-cache", pragma)
 			_, err = c.GetApplicationImage(ctx, tc.image)
 			require.NoError(t, err)
 			assert.NotEqual(t, first, got.uri, "every read has a URL of its own")

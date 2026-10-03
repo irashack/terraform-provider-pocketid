@@ -3,12 +3,12 @@
 page_title: "pocketid_application_image Resource - terraform-provider-pocketid"
 subcategory: ""
 description: |-
-  Uploads one of Pocket ID's application images (logos, e-mail logo, background, favicon or default profile picture) from a local file. Use one resource per image. The file is uploaded again when its content changes, and when Pocket ID holds a different image than the one this resource uploaded (it was replaced or removed outside Terraform). Each read adds a random nocache query parameter, so a cache in front of Pocket ID that keys on the whole URL never answers it; if your cache leaves query parameters out of its key, exclude /api/application-images/ from caching, or the provider may compare against an older image and upload yours again.
+  Uploads one of Pocket ID's application images (logos, e-mail logo, background, favicon or default profile picture) from a local file. Use one resource per image. The file is uploaded again when its content changes, and when Pocket ID holds a different image than the one this resource uploaded (it was replaced or removed outside Terraform). Each read adds a random nocache query parameter and asks caches to revalidate (Cache-Control: no-cache), so a cache in front of Pocket ID that keys on the whole URL or honors that header never answers it; if your cache does neither, exclude /api/application-images/ from caching, or the provider may compare against an older image and upload yours again.
 ---
 
 # pocketid_application_image (Resource)
 
-Uploads one of Pocket ID's application images (logos, e-mail logo, background, favicon or default profile picture) from a local file. Use one resource per image. The file is uploaded again when its content changes, and when Pocket ID holds a different image than the one this resource uploaded (it was replaced or removed outside Terraform). Each read adds a random `nocache` query parameter, so a cache in front of Pocket ID that keys on the whole URL never answers it; if your cache leaves query parameters out of its key, exclude `/api/application-images/` from caching, or the provider may compare against an older image and upload yours again.
+Uploads one of Pocket ID's application images (logos, e-mail logo, background, favicon or default profile picture) from a local file. Use one resource per image. The file is uploaded again when its content changes, and when Pocket ID holds a different image than the one this resource uploaded (it was replaced or removed outside Terraform). Each read adds a random `nocache` query parameter and asks caches to revalidate (`Cache-Control: no-cache`), so a cache in front of Pocket ID that keys on the whole URL or honors that header never answers it; if your cache does neither, exclude `/api/application-images/` from caching, or the provider may compare against an older image and upload yours again.
 
 ## Example Usage
 

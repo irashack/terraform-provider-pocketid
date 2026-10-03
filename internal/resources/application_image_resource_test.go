@@ -242,7 +242,7 @@ func TestApplicationImageUploadRecordsServedImage(t *testing.T) {
 	assert.Equal(t, "logo_dark", plan.ID.ValueString())
 	require.Len(t, server.requests, 2)
 	assert.Equal(t, "PUT /api/application-images/logo?light=false", server.requests[0])
-	assert.True(t, strings.HasPrefix(server.requests[1], "GET /api/application-images/logo?light=false&default=false&nocache="), server.requests[1])
+	assert.True(t, strings.HasPrefix(server.requests[1], "GET /api/application-images/logo?default=false&light=false&nocache="), server.requests[1])
 
 	// A file changed since the plan is not uploaded.
 	server.requests = nil
