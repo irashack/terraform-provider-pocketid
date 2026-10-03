@@ -80,12 +80,16 @@ A change Pocket ID may or may not have made (a lost or unreadable answer, a
 server or proxy error, a timeout) is never sent again by itself, and the
 resource keeps what it needs to settle it:
 
-- `pocketid_user` (with a chosen `id`) and `pocketid_group_membership`:
-  computed `unresolved_creation` is true. Plans, updates, deletes and
-  replacements are refused until it is settled; a refresh that sees the
-  membership clears it. Check the object, then `terraform state rm` the
-  resource and either `terraform import` it (if it is yours) or change the
-  configuration.
+- `pocketid_user` created with a chosen `id`: computed `unresolved_creation`
+  is true, and changing, deleting or replacing the user is refused, because a
+  user found under that ID may be someone else's. Check the user, then
+  `terraform state rm` the resource and either `terraform import` it with that
+  ID (if it is the intended user; the import clears the condition) or choose
+  another `id`.
+- `pocketid_group_membership`: computed `unresolved_creation` is true. A
+  refresh that sees the user in the group clears it; until then a refresh that
+  does not keeps the resource with a warning, and a destroy or replacement that
+  cannot see the membership is refused. `terraform state rm` gives up on it.
 - `pocketid_group_members`: computed `unresolved_user_ids` lists the users the
   request named. Plans are refused until a refresh reads the group and clears
   it; destroy reads the group and removes those users, or stops while the group
