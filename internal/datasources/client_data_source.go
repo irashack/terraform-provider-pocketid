@@ -6,7 +6,6 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
@@ -30,21 +29,6 @@ type clientDataSource struct {
 	client *client.Client
 }
 
-// clientDataSourceModel maps the data source schema data.
-type clientDataSourceModel struct {
-	ID                       types.String `tfsdk:"id"`
-	Name                     types.String `tfsdk:"name"`
-	CallbackURLs             types.List   `tfsdk:"callback_urls"`
-	LogoutCallbackURLs       types.List   `tfsdk:"logout_callback_urls"`
-	BackchannelLogoutURL     types.String `tfsdk:"backchannel_logout_url"`
-	IsPublic                 types.Bool   `tfsdk:"is_public"`
-	PkceEnabled              types.Bool   `tfsdk:"pkce_enabled"`
-	AllowedUserGroups        types.Set    `tfsdk:"allowed_user_groups"`
-	HasLogo                  types.Bool   `tfsdk:"has_logo"`
-	RequiresReauthentication types.Bool   `tfsdk:"requires_reauthentication"`
-	LaunchURL                types.String `tfsdk:"launch_url"`
-}
-
 // Metadata returns the data source type name.
 func (d *clientDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_client"
@@ -55,56 +39,11 @@ func (d *clientDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 	resp.Schema = schema.Schema{
 		Description:         "Fetches an OIDC client from Pocket-ID.",
 		MarkdownDescription: "Fetches an OIDC client from Pocket-ID by its ID.",
-		Attributes: map[string]schema.Attribute{
-			"id": schema.StringAttribute{
-				Description:         "The ID of the OIDC client to fetch.",
-				MarkdownDescription: "The ID of the OIDC client to fetch.",
-				Required:            true,
-			},
-			"name": schema.StringAttribute{
-				Description: "The display name of the OIDC client.",
-				Computed:    true,
-			},
-			"callback_urls": schema.ListAttribute{
-				Description: "List of allowed callback URLs for the OIDC client.",
-				Computed:    true,
-				ElementType: types.StringType,
-			},
-			"logout_callback_urls": schema.ListAttribute{
-				Description: "List of allowed logout callback URLs for the OIDC client.",
-				Computed:    true,
-				ElementType: types.StringType,
-			},
-			"backchannel_logout_url": schema.StringAttribute{
-				Description: "The OpenID Connect Back-Channel Logout URL of the client; null when it has none or the server predates Pocket ID 2.17.0.",
-				Computed:    true,
-			},
-			"is_public": schema.BoolAttribute{
-				Description: "Whether this is a public client (no client secret).",
-				Computed:    true,
-			},
-			"requires_reauthentication": schema.BoolAttribute{
-				Description: "Whether this client requires reauthentication on each authorization.",
-				Computed:    true,
-			},
-			"launch_url": schema.StringAttribute{
-				Description: "Optional launch URL associated with the client.",
-				Computed:    true,
-			},
-			"pkce_enabled": schema.BoolAttribute{
-				Description: "Whether PKCE is enabled for this client.",
-				Computed:    true,
-			},
-			"allowed_user_groups": schema.SetAttribute{
-				Description: "List of user group IDs that are allowed to use this client.",
-				Computed:    true,
-				ElementType: types.StringType,
-			},
-			"has_logo": schema.BoolAttribute{
-				Description: "Whether the client has a logo configured.",
-				Computed:    true,
-			},
-		},
+		Attributes: clientAttributes(schema.StringAttribute{
+			Description:         "The ID of the OIDC client to fetch.",
+			MarkdownDescription: "The ID of the OIDC client to fetch.",
+			Required:            true,
+		}),
 	}
 }
 
@@ -129,7 +68,7 @@ func (d *clientDataSource) Configure(_ context.Context, req datasource.Configure
 // Read refreshes the Terraform state with the latest data.
 func (d *clientDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
 	// Get current configuration
-	var config clientDataSourceModel
+	var config clientModel
 	diags := req.Config.Get(ctx, &config)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
@@ -140,7 +79,6 @@ func (d *clientDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 		"id": config.ID.ValueString(),
 	})
 
-	// Get client from API
 	clientResp, err := d.client.GetClient(ctx, config.ID.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError(
@@ -150,55 +88,6 @@ func (d *clientDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 		return
 	}
 
-	// Map response to model
-	state := clientDataSourceModel{
-		ID:                       types.StringValue(clientResp.ID),
-		Name:                     types.StringValue(clientResp.Name),
-		IsPublic:                 types.BoolValue(clientResp.IsPublic),
-		PkceEnabled:              types.BoolValue(clientResp.PkceEnabled),
-		HasLogo:                  types.BoolValue(clientResp.HasLogo),
-		RequiresReauthentication: types.BoolValue(clientResp.RequiresReauthentication),
-	}
-
-	if clientResp.LaunchURL != "" {
-		state.LaunchURL = types.StringValue(clientResp.LaunchURL)
-	} else {
-		state.LaunchURL = types.StringNull()
-	}
-	if clientResp.BackchannelLogoutURL != "" {
-		state.BackchannelLogoutURL = types.StringValue(clientResp.BackchannelLogoutURL)
-	} else {
-		state.BackchannelLogoutURL = types.StringNull()
-	}
-
-	// Map callback URLs
-	callbackURLs, diags := types.ListValueFrom(ctx, types.StringType, clientResp.CallbackURLs)
-	resp.Diagnostics.Append(diags...)
-	state.CallbackURLs = callbackURLs
-
-	// Map logout callback URLs
-	if len(clientResp.LogoutCallbackURLs) > 0 {
-		logoutCallbackURLs, diags := types.ListValueFrom(ctx, types.StringType, clientResp.LogoutCallbackURLs)
-		resp.Diagnostics.Append(diags...)
-		state.LogoutCallbackURLs = logoutCallbackURLs
-	} else {
-		state.LogoutCallbackURLs = types.ListNull(types.StringType)
-	}
-
-	// Map allowed user groups
-	if len(clientResp.AllowedUserGroups) > 0 {
-		var groupIDs []string
-		for _, group := range clientResp.AllowedUserGroups {
-			groupIDs = append(groupIDs, group.ID)
-		}
-		allowedGroups, diags := types.SetValueFrom(ctx, types.StringType, groupIDs)
-		resp.Diagnostics.Append(diags...)
-		state.AllowedUserGroups = allowedGroups
-	} else {
-		state.AllowedUserGroups = types.SetNull(types.StringType)
-	}
-
-	// Set state
-	diags = resp.State.Set(ctx, &state)
-	resp.Diagnostics.Append(diags...)
+	state := clientModelFromAPI(ctx, *clientResp)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }

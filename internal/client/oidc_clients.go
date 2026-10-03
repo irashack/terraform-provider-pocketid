@@ -20,13 +20,16 @@ type OIDCClient struct {
 	RequiresReauthentication bool   `json:"requiresReauthentication,omitempty"`
 	// Pointer so an absent field (Pocket-ID <= v2.8.0, which has no PAR support)
 	// is distinguishable from an explicit false.
-	RequiresPushedAuthorizationRequests *bool                 `json:"requiresPushedAuthorizationRequests,omitempty"`
-	LaunchURL                           string                `json:"launchURL,omitempty"`
-	PkceEnabled                         bool                  `json:"pkceEnabled"`
-	IsGroupRestricted                   bool                  `json:"isGroupRestricted"`
-	Credentials                         OIDCClientCredentials `json:"credentials"`
-	AllowedUserGroups                   []UserGroup           `json:"allowedUserGroups,omitempty"`
-	AllowedUserGroupsCount              int64                 `json:"allowedUserGroupsCount,omitempty"`
+	RequiresPushedAuthorizationRequests *bool  `json:"requiresPushedAuthorizationRequests,omitempty"`
+	LaunchURL                           string `json:"launchURL,omitempty"`
+	PkceEnabled                         bool   `json:"pkceEnabled"`
+	// PkceSupported is set by Pocket ID when the client sent PKCE although
+	// it is not required; an update with pkceEnabled false resets it.
+	PkceSupported          bool                  `json:"pkceSupported,omitempty"`
+	IsGroupRestricted      bool                  `json:"isGroupRestricted"`
+	Credentials            OIDCClientCredentials `json:"credentials"`
+	AllowedUserGroups      []UserGroup           `json:"allowedUserGroups,omitempty"`
+	AllowedUserGroupsCount int64                 `json:"allowedUserGroupsCount,omitempty"`
 	// ClientType is "standard", or "cimd" for a client created from a Client
 	// ID Metadata Document (Pocket ID 2.14.0+); empty on older servers.
 	ClientType string `json:"clientType,omitempty"`
@@ -65,6 +68,10 @@ type CreatedClientSecret struct {
 // OIDCClientCredentials represents federated identity credentials for an OIDC client
 type OIDCClientCredentials struct {
 	FederatedIdentities []OIDCClientFederatedIdentity `json:"federatedIdentities,omitempty"`
+	// Secrets lists the client's secrets without their values (Pocket ID
+	// 2.14.0+). It is read-only: the server ignores it in an update, and
+	// requests built by this provider leave it empty.
+	Secrets []ClientSecretMetadata `json:"secrets,omitempty"`
 }
 
 // OIDCClientFederatedIdentity represents a federated identity configuration

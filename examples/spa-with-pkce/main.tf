@@ -37,7 +37,7 @@ resource "pocketid_client" "spa" {
 
 # Verify the client configuration
 data "pocketid_client" "spa" {
-  client_id = pocketid_client.spa.id
+  id = pocketid_client.spa.id
 
   depends_on = [pocketid_client.spa]
 }

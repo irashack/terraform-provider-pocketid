@@ -111,6 +111,9 @@ func lifecycleModel() clientResourceModel {
 		RequiresReauthentication: types.BoolValue(false), RequiresPushedAuthorizationRequests: types.BoolValue(false),
 		LaunchURL: types.StringNull(), ClientSecret: types.StringUnknown(), BackchannelLogoutURL: types.StringNull(),
 		GenerateSecret: types.BoolValue(true), ClientSecretID: types.StringUnknown(), IsGroupRestricted: types.BoolUnknown(),
+		Description: types.StringUnknown(), SkipConsent: types.BoolUnknown(), AccessTokenDurationMinutes: types.Int64Unknown(),
+		RefreshTokenDurationMinutes: types.Int64Unknown(), HasDarkLogo: types.BoolUnknown(), ClientType: types.StringUnknown(),
+		PkceSupported: types.BoolUnknown(),
 	}
 }
 

@@ -198,9 +198,11 @@ output "spa_client_id" {
 
 ### Optional
 
+- `access_token_duration_minutes` (Number) Lifetime of the client's access tokens in minutes, 1 to 525600 (Pocket ID's default is 60). When omitted, the client keeps its current setting and state shows it.
 - `allowed_user_groups` (Set of String) IDs of the user groups whose members may use this client (when `is_group_restricted` is true). Omitting it and setting it to `[]` both mean none. Pocket ID silently ignores an ID that names no group; the apply then fails and names it.
 - `backchannel_logout_url` (String) URL to which Pocket ID sends an OpenID Connect Back-Channel Logout token when a user's access to this client is revoked: the user is disabled or deleted, loses access through a group change, or revokes the authorization, or the client is deleted. Must be an absolute http or https URL without a fragment; a public client (is_public = true) requires https. Requires Pocket ID 2.17.0 or later. When omitted, the client has no back-channel logout URL.
 - `client_id` (String) The client ID: 2 to 128 letters, digits, `.`, `_` or `-`. When omitted, Pocket ID generates one. Always equal to `id` once the client exists, including after import. Pocket ID cannot change a client's ID, so configuring a different value replaces the client.
+- `description` (String) A description of the client, at most 150 characters. When omitted, the client keeps the description it has (for example one set in the admin UI) and state shows it. Set it to `""` to remove it.
 - `federated_identities` (Attributes List) List of federated identities (workload identity federation) allowed to authenticate as this client. (see [below for nested schema](#nestedatt--federated_identities))
 - `generate_secret` (Boolean) Whether this resource generates a client secret for a confidential client and stores it in `client_secret`. Defaults to true. Set it to false when the client's secrets are managed elsewhere, for example by `pocketid_client_secret`; the client then holds no secret from this resource. Changing it from true to false revokes the secret this resource generated (a client whose secret cannot be told apart from its other secrets is left unchanged, with an error listing them); changing it from false to true generates one. A client imported, or created before this attribute existed, without a secret in state does not get one generated. Pocket ID 2.17.0 and later also create a secret of their own for a new confidential client; this resource always revokes that one.
 - `is_group_restricted` (Boolean) Whether only members of `allowed_user_groups` may sign in to this client. When omitted, the client is restricted if `allowed_user_groups` is not empty or if it is restricted already: giving a client groups restricts it, and removing them never opens a restricted client to everyone (it then admits nobody). Set it to false to let every user sign in; together with a non-empty `allowed_user_groups` that is an error. Set it to true with no groups to admit nobody.
@@ -208,15 +210,20 @@ output "spa_client_id" {
 - `launch_url` (String) The URL the Pocket ID dashboard opens for this client. When omitted, the client keeps the launch URL it has (set in the admin UI, or earlier by Terraform) and state shows it; an update never clears it. Set it to `""` to remove it.
 - `logout_callback_urls` (List of String) List of allowed logout callback URLs for the OIDC client. Omitting it and setting it to `[]` both mean none.
 - `pkce_enabled` (Boolean) Whether PKCE is enabled for this client. Defaults to true. Pocket ID always requires PKCE for a public client, so `is_public = true` with `pkce_enabled = false` is rejected.
+- `refresh_token_duration_minutes` (Number) Lifetime of the client's refresh tokens in minutes, 1 to 525600 (Pocket ID's default is 43200, 30 days). When omitted, the client keeps its current setting and state shows it.
 - `requires_pushed_authorization_requests` (Boolean) Whether this client requires Pushed Authorization Requests (PAR, RFC 9126). Defaults to false. Public clients can require PAR on Pocket ID 2.10.0 and later; Pocket ID 2.9.0 ignores it for a public client, so the provider refuses that combination there before changing anything. Enforced only by Pocket ID versions that support PAR (2.9.0 and later); on older versions the value is stored in state but not enforced.
 - `requires_reauthentication` (Boolean) Whether this client requires reauthentication for certain flows. Defaults to false.
+- `skip_consent` (Boolean) Whether users are not asked to consent before signing in to this client. When omitted, the client keeps its current setting and state shows it.
 
 ### Read-Only
 
 - `client_secret` (String, Sensitive) The client secret this resource generated, when `generate_secret` is true and the client is confidential. Pocket ID returns the value only when it creates the secret, so it is null for an imported client.
 - `client_secret_id` (String) The ID of the secret stored in `client_secret` (Pocket ID 2.14.0 and later). For state written before this attribute existed it is filled in on refresh when the secret can be identified by the prefix Pocket ID keeps of it.
+- `client_type` (String) How the client was registered: `standard`. (Clients registered from a Client ID Metadata Document, `cimd`, are not managed by this resource.)
+- `has_dark_logo` (Boolean) Whether the client has a logo for dark mode.
 - `has_logo` (Boolean) Whether the client has a logo configured.
 - `id` (String) The ID of the OIDC client.
+- `pkce_supported` (Boolean) Whether Pocket ID saw this client use PKCE although `pkce_enabled` is false; a hint that PKCE can be enabled. An update with `pkce_enabled = false` resets it.
 
 <a id="nestedatt--federated_identities"></a>
 ### Nested Schema for `federated_identities`

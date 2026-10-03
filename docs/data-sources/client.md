@@ -26,7 +26,7 @@ resource "pocketid_client" "app" {
 
 # Fetch the client by ID
 data "pocketid_client" "app" {
-  client_id = pocketid_client.app.id
+  id = pocketid_client.app.id
 }
 
 # Use the client data
@@ -44,7 +44,7 @@ output "client_has_logo" {
 
 # Example of fetching an existing client by known ID
 data "pocketid_client" "existing" {
-  client_id = "550e8400-e29b-41d4-a716-446655440000"
+  id = "550e8400-e29b-41d4-a716-446655440000"
 }
 
 # Check client configuration
@@ -54,6 +54,11 @@ output "existing_client_is_public" {
 
 output "existing_client_pkce_enabled" {
   value = data.pocketid_client.existing.pkce_enabled
+}
+
+# Secrets are listed without their values: check that none expires soon
+output "existing_client_secret_expiries" {
+  value = [for secret in data.pocketid_client.existing.secrets : secret.expires_at if secret.expires_at != null]
 }
 ```
 
@@ -66,13 +71,48 @@ output "existing_client_pkce_enabled" {
 
 ### Read-Only
 
-- `allowed_user_groups` (Set of String) List of user group IDs that are allowed to use this client.
+- `access_token_duration_minutes` (Number) Lifetime of the client's access tokens in minutes.
+- `allowed_user_groups` (Set of String) IDs of the user groups whose members may use this client; null when it has none.
 - `backchannel_logout_url` (String) The OpenID Connect Back-Channel Logout URL of the client; null when it has none or the server predates Pocket ID 2.17.0.
 - `callback_urls` (List of String) List of allowed callback URLs for the OIDC client.
+- `client_type` (String) How the client was registered: `standard`, or `cimd` for a client registered from a Client ID Metadata Document (Pocket ID 2.14.0 and later).
+- `description` (String) The client's description; empty when it has none.
+- `federated_identities` (Attributes List) Federated identities (workload identity federation) allowed to authenticate as this client. (see [below for nested schema](#nestedatt--federated_identities))
+- `has_dark_logo` (Boolean) Whether the client has a logo for dark mode.
 - `has_logo` (Boolean) Whether the client has a logo configured.
+- `is_group_restricted` (Boolean) Whether only members of `allowed_user_groups` may sign in to this client. True with no groups means nobody may.
 - `is_public` (Boolean) Whether this is a public client (no client secret).
-- `launch_url` (String) Optional launch URL associated with the client.
-- `logout_callback_urls` (List of String) List of allowed logout callback URLs for the OIDC client.
+- `launch_url` (String) The URL the Pocket ID dashboard opens for this client; null when it has none.
+- `logout_callback_urls` (List of String) List of allowed logout callback URLs for the OIDC client; null when it has none.
 - `name` (String) The display name of the OIDC client.
 - `pkce_enabled` (Boolean) Whether PKCE is enabled for this client.
+- `pkce_supported` (Boolean) Whether Pocket ID saw this client use PKCE although PKCE is not enabled for it.
+- `refresh_token_duration_minutes` (Number) Lifetime of the client's refresh tokens in minutes.
+- `requires_pushed_authorization_requests` (Boolean) Whether this client requires Pushed Authorization Requests (PAR); null when the server predates PAR.
 - `requires_reauthentication` (Boolean) Whether this client requires reauthentication on each authorization.
+- `secrets` (Attributes List) The client's secrets (Pocket ID 2.14.0 and later), without their values, which Pocket ID returns only when a secret is created. (see [below for nested schema](#nestedatt--secrets))
+- `skip_consent` (Boolean) Whether users are not asked to consent before signing in to this client.
+
+<a id="nestedatt--federated_identities"></a>
+### Nested Schema for `federated_identities`
+
+Read-Only:
+
+- `audience` (String) The expected audience; null when any is accepted.
+- `issuer` (String) The issuer of the federated identity token.
+- `jwks` (String) URL of the JWKS used to validate the token; null when not set.
+- `public_keys` (List of String) Explicit public keys used to validate the token, each a JSON-encoded JWK; null when not set.
+- `replay_protection` (Boolean) Whether a federated identity token may be used only once.
+- `subject` (String) The expected subject; null when any is accepted.
+
+
+<a id="nestedatt--secrets"></a>
+### Nested Schema for `secrets`
+
+Read-Only:
+
+- `created_at` (String) When the secret was created (RFC 3339).
+- `expires_at` (String) When the secret expires (RFC 3339); null when it never does.
+- `id` (String) The secret's ID.
+- `is_active` (Boolean) Whether the secret can still be used (it has not expired).
+- `prefix` (String) The first characters of the secret, as the admin UI shows them; empty for a secret migrated from before Pocket ID 2.14.0.

@@ -67,6 +67,11 @@ locals {
   ]
 }
 
+# Clients that every user may sign in to
+output "unrestricted_clients" {
+  value = [for client in data.pocketid_clients.all.clients : client.name if !client.is_group_restricted]
+}
+
 output "development_clients" {
   description = "Clients configured for localhost development"
   value       = [for client in local.localhost_clients : client.name]

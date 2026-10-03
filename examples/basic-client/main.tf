@@ -25,7 +25,7 @@ resource "pocketid_client" "example" {
 
 # Data source to verify the client was created
 data "pocketid_client" "example" {
-  client_id = pocketid_client.example.id
+  id = pocketid_client.example.id
 
   depends_on = [pocketid_client.example]
 }

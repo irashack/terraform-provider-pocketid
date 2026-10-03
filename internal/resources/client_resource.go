@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -16,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -63,6 +65,13 @@ type clientResourceModel struct {
 	RequiresPushedAuthorizationRequests types.Bool   `tfsdk:"requires_pushed_authorization_requests"`
 	LaunchURL                           types.String `tfsdk:"launch_url"`
 	FederatedIdentities                 types.List   `tfsdk:"federated_identities"`
+	Description                         types.String `tfsdk:"description"`
+	SkipConsent                         types.Bool   `tfsdk:"skip_consent"`
+	AccessTokenDurationMinutes          types.Int64  `tfsdk:"access_token_duration_minutes"`
+	RefreshTokenDurationMinutes         types.Int64  `tfsdk:"refresh_token_duration_minutes"`
+	HasDarkLogo                         types.Bool   `tfsdk:"has_dark_logo"`
+	ClientType                          types.String `tfsdk:"client_type"`
+	PkceSupported                       types.Bool   `tfsdk:"pkce_supported"`
 	GenerateSecret                      types.Bool   `tfsdk:"generate_secret"`
 	ClientSecret                        types.String `tfsdk:"client_secret"`
 	ClientSecretID                      types.String `tfsdk:"client_secret_id"`
@@ -250,6 +259,65 @@ func (r *clientResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 					boolplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"description": schema.StringAttribute{
+				Description: "A description of the client, at most 150 characters. When omitted, the client keeps the description it has (for example one set in the admin UI) and state shows it. Set it to `\"\"` to remove it.",
+				Optional:    true,
+				Computed:    true,
+				Validators: []validator.String{
+					stringvalidator.UTF8LengthAtMost(150),
+				},
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"skip_consent": schema.BoolAttribute{
+				Description: "Whether users are not asked to consent before signing in to this client. When omitted, the client keeps its current setting and state shows it.",
+				Optional:    true,
+				Computed:    true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"access_token_duration_minutes": schema.Int64Attribute{
+				Description: "Lifetime of the client's access tokens in minutes, 1 to 525600 (Pocket ID's default is 60). When omitted, the client keeps its current setting and state shows it.",
+				Optional:    true,
+				Computed:    true,
+				Validators: []validator.Int64{
+					int64validator.Between(clientTokenMinutesMin, clientTokenMinutesMax),
+				},
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
+				},
+			},
+			"refresh_token_duration_minutes": schema.Int64Attribute{
+				Description: "Lifetime of the client's refresh tokens in minutes, 1 to 525600 (Pocket ID's default is 43200, 30 days). When omitted, the client keeps its current setting and state shows it.",
+				Optional:    true,
+				Computed:    true,
+				Validators: []validator.Int64{
+					int64validator.Between(clientTokenMinutesMin, clientTokenMinutesMax),
+				},
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
+				},
+			},
+			"has_dark_logo": schema.BoolAttribute{
+				Description: "Whether the client has a logo for dark mode.",
+				Computed:    true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"client_type": schema.StringAttribute{
+				Description: "How the client was registered: `standard`. (Clients registered from a Client ID Metadata Document, `cimd`, are not managed by this resource.)",
+				Computed:    true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"pkce_supported": schema.BoolAttribute{
+				Description: "Whether Pocket ID saw this client use PKCE although `pkce_enabled` is false; a hint that PKCE can be enabled. An update with `pkce_enabled = false` resets it.",
+				Computed:    true,
+			},
 			"generate_secret": schema.BoolAttribute{
 				Description: "Whether this resource generates a client secret for a confidential client and stores it in `client_secret`. Defaults to true. " +
 					"Set it to false when the client's secrets are managed elsewhere, for example by `pocketid_client_secret`; the client then holds no secret from this resource. " +
@@ -431,14 +499,11 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 				plan.IsGroupRestricted = types.BoolValue(createReq.IsGroupRestricted)
 				plan.ClientSecret = types.StringNull()
 				plan.ClientSecretID = types.StringNull()
-				plan.HasLogo = types.BoolValue(false)
-				if plan.LaunchURL.IsUnknown() {
-					plan.LaunchURL = types.StringNull()
-				}
 				if found, readErr := r.client.GetClient(ctx, *createReq.ClientID); readErr == nil {
-					plan.HasLogo = types.BoolValue(found.HasLogo)
+					fillComputedFromServer(&plan, found)
 					detail += " A read found the fixed-ID client; its identity is retained in state."
 				} else {
+					fillComputedFromServer(&plan, &client.OIDCClient{})
 					detail += " The fixed ID is retained for recovery; its existence could not be confirmed."
 				}
 				resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
@@ -460,12 +525,9 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 	plan.ID = apiModel.ID
 	plan.ClientID = apiModel.ID
 	plan.IsGroupRestricted = types.BoolValue(createReq.IsGroupRestricted)
-	plan.HasLogo = apiModel.HasLogo
 	plan.RequiresReauthentication = apiModel.RequiresReauthentication
 	plan.FederatedIdentities = apiModel.FederatedIdentities
-	if plan.LaunchURL.IsUnknown() {
-		plan.LaunchURL = apiModel.LaunchURL
-	}
+	fillComputedFromServer(&plan, clientResp)
 	// Preserve the configured PAR value when the server does not return the field
 	// (Pocket-ID <= v2.8.0). Only override from the API when it is present.
 	if clientResp.RequiresPushedAuthorizationRequests != nil {
@@ -584,6 +646,13 @@ func (r *clientResource) Read(ctx context.Context, req resource.ReadRequest, res
 	state.LogoutCallbackURLs = stringListFromServer(clientResp.LogoutCallbackURLs, state.LogoutCallbackURLs)
 	state.AllowedUserGroups = groupSetFromServer(clientResp.AllowedUserGroups, state.AllowedUserGroups)
 	state.IsGroupRestricted = types.BoolValue(clientResp.IsGroupRestricted)
+	state.Description = types.StringValue(clientResp.Description)
+	state.SkipConsent = types.BoolValue(clientResp.SkipConsent)
+	state.AccessTokenDurationMinutes = optionalMinutes(clientResp.AccessTokenDurationMinutes)
+	state.RefreshTokenDurationMinutes = optionalMinutes(clientResp.RefreshTokenDurationMinutes)
+	state.HasDarkLogo = types.BoolValue(clientResp.HasDarkLogo)
+	state.ClientType = optionalString(clientResp.ClientType)
+	state.PkceSupported = types.BoolValue(clientResp.PkceSupported)
 
 	// client_secret is never returned by Pocket ID after creation, so it
 	// stays as stored. State written before generate_secret existed always
@@ -721,6 +790,20 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 	}
 
 	preserveUnmanagedClientFields(updateReq, current)
+	// Optional settings: a configured value is sent; an omitted one keeps
+	// the value the server holds right now (preserveUnmanagedClientFields).
+	if !config.Description.IsNull() {
+		updateReq.Description = plan.Description.ValueString()
+	}
+	if !config.SkipConsent.IsNull() {
+		updateReq.SkipConsent = plan.SkipConsent.ValueBool()
+	}
+	if !config.AccessTokenDurationMinutes.IsNull() {
+		updateReq.AccessTokenDurationMinutes = plan.AccessTokenDurationMinutes.ValueInt64()
+	}
+	if !config.RefreshTokenDurationMinutes.IsNull() {
+		updateReq.RefreshTokenDurationMinutes = plan.RefreshTokenDurationMinutes.ValueInt64()
+	}
 
 	// On Pocket ID 2.17, turning the restriction on signs out every user who
 	// authorized the client and is in none of its allowed groups at that
@@ -765,17 +848,12 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 	// Update state values. Planned values that were known are kept: an
 	// unconfigured setting changed outside Terraform since the last refresh
 	// was sent back unchanged and shows up on the next refresh.
-	if plan.HasLogo.IsUnknown() {
-		plan.HasLogo = types.BoolValue(clientResp.HasLogo)
-	}
+	fillComputedFromServer(&plan, clientResp)
 	plan.RequiresReauthentication = types.BoolValue(clientResp.RequiresReauthentication)
 	plan.FederatedIdentities = federatedIdentitiesToList(ctx, clientResp.Credentials.FederatedIdentities)
 	// Preserve the configured PAR value unless the server returns the field.
 	if clientResp.RequiresPushedAuthorizationRequests != nil {
 		plan.RequiresPushedAuthorizationRequests = types.BoolValue(*clientResp.RequiresPushedAuthorizationRequests)
-	}
-	if plan.LaunchURL.IsUnknown() {
-		plan.LaunchURL = optionalString(clientResp.LaunchURL)
 	}
 	plan.IsGroupRestricted = types.BoolValue(isGroupRestricted)
 
@@ -815,6 +893,7 @@ func (r *clientResource) ModifyPlan(ctx context.Context, req resource.ModifyPlan
 
 	planSecretAttributes(state, &plan)
 	planGroupRestriction(state, config, &plan)
+	planPkceSupported(state, &plan)
 	warnOnOpening(state, plan, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
@@ -943,7 +1022,12 @@ func buildCreateRequestFromPlan(ctx context.Context, plan *clientResourceModel) 
 
 	isGroupRestricted := resolveGroupRestriction(plan.IsGroupRestricted, setStrings(plan.AllowedUserGroups), false)
 
+	// Unset optional settings are left to the server's defaults.
 	return &client.OIDCClientCreateRequest{
+		Description:                         plan.Description.ValueString(),
+		SkipConsent:                         plan.SkipConsent.ValueBool(),
+		AccessTokenDurationMinutes:          plan.AccessTokenDurationMinutes.ValueInt64(),
+		RefreshTokenDurationMinutes:         plan.RefreshTokenDurationMinutes.ValueInt64(),
 		Name:                                plan.Name.ValueString(),
 		CallbackURLs:                        callbackURLs,
 		LogoutCallbackURLs:                  logoutCallbackURLs,

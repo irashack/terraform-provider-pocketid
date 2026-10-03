@@ -326,6 +326,9 @@ func managedModel() clientResourceModel {
 	m.ClientSecret = types.StringValue("gen0synthetic-held-secret")
 	m.ClientSecretID = types.StringValue("00000000-0000-4000-8000-000000000000")
 	m.IsGroupRestricted = types.BoolValue(false)
+	m.Description, m.SkipConsent = types.StringValue(""), types.BoolValue(false)
+	m.AccessTokenDurationMinutes, m.RefreshTokenDurationMinutes = types.Int64Value(60), types.Int64Value(43200)
+	m.HasDarkLogo, m.ClientType, m.PkceSupported = types.BoolValue(false), types.StringValue("standard"), types.BoolValue(false)
 	return m
 }
 
@@ -346,6 +349,11 @@ func configOf(m clientResourceModel) clientResourceModel {
 	m.HasLogo = types.BoolNull()
 	m.ClientSecret = types.StringNull()
 	m.ClientSecretID = types.StringNull()
+	m.HasDarkLogo, m.ClientType, m.PkceSupported = types.BoolNull(), types.StringNull(), types.BoolNull()
+	if !m.Description.IsUnknown() {
+		m.Description, m.SkipConsent = types.StringNull(), types.BoolNull()
+		m.AccessTokenDurationMinutes, m.RefreshTokenDurationMinutes = types.Int64Null(), types.Int64Null()
+	}
 	if !m.IsGroupRestricted.IsUnknown() {
 		m.IsGroupRestricted = types.BoolNull()
 	}

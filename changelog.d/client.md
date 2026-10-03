@@ -72,3 +72,19 @@
   `pocketid_clients` data source lists such clients. Importing any other ID
   Pocket ID cannot have now fails with a clear message before a request is
   sent.
+- `pocketid_client` exposes `description`, `skip_consent`,
+  `access_token_duration_minutes` and `refresh_token_duration_minutes`, which
+  it used to carry through without showing them. When omitted, the client
+  keeps its current values (for example ones set in the admin UI) and state
+  shows them; when set, they are managed. `description = ""` removes a
+  description. New computed attributes: `has_dark_logo`, `client_type` and
+  `pkce_supported`. For existing state they appear on the next refresh; that
+  is not a planned change.
+- The `pocketid_client` and `pocketid_clients` data sources now also report
+  `description`, `skip_consent`, the token lifetimes,
+  `requires_pushed_authorization_requests`, `has_dark_logo`, `client_type`,
+  `pkce_supported`, `is_group_restricted`, `federated_identities` and the
+  client's `secrets` (ID, prefix, creation and expiry time, whether active;
+  never a value).
+- The `pocketid_client` data source examples used `client_id`, which is not
+  an argument of that data source; they now use `id`.
