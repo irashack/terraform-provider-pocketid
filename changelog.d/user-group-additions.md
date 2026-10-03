@@ -77,3 +77,9 @@
   and the next plan shows an upload that records it. Pocket ID has no
   conditional delete, so a picture uploaded between the provider's check and
   its delete request is still removed.
+- In `pocketid_groups`, each group's `user_count` is now the size of its
+  `member_ids`, counted from the same pass over the users, instead of the count
+  the group list reported from an earlier request; the two could disagree when a
+  membership changed while the data source was read. The groups, users and
+  clients are still read in separate passes, so the result is not an atomic
+  snapshot of the server.

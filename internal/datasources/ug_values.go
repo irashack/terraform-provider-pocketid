@@ -28,3 +28,19 @@ func ugIDSetValue(ctx context.Context, ids []string) (types.Set, diag.Diagnostic
 	}
 	return types.SetValueFrom(ctx, types.StringType, ids)
 }
+
+// ugUniqueIDs returns ids without repeats, in order of first appearance. A
+// group's members are counted from the result, so the count and the set it
+// describes cannot disagree.
+func ugUniqueIDs(ids []string) []string {
+	seen := make(map[string]struct{}, len(ids))
+	unique := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if _, duplicate := seen[id]; duplicate {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	return unique
+}

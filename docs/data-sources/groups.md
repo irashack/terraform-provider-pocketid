@@ -2,12 +2,12 @@
 page_title: "pocketid_groups Data Source - terraform-provider-pocketid"
 subcategory: ""
 description: |-
-  Retrieves information about all Pocket-ID groups. Each group's members are built from one pass over the user list and its allowed clients from one pass over the client list, so the cost grows with the number of users and clients, not with one request per group (except against Pocket ID 2.14, whose client list does not carry groups: there the allowed clients cost one request per group).
+  Retrieves information about all Pocket-ID groups. Each group's members are built from one pass over the user list and its allowed clients from one pass over the client list, so the cost grows with the number of users and clients, not with one request per group (except against Pocket ID 2.14, whose client list does not carry groups: there the allowed clients cost one request per group). The groups, the users and the clients are read in separate passes, which together are not an atomic snapshot: a change made while the data source is being read can show in one collection and not in another. user_count is counted from the same member set as member_ids, so the two always agree with each other, though not necessarily with the server at any single moment.
 ---
 
 # pocketid_groups (Data Source)
 
-Retrieves information about all Pocket-ID groups. Each group's members are built from one pass over the user list and its allowed clients from one pass over the client list, so the cost grows with the number of users and clients, not with one request per group (except against Pocket ID 2.14, whose client list does not carry groups: there the allowed clients cost one request per group).
+Retrieves information about all Pocket-ID groups. Each group's members are built from one pass over the user list and its allowed clients from one pass over the client list, so the cost grows with the number of users and clients, not with one request per group (except against Pocket ID 2.14, whose client list does not carry groups: there the allowed clients cost one request per group). The groups, the users and the clients are read in separate passes, which together are not an atomic snapshot: a change made while the data source is being read can show in one collection and not in another. `user_count` is counted from the same member set as `member_ids`, so the two always agree with each other, though not necessarily with the server at any single moment.
 
 ## Example Usage
 
@@ -88,6 +88,6 @@ Read-Only:
 - `friendly_name` (String) The friendly display name of the group.
 - `id` (String) The ID of the group.
 - `ldap_id` (String) The LDAP identifier of the group, if it is synced from LDAP. Null for groups not managed by LDAP.
-- `member_ids` (Set of String) The IDs of the users in the group. Empty when the group has no members.
+- `member_ids` (Set of String) The IDs of the users in the group, from the pass over the user list. Empty when the group has no members.
 - `name` (String) The unique name identifier of the group.
-- `user_count` (Number) The number of users in the group.
+- `user_count` (Number) The number of users in the group: the size of `member_ids`, counted from the same deduplicated set (not the count the group list reports, which comes from a different request).

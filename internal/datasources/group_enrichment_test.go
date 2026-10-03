@@ -191,6 +191,39 @@ func TestGroupsDataSource_Read_BuildsRelationsFromBulkLists(t *testing.T) {
 	assert.Equal(t, 1, fake.count("GET /api/oidc/clients"))
 }
 
+// user_count describes the same memberships as member_ids. The group list's own
+// count comes from an earlier request than the user list the members are built
+// from, so a membership that changed in between made them disagree: here the
+// list claims no members for a group that has two, and members for groups that
+// have none or one. The count is taken from the members, once each.
+func TestGroupsDataSource_Read_UserCountIsTheSizeOfMemberIDs(t *testing.T) {
+	f := newB2GroupListFixture(3, 0, 0)
+	f.groups[0].(map[string]any)["userCount"] = 0 // two users joined after the list was read
+	f.groups[1].(map[string]any)["userCount"] = 7 // members left after the list was read
+	f.groups[2].(map[string]any)["userCount"] = 4
+	f.users = []any{
+		map[string]any{"id": b2UUID(1000), "username": "a", "email": "a@example.com", "customClaims": []any{},
+			"userGroups": []any{map[string]any{"id": b2UUID(1)}, map[string]any{"id": b2UUID(2)}}},
+		// Listed twice in the same group.
+		map[string]any{"id": b2UUID(1001), "username": "b", "email": "b@example.com", "customClaims": []any{},
+			"userGroups": []any{map[string]any{"id": b2UUID(1)}, map[string]any{"id": b2UUID(1)}}},
+	}
+	fake := newB2Fake(t)
+	f.serve(fake)
+
+	rows := b2ReadGroupsList(t, fake)
+	require.Len(t, rows, 3)
+	assert.ElementsMatch(t, []string{b2UUID(1000), b2UUID(1001)}, rows[0].MemberIDs)
+	assert.Equal(t, int64(2), rows[0].UserCount, "counted from the members, each user once")
+	assert.Equal(t, []string{b2UUID(1000)}, rows[1].MemberIDs)
+	assert.Equal(t, int64(1), rows[1].UserCount)
+	assert.Empty(t, rows[2].MemberIDs)
+	assert.Equal(t, int64(0), rows[2].UserCount)
+	for _, row := range rows {
+		assert.Len(t, row.MemberIDs, int(row.UserCount))
+	}
+}
+
 // A group nobody belongs to and no client allows has empty sets.
 func TestGroupsDataSource_Read_GroupWithoutRelations(t *testing.T) {
 	f := newB2GroupListFixture(3, 1, 0)

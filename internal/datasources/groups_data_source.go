@@ -57,7 +57,9 @@ func (d *groupsDataSource) Metadata(_ context.Context, req datasource.MetadataRe
 // Schema defines the schema for the data source.
 func (d *groupsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Retrieves information about all Pocket-ID groups. Each group's members are built from one pass over the user list and its allowed clients from one pass over the client list, so the cost grows with the number of users and clients, not with one request per group (except against Pocket ID 2.14, whose client list does not carry groups: there the allowed clients cost one request per group).",
+		Description: "Retrieves information about all Pocket-ID groups. Each group's members are built from one pass over the user list and its allowed clients from one pass over the client list, so the cost grows with the number of users and clients, not with one request per group (except against Pocket ID 2.14, whose client list does not carry groups: there the allowed clients cost one request per group). " +
+			"The groups, the users and the clients are read in separate passes, which together are not an atomic snapshot: a change made while the data source is being read can show in one collection and not in another. " +
+			"`user_count` is counted from the same member set as `member_ids`, so the two always agree with each other, though not necessarily with the server at any single moment.",
 
 		Attributes: map[string]schema.Attribute{
 			"groups": schema.ListNestedAttribute{
@@ -91,7 +93,7 @@ func (d *groupsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 							ElementType: types.StringType,
 						},
 						"member_ids": schema.SetAttribute{
-							Description: "The IDs of the users in the group. Empty when the group has no members.",
+							Description: "The IDs of the users in the group, from the pass over the user list. Empty when the group has no members.",
 							Computed:    true,
 							ElementType: types.StringType,
 						},
@@ -101,7 +103,7 @@ func (d *groupsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 							ElementType: types.StringType,
 						},
 						"user_count": schema.Int64Attribute{
-							Description: "The number of users in the group.",
+							Description: "The number of users in the group: the size of `member_ids`, counted from the same deduplicated set (not the count the group list reports, which comes from a different request).",
 							Computed:    true,
 						},
 					},
@@ -166,7 +168,9 @@ func (d *groupsDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 		return
 	}
 
-	// Map response body to model
+	// Map response body to model. A group's members are counted from the set
+	// that is reported, never from the group list's own userCount: that comes
+	// from an earlier request, and the two could describe different memberships.
 	data.Groups = make([]groupModel, len(groupsResp))
 	for i, group := range groupsResp {
 		gm := groupModel{
@@ -175,7 +179,6 @@ func (d *groupsDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 			FriendlyName: types.StringValue(group.FriendlyName),
 			LdapID:       types.StringNull(),
 			CreatedAt:    types.StringNull(),
-			UserCount:    types.Int64Value(int64(group.UserCount)),
 		}
 		if group.LdapID != nil && *group.LdapID != "" {
 			gm.LdapID = types.StringValue(*group.LdapID)
@@ -198,8 +201,10 @@ func (d *groupsDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 		var diags diag.Diagnostics
 		gm.CustomClaims, diags = ugClaimsMapValue(ctx, group.CustomClaims)
 		resp.Diagnostics.Append(diags...)
-		gm.MemberIDs, diags = ugIDSetValue(ctx, members[group.ID])
+		memberIDs := ugUniqueIDs(members[group.ID])
+		gm.MemberIDs, diags = ugIDSetValue(ctx, memberIDs)
 		resp.Diagnostics.Append(diags...)
+		gm.UserCount = types.Int64Value(int64(len(memberIDs)))
 		gm.AllowedClientIDs, diags = ugIDSetValue(ctx, clientIDs)
 		resp.Diagnostics.Append(diags...)
 		data.Groups[i] = gm
