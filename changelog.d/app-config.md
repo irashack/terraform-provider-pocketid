@@ -63,7 +63,10 @@
   (checked at plan time). Destroying the logos, the background or the default
   profile picture removes them; Pocket ID cannot remove the e-mail logo or the
   favicon, so destroying those leaves the image in place, with a warning.
-  Uploads are sent once, never retried, and limited to 10 MiB.
+  Uploads are sent once, never retried, and limited by the provider to 10 MiB
+  and, for JPEG and PNG, to 16 million pixels on every server version (Pocket
+  ID 2.15.0 and later refuse larger JPEG and PNG images themselves; 2.14.0
+  does not).
 - `pocketid_application_config` refuses an update, before sending anything,
   when Pocket ID's current configuration leaves out a setting the update would
   have to send back unchanged (a password among them), or lists one without a

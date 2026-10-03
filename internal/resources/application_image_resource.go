@@ -9,7 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	_ "image/jpeg" // image.DecodeConfig for Pocket ID's pixel limit
+	_ "image/jpeg" // image.DecodeConfig for the pixel limit
 	_ "image/png"
 	"io"
 	"io/fs"
@@ -57,8 +57,10 @@ type applicationImageModel struct {
 	SHA256 types.String `tfsdk:"sha256"`
 }
 
-// applicationImageMaxPixels is Pocket ID's limit on a JPEG or PNG image
-// (utils/image: maxImagePixels, checked with image.DecodeConfig).
+// applicationImageMaxPixels is this provider's limit on a JPEG or PNG image,
+// on every server version, like its size limit. It is the limit Pocket ID
+// 2.15.0 and later apply (utils/image: maxImagePixels, checked with
+// image.DecodeConfig); 2.14.0 has none.
 const applicationImageMaxPixels = 16_000_000
 
 // applicationImageStoredKey is the private-state key holding the SHA-256 of
@@ -111,8 +113,10 @@ func (r *applicationImageResource) Schema(_ context.Context, _ resource.SchemaRe
 			"source": schema.StringAttribute{
 				MarkdownDescription: fmt.Sprintf("Path of the image file to upload. Pocket ID takes the image's type from the file "+
 					"name's extension (any case), which must be one `kind` accepts. The file is uploaded again when its content "+
-					"or its extension changes; another path to the same content with the same extension is not uploaded. At most %d bytes; a JPEG or PNG image may have at "+
-					"most %d pixels.", client.MaxApplicationImageBytes, applicationImageMaxPixels),
+					"or its extension changes; another path to the same content with the same extension is not uploaded. "+
+					"This provider uploads files of at most %d bytes, and JPEG and PNG images of at most %d pixels, whatever the "+
+					"server version (Pocket ID itself has no size limit for these images; 2.15.0 and later refuse JPEG and PNG "+
+					"images over that pixel count, 2.14.0 does not).", client.MaxApplicationImageBytes, applicationImageMaxPixels),
 				Required:   true,
 				Validators: []validator.String{stringvalidator.LengthAtLeast(1)},
 			},
@@ -194,10 +198,11 @@ func readApplicationImageSource(kind client.ApplicationImage, source string) ([]
 	}
 	switch applicationImageExtension(source) {
 	case "jpg", "jpeg", "png":
-		// Pocket ID refuses an image with too many pixels; one it cannot
-		// decode is accepted as it is, so it is not refused here either.
+		// Pocket ID 2.15.0+ refuses an image with too many pixels; one it
+		// cannot decode is accepted as it is, so it is not refused here
+		// either.
 		if config, _, err := image.DecodeConfig(bytes.NewReader(content)); err == nil && int64(config.Width)*int64(config.Height) > applicationImageMaxPixels {
-			return nil, "", fmt.Errorf("the image is %dx%d pixels; Pocket ID accepts at most %d pixels", config.Width, config.Height, applicationImageMaxPixels)
+			return nil, "", fmt.Errorf("the image is %dx%d pixels; this provider uploads JPEG and PNG images of at most %d pixels (Pocket ID 2.15.0 and later refuse larger ones)", config.Width, config.Height, applicationImageMaxPixels)
 		}
 	}
 	return content, sha256Hex(content), nil

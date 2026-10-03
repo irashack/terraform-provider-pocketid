@@ -148,7 +148,7 @@ func TestReadApplicationImageSourceLimits(t *testing.T) {
 	tooManyPixels := writeImageFile(t, "logo.png", pngHeader(t, 4001, 4000))
 	_, _, err = readApplicationImageSource(client.ApplicationImageLogoLight, tooManyPixels)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "4001x4000 pixels")
+	assert.Contains(t, err.Error(), "4001x4000 pixels; this provider uploads JPEG and PNG images of at most 16000000 pixels")
 
 	// Not decodable: Pocket ID accepts it as it is, so it is not refused.
 	_, _, err = readApplicationImageSource(client.ApplicationImageLogoLight, writeImageFile(t, "logo.png", []byte("not a png")))
