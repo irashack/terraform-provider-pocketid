@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 )
 
@@ -41,8 +40,8 @@ func (c *Client) CreateScimServiceProvider(ctx context.Context, req *ScimService
 	}
 
 	var result ScimServiceProvider
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("error unmarshaling response: %w", err)
+	if err := decodeResponse(body, &result); err != nil {
+		return nil, err
 	}
 	if err := checkCreatedID("SCIM service provider", "", result.ID); err != nil {
 		return nil, fmt.Errorf("SCIM service provider creation returned no usable ID, so no follow-up request uses it; the SCIM service provider may exist: inspect before recovery: %w", err)
@@ -64,8 +63,8 @@ func (c *Client) GetClientScimServiceProvider(ctx context.Context, clientID stri
 	}
 
 	var result ScimServiceProvider
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("error unmarshaling response: %w", err)
+	if err := decodeResponse(body, &result); err != nil {
+		return nil, err
 	}
 
 	return &result, nil
@@ -83,8 +82,8 @@ func (c *Client) UpdateScimServiceProvider(ctx context.Context, id string, req *
 	}
 
 	var result ScimServiceProvider
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("error unmarshaling response: %w", err)
+	if err := decodeResponse(body, &result); err != nil {
+		return nil, err
 	}
 
 	return &result, nil

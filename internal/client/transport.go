@@ -354,6 +354,22 @@ const (
 	maxErrorBodyBytes    = 64 << 10
 )
 
+// ErrUndecodableResponse is a response body that is not the JSON a method
+// expects. It is returned alone: the JSON decoder's own error is dropped,
+// because it can quote the response (a numeric literal that does not fit, the
+// type of a value), and a server can make that literal as long as the
+// response limit allows.
+var ErrUndecodableResponse = errors.New("error unmarshaling response: the response is not the JSON this provider expects")
+
+// decodeResponse decodes a JSON response body into v, returning
+// ErrUndecodableResponse, and nothing else, when it cannot.
+func decodeResponse(body []byte, v any) error {
+	if err := json.Unmarshal(body, v); err != nil {
+		return ErrUndecodableResponse
+	}
+	return nil
+}
+
 // errResponseTooLarge reports a body over its limit. It never carries any of
 // the body's content.
 var errResponseTooLarge = errors.New("response body exceeds the size limit")

@@ -51,8 +51,8 @@ func (c *Client) CreateUser(ctx context.Context, user *UserCreateRequest) (*User
 	}
 
 	var result User
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("error unmarshaling response: %w", err)
+	if err := decodeResponse(body, &result); err != nil {
+		return nil, err
 	}
 	// The request carries no ID yet, so the server chose it.
 	if err := checkCreatedID("user", "", result.ID); err != nil {
@@ -74,8 +74,8 @@ func (c *Client) GetUser(ctx context.Context, userID string) (*User, error) {
 	}
 
 	var result User
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("error unmarshaling response: %w", err)
+	if err := decodeResponse(body, &result); err != nil {
+		return nil, err
 	}
 
 	return &result, nil
@@ -93,8 +93,8 @@ func (c *Client) UpdateUser(ctx context.Context, userID string, user *UserCreate
 	}
 
 	var result User
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("error unmarshaling response: %w", err)
+	if err := decodeResponse(body, &result); err != nil {
+		return nil, err
 	}
 
 	return &result, nil

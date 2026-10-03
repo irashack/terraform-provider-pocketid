@@ -2,8 +2,6 @@ package client
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 )
 
 // CustomClaim represents a custom claim for users or groups
@@ -28,8 +26,8 @@ func (c *Client) UpdateUserCustomClaims(ctx context.Context, userID string, clai
 	}
 
 	var result []CustomClaim
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("error unmarshaling response: %w", err)
+	if err := decodeResponse(body, &result); err != nil {
+		return nil, err
 	}
 
 	return result, nil
@@ -51,8 +49,8 @@ func (c *Client) UpdateGroupCustomClaims(ctx context.Context, groupID string, cl
 	}
 
 	var result []CustomClaim
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("error unmarshaling response: %w", err)
+	if err := decodeResponse(body, &result); err != nil {
+		return nil, err
 	}
 
 	return result, nil

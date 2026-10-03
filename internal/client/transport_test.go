@@ -641,3 +641,64 @@ func TestClient_RetryDeadlineLeavesFastReadsAndMutationsAlone(t *testing.T) {
 	_, err = c.UpdateClient(context.Background(), "test-client-id", &client.OIDCClientCreateRequest{Name: "n"})
 	require.NoError(t, err, "a mutation slower than the read deadline still completes")
 }
+
+// A response the decoder rejects never reaches the error text: the decoder's
+// own message can quote a literal from the response (here a number too large
+// for its field, which a server can make as long as it likes), so the
+// methods return ErrUndecodableResponse alone.
+func TestClient_DecodeErrorsNeverQuoteTheResponse(t *testing.T) {
+	const literal = "98765432109876543210987654321098765432109876543210"
+	cases := map[string]struct {
+		body string
+		call func(c *client.Client) error
+	}{
+		"client": {`{"id":"c1","accessTokenDurationMinutes":` + literal + `}`, func(c *client.Client) error {
+			_, err := c.GetClient(context.Background(), "c1")
+			return err
+		}},
+		"client list page": {`{"data":[{"id":"c1","accessTokenDurationMinutes":` + literal + `}],"pagination":{"totalPages":1,"totalItems":1,"currentPage":1}}`, func(c *client.Client) error {
+			_, err := c.ListClients(context.Background())
+			return err
+		}},
+		"pagination block": {`{"data":[],"pagination":{"totalPages":` + literal + `}}`, func(c *client.Client) error {
+			_, err := c.ListUserGroups(context.Background())
+			return err
+		}},
+		"group": {`{"id":"g","userCount":` + literal + `}`, func(c *client.Client) error {
+			_, err := c.GetUserGroup(context.Background(), validUUID)
+			return err
+		}},
+		"user": {`{"id":"u","isAdmin":` + literal + `}`, func(c *client.Client) error {
+			_, err := c.GetUser(context.Background(), validUUID)
+			return err
+		}},
+		"application config": {`[{"key":"appName","value":` + literal + `}]`, func(c *client.Client) error {
+			_, err := c.GetApplicationConfig(context.Background())
+			return err
+		}},
+		"custom claims": {`[{"key":"k","value":` + literal + `}]`, func(c *client.Client) error {
+			_, err := c.UpdateUserCustomClaims(context.Background(), validUUID, nil)
+			return err
+		}},
+		"SCIM": {`{"id":"s","endpoint":` + literal + `}`, func(c *client.Client) error {
+			_, err := c.GetClientScimServiceProvider(context.Background(), "c1")
+			return err
+		}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprint(w, tc.body)
+			}))
+			defer server.Close()
+			c, err := client.NewClient(server.URL, "test-token", false, 30)
+			require.NoError(t, err)
+
+			err = tc.call(c)
+			require.Error(t, err)
+			assert.Equal(t, client.ErrUndecodableResponse, err, "the sentinel alone, wrapping nothing")
+			assert.NotContains(t, err.Error(), literal[:12])
+		})
+	}
+}

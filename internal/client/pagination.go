@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -63,8 +62,8 @@ func getPage[T any](ctx context.Context, c *Client, endpoint string, query url.V
 		return nil, err
 	}
 	var result PaginatedResponse[T]
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("error unmarshaling response: %w", err)
+	if err := decodeResponse(body, &result); err != nil {
+		return nil, err
 	}
 	return &result, nil
 }

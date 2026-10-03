@@ -116,8 +116,8 @@ func (c *Client) CreateClient(ctx context.Context, createReq *OIDCClientCreateRe
 	}
 
 	var result OIDCClient
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("error unmarshaling response: %w", err)
+	if err := decodeResponse(body, &result); err != nil {
+		return nil, err
 	}
 
 	if result.ID == "" {
@@ -150,8 +150,8 @@ func (c *Client) GetClient(ctx context.Context, clientID string) (*OIDCClient, e
 	}
 
 	var result OIDCClient
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("error unmarshaling response: %w", err)
+	if err := decodeResponse(body, &result); err != nil {
+		return nil, err
 	}
 
 	return &result, nil
@@ -169,8 +169,8 @@ func (c *Client) UpdateClient(ctx context.Context, clientID string, updateReq *O
 	}
 
 	var result OIDCClient
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("error unmarshaling response: %w", err)
+	if err := decodeResponse(body, &result); err != nil {
+		return nil, err
 	}
 
 	return &result, nil

@@ -2,8 +2,6 @@ package client
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"reflect"
 	"strings"
 )
@@ -129,8 +127,8 @@ func (c *Client) GetApplicationConfig(ctx context.Context) (*ApplicationConfig, 
 	}
 
 	var vars []AppConfigVariable
-	if err := json.Unmarshal(body, &vars); err != nil {
-		return nil, fmt.Errorf("error unmarshaling response: %w", err)
+	if err := decodeResponse(body, &vars); err != nil {
+		return nil, err
 	}
 
 	return appConfigVariablesToConfig(vars), nil
@@ -146,8 +144,8 @@ func (c *Client) UpdateApplicationConfig(ctx context.Context, cfg *ApplicationCo
 	}
 
 	var vars []AppConfigVariable
-	if err := json.Unmarshal(body, &vars); err != nil {
-		return nil, fmt.Errorf("error unmarshaling response: %w", err)
+	if err := decodeResponse(body, &vars); err != nil {
+		return nil, err
 	}
 
 	return appConfigVariablesToConfig(vars), nil

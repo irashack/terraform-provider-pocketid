@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 )
 
@@ -32,8 +31,8 @@ func (c *Client) CreateUserGroup(ctx context.Context, group *UserGroupCreateRequ
 	}
 
 	var result UserGroup
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("error unmarshaling response: %w", err)
+	if err := decodeResponse(body, &result); err != nil {
+		return nil, err
 	}
 	if err := checkCreatedID("user group", "", result.ID); err != nil {
 		return nil, fmt.Errorf("user group creation returned no usable ID, so no follow-up request uses it; the user group may exist: inspect before recovery: %w", err)
@@ -54,8 +53,8 @@ func (c *Client) GetUserGroup(ctx context.Context, groupID string) (*UserGroup, 
 	}
 
 	var result UserGroup
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("error unmarshaling response: %w", err)
+	if err := decodeResponse(body, &result); err != nil {
+		return nil, err
 	}
 
 	return &result, nil
@@ -73,8 +72,8 @@ func (c *Client) UpdateUserGroup(ctx context.Context, groupID string, group *Use
 	}
 
 	var result UserGroup
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("error unmarshaling response: %w", err)
+	if err := decodeResponse(body, &result); err != nil {
+		return nil, err
 	}
 
 	return &result, nil
