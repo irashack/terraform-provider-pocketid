@@ -72,3 +72,10 @@
   stays valid until used or expired, and that nothing was recorded or
   repeated. A token resource is never stored without a token. A missing user
   is reported as such.
+- When creating a `pocketid_user` with a chosen `id` fails without a definite
+  answer, the ID is kept in state as an unresolved creation: a user found under
+  that ID may be someone else's (created between the provider's check and its
+  create). Until it is resolved, the provider refuses to change, delete or
+  replace that user, at plan time and at apply time. Check the user, then run
+  `terraform state rm` on the resource and either `terraform import` it with
+  that ID (if it is the intended user) or choose another `id`.

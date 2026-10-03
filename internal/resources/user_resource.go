@@ -28,6 +28,7 @@ var (
 	_ resource.Resource                = &userResource{}
 	_ resource.ResourceWithConfigure   = &userResource{}
 	_ resource.ResourceWithImportState = &userResource{}
+	_ resource.ResourceWithModifyPlan  = &userResource{}
 )
 
 func init() { register(NewUserResource) }
@@ -75,7 +76,8 @@ func (r *userResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The ID of the user, a lowercase UUID. Pocket ID generates it unless it is set here, which needs Pocket ID 2.12.0 or later. " +
-					"It cannot change once the user exists: a different value is a plan-time error, never a replacement, because replacing a user would delete their passkeys.",
+					"It cannot change once the user exists: a different value is a plan-time error, never a replacement, because replacing a user would delete their passkeys. " +
+					"If a create with a chosen id ends without a definite answer, the ID is kept in state as an unresolved creation, because the user under that ID may be someone else's: the provider then refuses to change, delete or replace it until it is imported (after `terraform state rm`) or removed from state.",
 				Optional: true,
 				Computed: true,
 				Validators: []validator.String{
@@ -481,6 +483,10 @@ func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		updateReq.Locale = &locale
 	}
 
+	if refuseUnresolvedUser(ctx, req.Private, state.ID.ValueString(), "change", &resp.Diagnostics) {
+		return
+	}
+
 	// The plan modifier refuses a changed id at plan time; one that was
 	// unknown then is refused here, before anything is written.
 	if !plan.ID.Equal(state.ID) {
@@ -627,6 +633,10 @@ func (r *userResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 		return
 	}
 
+	if refuseUnresolvedUser(ctx, req.Private, state.ID.ValueString(), "delete or replace", &resp.Diagnostics) {
+		return
+	}
+
 	tflog.Debug(ctx, "Deleting user", map[string]any{
 		"id": state.ID.ValueString(),
 	})
@@ -688,9 +698,11 @@ func (r *userResource) checkFixedID(ctx context.Context, id string, resp *resour
 
 // uncertainFixedIDCreate handles a create with a caller-chosen ID whose
 // outcome is unknown (a transport failure or a server error): the user may
-// exist. A read decides: Pocket ID's own not-found means nothing was created;
-// otherwise the ID is kept in state (marked for replacement), so the user is
-// not lost track of. The create is never repeated.
+// exist. The create is never repeated. A read decides what is reported: when
+// Pocket ID confirms no user has the ID, nothing was created. Otherwise the
+// ID is kept in state with the unresolved-creation marker, never as ordinary
+// ownership: a user found under the ID may be someone else's, created
+// between the provider's check and its create.
 func (r *userResource) uncertainFixedIDCreate(ctx context.Context, plan *userResourceModel, displayName string, cause error, resp *resource.CreateResponse) {
 	id := plan.ID.ValueString()
 	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), accountCleanupTimeout)
@@ -700,17 +712,20 @@ func (r *userResource) uncertainFixedIDCreate(ctx context.Context, plan *userRes
 		resp.Diagnostics.AddError("Error creating user", "Could not create user ("+cause.Error()+"); a read confirmed no user with ID "+id+" exists.")
 		return
 	}
-	found := "A read found the user exists."
+	found := "A read found a user with this ID, which may or may not be the one this apply created."
 	if readErr != nil {
-		found = "Whether it exists could not be confirmed (read: " + readErr.Error() + ")."
+		found = "Whether a user with this ID exists could not be confirmed (read: " + readErr.Error() + ")."
 	}
 	if plan.DisplayName.IsUnknown() {
 		plan.DisplayName = types.StringValue(displayName)
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
+	resp.Diagnostics.Append(resp.Private.SetKey(ctx, userUnresolvedCreationKey, userUnresolvedCreationValue)...)
 	resp.Diagnostics.AddError("User creation result uncertain",
 		"Creating user "+id+" failed with an uncertain result ("+cause.Error()+"). "+found+
-			" Its ID is kept in state, marked for replacement; inspect it before applying again. The create was not repeated.")
+			" The ID is kept in state as an unresolved creation: the provider will not change, delete or replace that user until it is resolved. "+
+			"Check the user in Pocket ID; if it is the intended user, run `terraform state rm` on this resource and `terraform import` it with ID "+id+
+			"; otherwise run `terraform state rm` and choose another id. The create was not repeated.")
 }
 
 // ldapRestrictedChanges returns the attributes the update would change that

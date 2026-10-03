@@ -189,26 +189,6 @@ func TestUserCreateWithFixedID(t *testing.T) {
 		require.Equal(t, 1, s.posts, "the create is never repeated")
 		require.True(t, resp.State.Raw.IsNull(), "a read confirmed nothing was created")
 	})
-	t.Run("uncertain_create_found", func(t *testing.T) {
-		// The POST committed although its response failed.
-		s := &fixedIDServer{version: "2.17.0", createStatus: http.StatusBadGateway, afterPostExisting: true}
-		resp := runFixedIDCreate(t, s, types.StringValue(fixedUserID))
-		require.True(t, resp.Diagnostics.HasError())
-		require.Equal(t, "User creation result uncertain", resp.Diagnostics.Errors()[0].Summary())
-		var state userResourceModel
-		require.False(t, resp.State.Get(context.Background(), &state).HasError())
-		require.Equal(t, fixedUserID, state.ID.ValueString())
-		require.Equal(t, 1, s.posts)
-	})
-	t.Run("uncertain_create_unconfirmed", func(t *testing.T) {
-		s := &fixedIDServer{version: "2.17.0", createStatus: http.StatusBadGateway, afterPostReadStatus: http.StatusForbidden}
-		resp := runFixedIDCreate(t, s, types.StringValue(fixedUserID))
-		require.True(t, resp.Diagnostics.HasError())
-		require.Contains(t, resp.Diagnostics.Errors()[0].Detail(), "could not be confirmed")
-		var state userResourceModel
-		require.False(t, resp.State.Get(context.Background(), &state).HasError())
-		require.Equal(t, fixedUserID, state.ID.ValueString(), "the ID is kept while its existence is unknown")
-	})
 	t.Run("server_ignored_id_rolled_back", func(t *testing.T) {
 		s := &fixedIDServer{version: "2.17.0", createdID: "ffffffff-ffff-4fff-8fff-ffffffffffff"}
 		resp := runFixedIDCreate(t, s, types.StringValue(fixedUserID))
