@@ -99,8 +99,9 @@ func (cfg *ApplicationConfig) Reported(key string) bool {
 }
 
 // ErrIncompleteApplicationConfig is returned when a response lists a setting
-// without a string value (the value missing, null, or another JSON type).
-// Reading it as "" could make an update clear that setting.
+// without a value (the value missing or null). Reading it as "" could make an
+// update clear that setting. A value of another JSON type is not the JSON this
+// provider expects and is reported as ErrUndecodableResponse.
 var ErrIncompleteApplicationConfig = errors.New("the application configuration response lists a setting without a string value")
 
 // Values returns cfg as the key/value map an update sends: every key in
@@ -149,23 +150,28 @@ type appConfigWireVariable struct {
 }
 
 // decodeApplicationConfig decodes the key/value list returned by the
-// application configuration endpoints. Every listed value must be a JSON
-// string; otherwise it returns ErrIncompleteApplicationConfig. JSON tags also
-// map WebAuthn and CIMD fields; absent older-server keys remain empty instead
-// of inventing security defaults (Reported tells them apart from ""). A
-// *string field stays nil when its key is absent, so it is omitted from an
-// update to that server. Keys with no field go to Additional.
-func decodeApplicationConfig(body []byte) (*ApplicationConfig, error) {
+// application configuration endpoints with decode (decodeResponse for a read,
+// decodeResult for an update), so a body or value that is not the JSON
+// expected gives that decoder's fixed error. Every listed value must be a
+// JSON string: a missing or null value returns ErrIncompleteApplicationConfig.
+// JSON tags also map WebAuthn and CIMD fields; absent older-server keys remain
+// empty instead of inventing security defaults (Reported tells them apart
+// from ""). A *string field stays nil when its key is absent, so it is omitted
+// from an update to that server. Keys with no field go to Additional.
+func decodeApplicationConfig(body []byte, decode func([]byte, any) error) (*ApplicationConfig, error) {
 	var vars []appConfigWireVariable
-	if err := json.Unmarshal(body, &vars); err != nil {
-		return nil, fmt.Errorf("error unmarshaling response: %w", err)
+	if err := decode(body, &vars); err != nil {
+		return nil, err
 	}
 	values := make(map[string]string, len(vars))
 	for _, v := range vars {
 		raw := bytes.TrimSpace(v.Value)
-		var value string
-		if len(raw) == 0 || raw[0] != '"' || json.Unmarshal(raw, &value) != nil {
+		if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
 			return nil, ErrIncompleteApplicationConfig
+		}
+		var value string
+		if err := decode(raw, &value); err != nil {
+			return nil, err
 		}
 		values[v.Key] = value
 	}
@@ -208,7 +214,7 @@ func (c *Client) GetApplicationConfig(ctx context.Context) (*ApplicationConfig, 
 		return nil, err
 	}
 
-	return decodeApplicationConfig(body)
+	return decodeApplicationConfig(body, decodeResponse)
 }
 
 // UpdateApplicationConfig updates the application configuration via
@@ -222,7 +228,10 @@ func (c *Client) UpdateApplicationConfig(ctx context.Context, cfg *ApplicationCo
 		return nil, err
 	}
 
-	updated, err := decodeApplicationConfig(body)
+	updated, err := decodeApplicationConfig(body, decodeResult)
+	if errors.Is(err, ErrResultUnread) {
+		return nil, err
+	}
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrResultUnread, err)
 	}

@@ -173,7 +173,8 @@ func TestApplicationConfigAutoCreateOIDCClientSecret(t *testing.T) {
 }
 
 // A listed setting whose value is missing, null or not a string is not read
-// as "": the response is refused. A key left out is not reported; one
+// as "": the response is refused, a missing or null value as incomplete, a
+// value of another type as undecodable. A key left out is not reported; one
 // reported as "" is.
 func TestApplicationConfigIncompleteResponses(t *testing.T) {
 	var body string
@@ -186,17 +187,21 @@ func TestApplicationConfigIncompleteResponses(t *testing.T) {
 	require.NoError(t, err)
 	ctx := context.Background()
 
-	for name, entry := range map[string]string{
-		"value missing": `{"key":"smtpPassword","type":"string"}`,
-		"value null":    `{"key":"smtpPassword","value":null}`,
-		"value number":  `{"key":"smtpPassword","value":5}`,
-		"value object":  `{"key":"ldapBindPassword","value":{}}`,
+	for name, tc := range map[string]struct {
+		entry string
+		want  error
+	}{
+		"value missing": {`{"key":"smtpPassword","type":"string"}`, client.ErrIncompleteApplicationConfig},
+		"value null":    {`{"key":"smtpPassword","value":null}`, client.ErrIncompleteApplicationConfig},
+		"value number":  {`{"key":"smtpPassword","value":5}`, client.ErrUndecodableResponse},
+		"value object":  {`{"key":"ldapBindPassword","value":{}}`, client.ErrUndecodableResponse},
 	} {
-		body = `[{"key":"appName","value":"Fixture"},` + entry + `]`
+		body = `[{"key":"appName","value":"Fixture"},` + tc.entry + `]`
 		_, err := c.GetApplicationConfig(ctx)
-		assert.ErrorIs(t, err, client.ErrIncompleteApplicationConfig, name)
+		assert.ErrorIs(t, err, tc.want, name)
+		assert.NotErrorIs(t, err, client.ErrResultUnread, "%s: a read changed nothing", name)
 		_, err = c.UpdateApplicationConfig(ctx, &client.ApplicationConfig{AppName: "Fixture"})
-		assert.ErrorIs(t, err, client.ErrIncompleteApplicationConfig, name)
+		assert.ErrorIs(t, err, tc.want, name)
 		assert.ErrorIs(t, err, client.ErrResultUnread, "%s: the update was made", name)
 	}
 
