@@ -253,11 +253,14 @@ func TestClient_UpdateClientAllowedUserGroups(t *testing.T) {
 		// comes from reading the client back, and shows what was dropped.
 		"unknown ID dropped": {request: []string{g1, unknown, g2}, wantBody: `{"userGroupIds":["` + g1 + `","` + unknown + `","` + g2 + `"]}`,
 			putStatus: 200, getStatus: 200, getGroups: `[{"id":"` + g1 + `"},{"id":"` + g2 + `"}]`, want: []string{g1, g2}, wantGets: 1},
-		"nil sends an empty list":  {request: nil, wantBody: `{"userGroupIds":[]}`, putStatus: 200, getStatus: 200, getGroups: `[]`, want: []string{}, wantGets: 1},
-		"groups omitted on read":   {request: []string{}, wantBody: `{"userGroupIds":[]}`, putStatus: 200, getStatus: 200, getGroups: ``, want: []string{}, wantGets: 1},
-		"rejected":                 {request: []string{g1}, putStatus: 400, wantStatus: 400},
-		"server error not retried": {request: []string{g1}, putStatus: 503, wantStatus: 503},
-		"read back fails":          {request: []string{g1}, putStatus: 200, getStatus: 403, wantUnread: true, wantStatus: 403, wantGets: 1},
+		"nil sends an empty list": {request: nil, wantBody: `{"userGroupIds":[]}`, putStatus: 200, getStatus: 200, getGroups: `[]`, want: []string{}, wantGets: 1},
+		"groups null on read":     {request: []string{}, wantBody: `{"userGroupIds":[]}`, putStatus: 200, getStatus: 200, getGroups: `null`, want: []string{}, wantGets: 1},
+		// A response without the field never confirms an empty set.
+		"groups omitted on read":    {request: []string{}, putStatus: 200, getStatus: 200, getGroups: ``, wantUnread: true, wantGets: 1},
+		"groups not a list on read": {request: []string{g1}, putStatus: 200, getStatus: 200, getGroups: `{"id":"x"}`, wantUnread: true, wantGets: 1},
+		"rejected":                  {request: []string{g1}, putStatus: 400, wantStatus: 400},
+		"server error not retried":  {request: []string{g1}, putStatus: 503, wantStatus: 503},
+		"read back fails":           {request: []string{g1}, putStatus: 200, getStatus: 403, wantUnread: true, wantStatus: 403, wantGets: 1},
 	} {
 		t.Run(name, func(t *testing.T) {
 			puts, gets := 0, 0
@@ -292,6 +295,11 @@ func TestClient_UpdateClientAllowedUserGroups(t *testing.T) {
 			got, err := c.UpdateClientAllowedUserGroups(context.Background(), "test-client-id", tc.request)
 			assert.Equal(t, 1, puts, "the PUT is sent once")
 			assert.Equal(t, tc.wantGets, gets)
+			if tc.wantUnread && tc.wantStatus == 0 {
+				require.ErrorIs(t, err, client.ErrResultUnread)
+				assert.Nil(t, got)
+				return
+			}
 			if tc.wantStatus != 0 {
 				var status *client.HTTPError
 				require.ErrorAs(t, err, &status)

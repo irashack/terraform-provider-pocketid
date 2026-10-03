@@ -202,8 +202,9 @@ func (c *Client) ListClients(ctx context.Context) ([]OIDCClient, error) {
 // the IDs up with "id IN ?"), so a caller compares the result with what it
 // asked for. An empty or nil groupIDs is sent as [] (the server rejects
 // null). The PUT's response does not include the groups, so they are read
-// back with GetClient; if that read fails the error wraps ErrResultUnread:
-// the change was made, its result is unknown. The PUT is never retried.
+// back with a GET of the client; if that read fails, or its response does not
+// list the groups, the error wraps ErrResultUnread: the change was made, its
+// result is unknown. The PUT is never retried.
 func (c *Client) UpdateClientAllowedUserGroups(ctx context.Context, clientID string, groupIDs []string) ([]string, error) {
 	if groupIDs == nil {
 		groupIDs = []string{}
@@ -216,11 +217,23 @@ func (c *Client) UpdateClientAllowedUserGroups(ctx context.Context, clientID str
 	if _, err := c.doRequest(ctx, "PUT", "/api/oidc/clients/"+id+"/allowed-user-groups", req); err != nil {
 		return nil, err
 	}
-	current, err := c.GetClient(ctx, clientID)
+	body, err := c.doRequest(ctx, "GET", "/api/oidc/clients/"+id, nil)
 	if err != nil {
 		return nil, fmt.Errorf("allowed user groups of client %s: %w: %w", clientID, ErrResultUnread, err)
 	}
-	return userGroupIDs(current.AllowedUserGroups), nil
+	// OidcClientWithAllowedUserGroupsDto.allowedUserGroups has no
+	// omitempty: null or [] means none. A response without the field says
+	// nothing about the groups, so it never confirms an empty set.
+	var fields map[string]json.RawMessage
+	var groups []UserGroup
+	raw, present := json.RawMessage(nil), false
+	if json.Unmarshal(body, &fields) == nil {
+		raw, present = fields["allowedUserGroups"]
+	}
+	if !present || json.Unmarshal(raw, &groups) != nil {
+		return nil, fmt.Errorf("allowed user groups of client %s: %w: the response did not list them", clientID, ErrResultUnread)
+	}
+	return userGroupIDs(groups), nil
 }
 
 // userGroupIDs returns the IDs of groups, never nil.
