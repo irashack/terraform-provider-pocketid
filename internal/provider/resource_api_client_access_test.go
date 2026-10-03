@@ -453,15 +453,20 @@ func TestAccAPIClientGrant_responseShape(t *testing.T) {
 		require.Equal(t, 200, status)
 		return testAccGrantShape(t, raw)
 	}
-	for name, tc := range map[string]struct {
+	// The cases run in this order: the first ones overwrite the confidential
+	// client's grant, so the list is only asserted after a grant is set
+	// explicitly below.
+	for _, tc := range []struct {
+		name     string
 		clientID string
 		grant    client.APIClientGrant
 	}{
-		"empty grant":                {confidential, client.APIClientGrant{UserDelegatedPermissionIDs: []string{}, ClientPermissionIDs: []string{}}},
-		"access without permissions": {confidential, client.APIClientGrant{UserDelegatedAccess: true, ClientAccess: true, UserDelegatedPermissionIDs: []string{}, ClientPermissionIDs: []string{}}},
-		"permissions":                {confidential, client.APIClientGrant{UserDelegatedPermissionIDs: []string{readID}, ClientPermissionIDs: []string{readID}}},
-		"public client":              {public.ID, client.APIClientGrant{ClientAccess: true, UserDelegatedPermissionIDs: []string{}, ClientPermissionIDs: []string{readID}}},
+		{"empty grant", confidential, client.APIClientGrant{UserDelegatedPermissionIDs: []string{}, ClientPermissionIDs: []string{}}},
+		{"access without permissions", confidential, client.APIClientGrant{UserDelegatedAccess: true, ClientAccess: true, UserDelegatedPermissionIDs: []string{}, ClientPermissionIDs: []string{}}},
+		{"permissions", confidential, client.APIClientGrant{UserDelegatedPermissionIDs: []string{readID}, ClientPermissionIDs: []string{readID}}},
+		{"public client", public.ID, client.APIClientGrant{ClientAccess: true, UserDelegatedPermissionIDs: []string{}, ClientPermissionIDs: []string{readID}}},
 	} {
+		name := tc.name
 		shape := put(tc.clientID, tc.grant)
 		t.Logf("PUT %s: %v", name, shape)
 		assert.Equal(t, "bool", shape["userDelegatedAccess"], name)
@@ -476,6 +481,10 @@ func TestAccAPIClientGrant_responseShape(t *testing.T) {
 		assert.Equal(t, name == "empty grant" || name == "public client", applied.IsEmpty(), name)
 	}
 
+	// Whatever the cases above left behind, set a grant with one user
+	// permission and an empty client list, then read the client's list.
+	_, err = c.SetAPIClientAccess(ctx, api.ID, confidential, client.APIClientGrant{UserDelegatedPermissionIDs: []string{readID}, ClientPermissionIDs: []string{}})
+	require.NoError(t, err)
 	var list []map[string]json.RawMessage
 	status, err := testAccAPI("GET", "/api/api-access/"+confidential+"/apis", nil, &list)
 	require.NoError(t, err)
@@ -487,6 +496,8 @@ func TestAccAPIClientGrant_responseShape(t *testing.T) {
 	assert.Equal(t, "bool", shape["clientAccess"])
 	assert.Equal(t, "array", shape["userDelegatedPermissionIds"])
 	assert.Equal(t, "array", shape["clientPermissionIds"])
+	assert.JSONEq(t, fmt.Sprintf("[%q]", readID), string(list[0]["userDelegatedPermissionIds"]))
+	assert.JSONEq(t, "[]", string(list[0]["clientPermissionIds"]))
 	var apiObject map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(list[0]["api"], &apiObject))
 	assert.Contains(t, apiObject, "id")
