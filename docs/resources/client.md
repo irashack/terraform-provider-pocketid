@@ -4,14 +4,14 @@ page_title: "pocketid_client Resource - terraform-provider-pocketid"
 subcategory: ""
 description: |-
   Manages an OIDC client in Pocket-ID. OIDC clients are applications that can authenticate users through Pocket-ID.
-  ~> Note The client secret is only available during resource creation and cannot be retrieved later. Store it securely.
+  ~> Note Pocket ID returns a client secret's value only when the secret is created. The secret this resource generates is stored in state as client_secret and cannot be recovered by import. To keep secrets out of this resource (for example to rotate them, or to keep them out of state), set generate_secret = false and manage them with pocketid_client_secret.
 ---
 
 # pocketid_client (Resource)
 
 Manages an OIDC client in Pocket-ID. OIDC clients are applications that can authenticate users through Pocket-ID.
 
-~> **Note** The client secret is only available during resource creation and cannot be retrieved later. Store it securely.
+~> **Note** Pocket ID returns a client secret's value only when the secret is created. The secret this resource generates is stored in state as `client_secret` and cannot be recovered by import. To keep secrets out of this resource (for example to rotate them, or to keep them out of state), set `generate_secret = false` and manage them with `pocketid_client_secret`.
 
 ## Example Usage
 
@@ -167,6 +167,15 @@ resource "pocketid_client" "api_client" {
   is_public = false
 }
 
+# A confidential client whose secrets are managed by pocketid_client_secret
+# (for example to rotate them without touching the client): this resource
+# generates none of its own.
+resource "pocketid_client" "rotated_secrets" {
+  name            = "Rotated Secrets Client"
+  callback_urls   = ["https://rotated.example.com/callback"]
+  generate_secret = false
+}
+
 # Output the client secret (be careful with this in production!)
 output "api_client_secret" {
   value     = pocketid_client.api_client.client_secret
@@ -193,6 +202,7 @@ output "spa_client_id" {
 - `backchannel_logout_url` (String) URL to which Pocket ID sends an OpenID Connect Back-Channel Logout token when a user's access to this client is revoked: the user is disabled or deleted, loses access through a group change, or revokes the authorization, or the client is deleted. Must be an absolute http or https URL without a fragment; a public client (is_public = true) requires https. Requires Pocket ID 2.17.0 or later. When omitted, the client has no back-channel logout URL.
 - `client_id` (String) The client ID to use for the OIDC client. If not set, one will be generated. Must be between 2 and 128 characters.
 - `federated_identities` (Attributes List) List of federated identities (workload identity federation) allowed to authenticate as this client. (see [below for nested schema](#nestedatt--federated_identities))
+- `generate_secret` (Boolean) Whether this resource generates a client secret for a confidential client and stores it in `client_secret`. Defaults to true. Set it to false when the client's secrets are managed elsewhere, for example by `pocketid_client_secret`; the client then holds no secret from this resource. Changing it from true to false revokes the secret this resource generated (a client whose secret cannot be told apart from its other secrets is left unchanged, with an error listing them); changing it from false to true generates one. A client imported, or created before this attribute existed, without a secret in state does not get one generated. Pocket ID 2.17.0 and later also create a secret of their own for a new confidential client; this resource always revokes that one.
 - `is_public` (Boolean) Whether this is a public client (no client secret). Defaults to false.
 - `launch_url` (String) Optional launch URL associated with the client.
 - `logout_callback_urls` (List of String) List of allowed logout callback URLs for the OIDC client.
@@ -202,7 +212,8 @@ output "spa_client_id" {
 
 ### Read-Only
 
-- `client_secret` (String, Sensitive) The client secret. Only available during resource creation for non-public clients.
+- `client_secret` (String, Sensitive) The client secret this resource generated, when `generate_secret` is true and the client is confidential. Pocket ID returns the value only when it creates the secret, so it is null for an imported client.
+- `client_secret_id` (String) The ID of the secret stored in `client_secret` (Pocket ID 2.14.0 and later). For state written before this attribute existed it is filled in on refresh when the secret can be identified by the prefix Pocket ID keeps of it.
 - `has_logo` (Boolean) Whether the client has a logo configured.
 - `id` (String) The ID of the OIDC client.
 

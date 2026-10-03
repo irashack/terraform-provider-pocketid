@@ -30,6 +30,7 @@ var (
 	_ resource.ResourceWithConfigure      = &clientResource{}
 	_ resource.ResourceWithImportState    = &clientResource{}
 	_ resource.ResourceWithValidateConfig = &clientResource{}
+	_ resource.ResourceWithModifyPlan     = &clientResource{}
 )
 
 func init() { register(NewClientResource) }
@@ -60,7 +61,9 @@ type clientResourceModel struct {
 	RequiresPushedAuthorizationRequests types.Bool   `tfsdk:"requires_pushed_authorization_requests"`
 	LaunchURL                           types.String `tfsdk:"launch_url"`
 	FederatedIdentities                 types.List   `tfsdk:"federated_identities"`
+	GenerateSecret                      types.Bool   `tfsdk:"generate_secret"`
 	ClientSecret                        types.String `tfsdk:"client_secret"`
+	ClientSecretID                      types.String `tfsdk:"client_secret_id"`
 }
 
 // clientFederatedIdentityModel maps a single federated identity nested object.
@@ -94,7 +97,7 @@ func (r *clientResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 		Description: "Manages an OIDC client in Pocket-ID.",
 		MarkdownDescription: `Manages an OIDC client in Pocket-ID. OIDC clients are applications that can authenticate users through Pocket-ID.
 
-~> **Note** The client secret is only available during resource creation and cannot be retrieved later. Store it securely.`,
+~> **Note** Pocket ID returns a client secret's value only when the secret is created. The secret this resource generates is stored in state as ` + "`client_secret`" + ` and cannot be recovered by import. To keep secrets out of this resource (for example to rotate them, or to keep them out of state), set ` + "`generate_secret = false`" + ` and manage them with ` + "`pocketid_client_secret`" + `.`,
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The ID of the OIDC client.",
@@ -225,13 +228,24 @@ func (r *clientResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Description: "Whether the client has a logo configured.",
 				Computed:    true,
 			},
+			"generate_secret": schema.BoolAttribute{
+				Description: "Whether this resource generates a client secret for a confidential client and stores it in `client_secret`. Defaults to true. " +
+					"Set it to false when the client's secrets are managed elsewhere, for example by `pocketid_client_secret`; the client then holds no secret from this resource. " +
+					"Changing it from true to false revokes the secret this resource generated (a client whose secret cannot be told apart from its other secrets is left unchanged, with an error listing them); " +
+					"changing it from false to true generates one. A client imported, or created before this attribute existed, without a secret in state does not get one generated. " +
+					"Pocket ID 2.17.0 and later also create a secret of their own for a new confidential client; this resource always revokes that one.",
+				Optional: true,
+				Computed: true,
+				Default:  booldefault.StaticBool(true),
+			},
 			"client_secret": schema.StringAttribute{
-				Description: "The client secret. Only available during resource creation for non-public clients.",
+				Description: "The client secret this resource generated, when `generate_secret` is true and the client is confidential. Pocket ID returns the value only when it creates the secret, so it is null for an imported client.",
 				Computed:    true,
 				Sensitive:   true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+			},
+			"client_secret_id": schema.StringAttribute{
+				Description: "The ID of the secret stored in `client_secret` (Pocket ID 2.14.0 and later). For state written before this attribute existed it is filled in on refresh when the secret can be identified by the prefix Pocket ID keeps of it.",
+				Computed:    true,
 			},
 		},
 	}
@@ -333,7 +347,7 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 		resp.Diagnostics.AddAttributeError(path.Root("backchannel_logout_url"), "Unsupported back-channel logout configuration", err.Error())
 		return
 	}
-	if !plan.IsPublic.ValueBool() {
+	if !plan.IsPublic.ValueBool() && plan.GenerateSecret.ValueBool() {
 		if err := r.client.CheckSecretAPI(ctx); err != nil {
 			resp.Diagnostics.AddError("Cannot verify secret API compatibility", err.Error())
 			return
@@ -357,6 +371,7 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 			if createReq.ClientID != nil {
 				plan.ID = types.StringValue(*createReq.ClientID)
 				plan.ClientSecret = types.StringNull()
+				plan.ClientSecretID = types.StringNull()
 				plan.HasLogo = types.BoolValue(false)
 				if plan.LaunchURL.IsUnknown() {
 					plan.LaunchURL = types.StringNull()
@@ -400,28 +415,28 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 	// without Terraform knowing it exists. Revoking before generating means
 	// the client never holds two valid secrets, and a failure here leaves the
 	// same outcome as a failed secret generation.
+	plan.ClientSecret = types.StringNull()
+	plan.ClientSecretID = types.StringNull()
 	if clientResp.CreatedSecret != nil {
 		if err := r.revokeServerCreatedSecret(ctx, clientResp.ID, clientResp.CreatedSecret.ID); err != nil {
-			plan.ClientSecret = types.StringNull()
 			r.failedCreate(ctx, &plan, err, resp)
 
 			return
 		}
 	}
 
-	// Generate client secret for non-public clients
-	if !plan.IsPublic.ValueBool() {
+	// Generate the secret this resource holds, for a confidential client
+	// that asks for one.
+	if !plan.IsPublic.ValueBool() && plan.GenerateSecret.ValueBool() {
 		tflog.Debug(ctx, "Generating client secret for non-public client")
 		secret, err := r.client.GenerateClientSecret(ctx, clientResp.ID, nil)
 		if err != nil {
-			plan.ClientSecret = types.StringNull()
 			r.failedCreate(ctx, &plan, err, resp)
 
 			return
 		}
 		plan.ClientSecret = types.StringValue(secret.Value)
-	} else {
-		plan.ClientSecret = types.StringNull()
+		plan.ClientSecretID = optionalString(secret.ID)
 	}
 
 	// Handle allowed user groups
@@ -523,7 +538,14 @@ func (r *clientResource) Read(ctx context.Context, req resource.ReadRequest, res
 		state.AllowedUserGroups = types.ListNull(types.StringType)
 	}
 
-	// Note: client_secret is not updated from Read as it's only available during creation
+	// client_secret is never returned by Pocket ID after creation, so it
+	// stays as stored. State written before generate_secret existed always
+	// generated a secret; state written before client_secret_id existed gets
+	// it when the stored secret can be identified.
+	if state.GenerateSecret.IsNull() || state.GenerateSecret.IsUnknown() {
+		state.GenerateSecret = types.BoolValue(true)
+	}
+	r.fillSecretID(ctx, &state)
 
 	// Set the state
 	diags = resp.State.Set(ctx, &state)
@@ -635,6 +657,19 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 		updateReq.ClientID = &cid
 	}
 
+	// A secret to revoke is identified before anything changes: if it cannot
+	// be told apart from the client's other secrets, nothing is changed.
+	secretAction, _ := planSecretAction(state, plan)
+	var revokeID string
+	revokeGone := false
+	if secretAction == secretRevoke {
+		revokeID, revokeGone, err = r.heldSecretID(ctx, plan.ID.ValueString(), state)
+		if err != nil {
+			resp.Diagnostics.AddError("Cannot revoke the client secret", err.Error()+". No change was made.")
+			return
+		}
+	}
+
 	preserveUnmanagedClientFields(updateReq, current)
 
 	tflog.Debug(ctx, "Updating OIDC client", map[string]any{
@@ -715,12 +750,34 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 		}
 	}
 
-	// Preserve the client secret from state as it cannot be retrieved
-	plan.ClientSecret = state.ClientSecret
+	if err := r.applySecretAction(ctx, secretAction, revokeID, revokeGone, state, &plan); err != nil {
+		resp.Diagnostics.AddError("Error updating the client secret", "The client itself was updated. "+err.Error())
+	}
 
 	// Set the state
 	diags = resp.State.Set(ctx, &plan)
 	resp.Diagnostics.Append(diags...)
+}
+
+// ModifyPlan plans the attributes that depend on several others.
+func (r *clientResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() {
+		return // destroy
+	}
+	var plan clientResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	var state *clientResourceModel
+	if !req.State.Raw.IsNull() {
+		state = &clientResourceModel{}
+		resp.Diagnostics.Append(req.State.Get(ctx, state)...)
+	}
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	planSecretAttributes(state, &plan)
+
+	resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
 }
 
 // Delete deletes the resource and removes the Terraform state on success.
@@ -960,10 +1017,9 @@ func mapAPIClientToModel(ctx context.Context, api *client.OIDCClient) clientReso
 var errUnidentifiedCreatedSecret = errors.New("the create response reported a client secret generated by Pocket ID without its ID, so it cannot be revoked")
 
 // revokeServerCreatedSecret revokes the secret the server generated with a new
-// client. The DELETE is never retried. When it fails, a read checks whether the
-// secret is gone anyway (the DELETE committed, or it was already removed); only
-// a secret confirmed absent counts as revoked. The returned error names the
-// secret's ID, never its value.
+// client. The DELETE is never retried; only a secret confirmed absent counts as
+// revoked (see revokeClientSecret). The returned error names the secret's ID,
+// never its value.
 func (r *clientResource) revokeServerCreatedSecret(ctx context.Context, clientID, secretID string) error {
 	if secretID == "" {
 		return errUnidentifiedCreatedSecret
@@ -972,23 +1028,10 @@ func (r *clientResource) revokeServerCreatedSecret(ctx context.Context, clientID
 		"id":        clientID,
 		"secret_id": secretID,
 	})
-	err := r.client.DeleteClientSecret(ctx, clientID, secretID)
-	if err == nil {
-		return nil
+	if err := r.revokeClientSecret(ctx, clientID, secretID); err != nil {
+		return fmt.Errorf("the secret Pocket ID created with the client: %w", err)
 	}
-	if remaining, listErr := r.client.ListClientSecrets(ctx, clientID); listErr == nil {
-		present := false
-		for _, secret := range remaining {
-			if secret.ID == secretID {
-				present = true
-				break
-			}
-		}
-		if !present {
-			return nil
-		}
-	}
-	return fmt.Errorf("could not confirm revocation of the secret Pocket ID created with the client (secret ID %s); it may still be valid until it is revoked or the client is deleted: %w", secretID, err)
+	return nil
 }
 
 // failedCreate only rolls back a newly created client after a definite API

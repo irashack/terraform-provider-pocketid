@@ -155,6 +155,7 @@ func publicClientModel() clientResourceModel {
 	model := lifecycleModel()
 	model.IsPublic = types.BoolValue(true)
 	model.ClientSecret = types.StringNull()
+	model.ClientSecretID = types.StringNull()
 	model.BackchannelLogoutURL = types.StringNull()
 	return model
 }

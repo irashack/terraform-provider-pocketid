@@ -164,6 +164,15 @@ resource "pocketid_client" "api_client" {
   is_public = false
 }
 
+# A confidential client whose secrets are managed by pocketid_client_secret
+# (for example to rotate them without touching the client): this resource
+# generates none of its own.
+resource "pocketid_client" "rotated_secrets" {
+  name            = "Rotated Secrets Client"
+  callback_urls   = ["https://rotated.example.com/callback"]
+  generate_secret = false
+}
+
 # Output the client secret (be careful with this in production!)
 output "api_client_secret" {
   value     = pocketid_client.api_client.client_secret
