@@ -139,8 +139,10 @@ func (f *apiAccessTestPocketID) serve(w http.ResponseWriter, r *http.Request) {
 		out = g
 	case "DELETE grant":
 		f.grant = nil
-		w.WriteHeader(http.StatusNoContent)
-		return
+		if !failing {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 	case "GET grants":
 		list := []client.ClientAPIGrant{}
 		if f.grant != nil {

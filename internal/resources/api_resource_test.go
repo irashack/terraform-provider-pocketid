@@ -37,14 +37,16 @@ type apiTestFailure struct {
 // trailing slashes are trimmed, permission IDs are kept per key, CIMD IDs
 // that are not the API's own are ignored.
 type apiTestPocketID struct {
-	t        *testing.T
-	mu       sync.Mutex
-	version  string
-	apis     map[string]*client.API
-	order    []string
-	nextID   int
-	calls    []string
-	failures map[string]apiTestFailure
+	t       *testing.T
+	mu      sync.Mutex
+	version string
+	apis    map[string]*client.API
+	order   []string
+	nextID  int
+	calls   []string
+	// responses records "route status" for every answer sent.
+	responses []string
+	failures  map[string]apiTestFailure
 	// tamper, when set, may change what a route stores (simulating a
 	// server that ignores part of a request).
 	tamper func(route string, api *client.API)
@@ -85,6 +87,9 @@ func (f *apiTestPocketID) routes() []string {
 	return append([]string(nil), f.calls...)
 }
 
+// serve answers one request. The status is decided once, after the
+// request has been applied and any configured failure looked up, and every
+// status sent is recorded in responses ("route status").
 func (f *apiTestPocketID) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -102,22 +107,32 @@ func (f *apiTestPocketID) serve(w http.ResponseWriter, r *http.Request) {
 	if route != "GET version" {
 		f.calls = append(f.calls, route)
 	}
-	failure, failing := f.failures[route]
-	if failing && !failure.afterApply {
-		w.WriteHeader(failure.status)
-		return
+	status, body := f.apply(route, api, r)
+	if failure, failing := f.failures[route]; failing {
+		status, body = failure.status, nil
 	}
-	if api == nil && strings.HasPrefix(route, r.Method+" ") && route != "GET version" && route != "GET apis" && route != "POST apis" {
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = fmt.Fprint(w, apiTestNotFound)
-		return
+	if route != "GET version" {
+		f.responses = append(f.responses, fmt.Sprintf("%s %d", route, status))
 	}
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
+}
 
+// apply carries out a request, unless a configured failure says it fails
+// before the server commits, and returns the status and body a server that
+// did not fail would send.
+func (f *apiTestPocketID) apply(route string, api *client.API, r *http.Request) (int, []byte) {
+	if failure, failing := f.failures[route]; failing && !failure.afterApply {
+		return failure.status, nil
+	}
+	if api == nil && route != "GET version" && route != "GET apis" && route != "POST apis" {
+		return http.StatusNotFound, []byte(apiTestNotFound)
+	}
+	status := http.StatusOK
 	var body []byte
 	switch route {
 	case "GET version":
-		_, _ = fmt.Fprintf(w, `{"currentVersion":%q}`, f.version)
-		return
+		return status, []byte(fmt.Sprintf(`{"currentVersion":%q}`, f.version))
 	case "GET apis":
 		list := []client.API{}
 		for _, id := range f.order {
@@ -126,11 +141,12 @@ func (f *apiTestPocketID) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		body, _ = json.Marshal(map[string]any{"data": list, "pagination": map[string]int{"totalPages": 1, "totalItems": len(list), "currentPage": 1, "itemsPerPage": 100}})
+		return status, body
 	case "POST apis":
 		var in client.APICreateRequest
 		require.NoError(f.t, json.NewDecoder(r.Body).Decode(&in))
 		api = f.add(client.API{Name: in.Name, Resource: strings.TrimRight(in.Resource, "/")})
-		w.WriteHeader(http.StatusCreated)
+		status = http.StatusCreated
 	case "GET api":
 	case "PUT api":
 		var in client.APIUpdateRequest
@@ -138,8 +154,7 @@ func (f *apiTestPocketID) serve(w http.ResponseWriter, r *http.Request) {
 		api.Name = in.Name
 	case "DELETE api":
 		delete(f.apis, api.ID)
-		w.WriteHeader(http.StatusNoContent)
-		return
+		return http.StatusNoContent, nil
 	case "PUT permissions":
 		var in struct {
 			Permissions []client.APIPermissionInput `json:"permissions"`
@@ -177,20 +192,19 @@ func (f *apiTestPocketID) serve(w http.ResponseWriter, r *http.Request) {
 		api.AllowCIMDClients = in.Enabled
 	default:
 		f.t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
-		w.WriteHeader(http.StatusBadRequest)
-		return
+		return http.StatusBadRequest, nil
 	}
-	if api != nil && f.tamper != nil {
+	if f.tamper != nil {
 		f.tamper(route, api)
 	}
-	if failing {
-		w.WriteHeader(failure.status)
-		return
-	}
-	if body == nil {
-		body, _ = json.Marshal(api)
-	}
-	_, _ = w.Write(body)
+	body, _ = json.Marshal(api)
+	return status, body
+}
+
+func (f *apiTestPocketID) sent() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.responses...)
 }
 
 func apiTestSchema(t *testing.T) resource.SchemaResponse {
@@ -362,6 +376,7 @@ func TestAPIResourceCreate_UncertainResult(t *testing.T) {
 			}))
 			require.True(t, resp.Diagnostics.HasError())
 			assert.Equal(t, tc.summary, resp.Diagnostics[len(resp.Diagnostics)-1].Summary())
+			assert.Contains(t, f.sent(), fmt.Sprintf("POST apis %d", tc.failure.status), "the injected status is what the provider received")
 			assert.NotContains(t, f.routes(), "PUT permissions", "no follow-up write after an uncertain create")
 			if tc.retained {
 				require.NotNil(t, state)
