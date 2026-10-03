@@ -58,8 +58,8 @@ func (r *userProfilePictureResource) Metadata(_ context.Context, req resource.Me
 // Schema defines the schema for the resource.
 func (r *userProfilePictureResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Sets a Pocket-ID user's profile picture from a local image file. Destroying the resource restores the default picture.",
-		MarkdownDescription: "Sets a Pocket-ID user's profile picture from a local image file. Destroying the resource restores the default picture.\n\n" +
+		Description: "Sets a Pocket-ID user's profile picture from a local image file. Destroying the resource restores the default picture if the stored picture is still the one it uploaded.",
+		MarkdownDescription: "Sets a Pocket-ID user's profile picture from a local image file. Destroying the resource restores the default picture if the stored picture is still the one it uploaded (see Destroy below).\n\n" +
 			"**What Pocket ID does with the file.** It decodes the image itself (the file name and media type do not matter), scales and crops it to a 300x300 PNG and stores that. " +
 			"It accepts PNG, JPEG, GIF, WebP and BMP, and from Pocket ID 2.15 refuses an image of more than 16 million pixels in total (about 4000x4000). " +
 			"The provider checks at plan time that the file exists, is a regular file of at most 10 MiB, and, for PNG, JPEG and GIF, is within the pixel limit and decodes completely (a file that is cut short or damaged is refused before anything is uploaded); " +
@@ -74,9 +74,11 @@ func (r *userProfilePictureResource) Schema(_ context.Context, _ resource.Schema
 			"What cannot be detected: that the stored picture came from *this* file, as opposed to an identical image uploaded some other way, and any change while the user does not exist.\n\n" +
 			"**Destroy.** Destroying removes the picture only while the picture the server serves is still the one recorded in `stored_sha256`: the provider reads it again, past caches, immediately before it deletes. " +
 			"A refresh never replaces `stored_sha256`; only an upload does. " +
-			"If the served picture is different (replaced or removed outside Terraform, or encoded differently after a Pocket ID upgrade), or `stored_sha256` is null, destroy stops with an error and changes nothing, because the default picture cannot be told apart from a replacement and the provider does not delete what it did not upload. " +
-			"To restore this configuration's picture, apply it again, which uploads the file and records it, and destroy afterwards. To stop managing the picture without touching it, run `terraform state rm` for the resource. " +
-			"Pocket ID has no conditional delete, so a picture uploaded by someone else between the provider's check and its delete request is removed all the same; that race cannot be closed from here.\n\n" +
+			"If the served picture is different (replaced or removed outside Terraform, or encoded differently after a Pocket ID upgrade), destroy sends no request, leaves the picture exactly as it is, warns that it did so because the picture is not the one the provider uploaded, and removes the resource from state: the provider does not delete a picture it cannot show it uploaded, and cannot tell a replacement from the default picture. " +
+			"If `stored_sha256` is null (the picture could not be read back after the upload), the provider has nothing to compare with and destroy stops with an error: apply again, which uploads the file and records it, and destroy afterwards, or run `terraform state rm` to stop managing the picture. " +
+			"If the picture cannot be read at all, destroy stops with an error and changes nothing.\n\n" +
+			"**What `stored_sha256` proves.** It is the digest of the picture the server served when the provider read it right after its upload. It proves which bytes the provider observed, not that the provider uploaded them: if someone else uploads a different picture after the provider's upload and before that read, their picture becomes `stored_sha256`, and a later destroy removes it. " +
+			"Separately, Pocket ID has no conditional delete, so a picture uploaded between the provider's check and its delete request is removed all the same. Neither window can be closed from here.\n\n" +
 			"There is no import: the source file is not recoverable from the server. Do not manage the same user's picture with two of these resources.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -108,7 +110,7 @@ func (r *userProfilePictureResource) Schema(_ context.Context, _ resource.Schema
 				Computed:    true,
 			},
 			"stored_sha256": schema.StringAttribute{
-				Description: "The SHA-256 digest of the picture Pocket ID served for the user right after the provider's last upload (the 300x300 PNG it made from the file). It detects a picture changed or removed outside Terraform and is what destroy checks before deleting; a refresh never changes it. Null when it could not be read after the upload.",
+				Description: "The SHA-256 digest of the picture Pocket ID served for the user right after the provider's last upload (the 300x300 PNG it made from the file). It detects a picture changed or removed outside Terraform and is what destroy checks before deleting; a refresh never changes it. It proves the bytes the provider observed, not who uploaded them. Null when it could not be read after the upload.",
 				Computed:    true,
 			},
 		},
@@ -321,9 +323,13 @@ func (r *userProfilePictureResource) Update(ctx context.Context, req resource.Up
 // Delete restores the default picture, but only when the picture the server
 // serves is still the one recorded after the last upload: it is read again here,
 // past caches, because the state may be older than the plan (a refresh, then a
-// wait). A different picture, or no record of the upload, is refused and
-// nothing is changed. A user that is already gone is nothing to do. Pocket ID
-// has no conditional delete, so a picture uploaded between the check and the
+// wait). A different picture is left exactly as it is: no request is sent, a
+// warning says so, and the resource leaves the state, which also covers a
+// picture restored to the default by someone else without having to tell it
+// from a replacement. No record of the upload cannot be compared with anything
+// and is an error. A user that is already gone is nothing to do. The digest
+// proves the bytes observed after the upload, not who uploaded them, and Pocket
+// ID has no conditional delete, so a picture uploaded between the check and the
 // request is still removed.
 func (r *userProfilePictureResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var state userProfilePictureResourceModel
@@ -350,10 +356,9 @@ func (r *userProfilePictureResource) Delete(ctx context.Context, req resource.De
 				"or remove the resource from the state with `terraform state rm` to leave the picture as it is.", userID))
 		return
 	case state.StoredSHA256.ValueString() != served:
-		resp.Diagnostics.AddError("The stored picture is not the one this resource uploaded",
-			fmt.Sprintf("The picture stored for user %s differs from the one this resource last uploaded: it was replaced or removed outside Terraform, or Pocket ID now encodes pictures differently. "+
-				"Nothing was removed. To restore this configuration's picture, apply it again (that uploads the file) and then destroy; "+
-				"to leave the picture as it is, remove the resource from the state with `terraform state rm`.", userID))
+		resp.Diagnostics.AddWarning("Profile picture left in place",
+			fmt.Sprintf("The picture stored for user %s is not the one this resource last uploaded: it was replaced or removed outside Terraform, or Pocket ID now encodes pictures differently. "+
+				"It was left exactly as it is, and the resource is removed from the state.", userID))
 		return
 	}
 

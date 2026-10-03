@@ -255,9 +255,9 @@ func TestAccResourceUserProfilePicture_UserDeletedOutsideTerraform(t *testing.T)
 }
 
 // A picture that someone else uploaded after the provider's own is not removed
-// by destroy: the destroy stops, the replacement is still served, and applying
-// the configuration again restores the file's picture so that destroy succeeds.
-func TestAccResourceUserProfilePicture_DestroyKeepsAReplacementPicture(t *testing.T) {
+// by destroy: the destroy succeeds with a warning, sends no delete, and the
+// replacement is still served afterwards. The resource is gone from state.
+func TestAccResourceUserProfilePicture_DestroyLeavesAReplacementPicture(t *testing.T) {
 	testAccPreCheck(t)
 	name := acctest.RandomWithPrefix("tf-acc-pp")
 	userID := gmAccUser(t, name)
@@ -273,7 +273,6 @@ func TestAccResourceUserProfilePicture_DestroyKeepsAReplacementPicture(t *testin
 
 	resource.Test(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		CheckDestroy:             func(s *terraform.State) error { return ppAccCheckServed(userID, true, defaultDigest)(s) },
 		Steps: []resource.TestStep{
 			{
 				Config: ppAccConfig(userID, file),
@@ -293,23 +292,24 @@ func TestAccResourceUserProfilePicture_DestroyKeepsAReplacementPicture(t *testin
 						t.Fatal(err)
 					}
 				},
-				Config:      ppAccConfig(userID, file),
-				Destroy:     true,
-				ExpectError: regexp.MustCompile(`not the one this resource uploaded`),
+				Config:  ppAccConfig(userID, file),
+				Destroy: true,
 			},
 			{
-				// The refused destroy changed nothing on the server.
+				// The destroy changed nothing on the server, and left no
+				// resource behind: the same configuration plans a create.
 				PreConfig: func() {
 					served, err := ppAccServed(userID)
 					if err != nil {
 						t.Fatal(err)
 					}
-					if served != replacement {
-						t.Fatal("the destroy that was refused still changed the user's picture")
+					if served != replacement || served == defaultDigest {
+						t.Fatal("the destroy changed the user's picture, which it did not upload")
 					}
 				},
-				Config: ppAccConfig(userID, file),
-				Check:  ppAccCheckServed(userID, false, defaultDigest, &replacement),
+				Config:             ppAccConfig(userID, file),
+				PlanOnly:           true,
+				ExpectNonEmptyPlan: true,
 			},
 		},
 	})

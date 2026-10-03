@@ -35,17 +35,23 @@
   The users in `user_ids` are exactly the group's members; a user added outside
   Terraform shows as a difference and is removed by the next apply. It checks
   what the server holds afterwards, so an ID that names no user is an error
-  (Pocket ID would silently skip it). It never removes members the plan did
-  not show: creating it for a group that already has other members, or applying
-  after someone joined since the plan, fails and changes nothing; import the
-  group first (`terraform import pocketid_group_members.x <group_id>`) to see
-  them in the plan. Do not combine it for one group with
-  `pocketid_group_membership`, with `pocketid_user.groups`, or with a second
-  `pocketid_group_members`. On Pocket ID 2.17, removing a member can sign that
-  user out of group-restricted clients that have a back-channel logout URL.
+  (Pocket ID would silently skip it). It reads the group's members just before
+  it writes and refuses to remove any the plan did not show: creating it for a
+  group that already has other members, or applying after someone joined since
+  the plan, fails and changes nothing; import the group first
+  (`terraform import pocketid_group_members.x <group_id>`) to see them in the
+  plan. That check cannot cover a change made by something else between its
+  read and its write, an instant later: a member added then is removed by the
+  write, and a member removed then is put back by it, which restores access just
+  revoked. Pocket ID has no conditional write, so this cannot be closed. Do not
+  combine it for one group with `pocketid_group_membership`, with
+  `pocketid_user.groups`, or with a second `pocketid_group_members`. On Pocket
+  ID 2.17, removing a member can sign that user out of group-restricted clients
+  that have a back-channel logout URL.
 - New resource `pocketid_user_profile_picture`: sets a user's profile picture
   from a local file (`source`), with a computed `sha256` of the file so that a
-  changed file uploads again. Destroying it restores the default picture.
+  changed file uploads again. Destroying it restores the default picture when
+  the stored picture is still the one it uploaded (see below).
   Pocket ID turns the file into a 300x300 PNG, accepts PNG, JPEG, GIF, WebP and
   BMP, and from 2.15 refuses more than 16 million pixels; the provider refuses
   such an image at plan time on every version, and a missing, empty, non-image
@@ -64,20 +70,28 @@
   request fails without showing whether it was applied, the group is read once;
   if it holds the requested members that is recorded, and otherwise see
   `unresolved_user_ids` below. It also refuses a group record that lacks its
-  users instead of reading it as an empty group, and takes the same
-  provider-wide lock as the other membership writers.
+  users instead of reading it as an empty group. It holds a provider-wide lock
+  around each write; `pocketid_group_membership` and `pocketid_user` are to take
+  the same lock once their changes are integrated, and until then they do not
+  wait for it. The lock coordinates one provider process only, not another
+  Terraform run or anything outside Terraform.
 - `pocketid_user_profile_picture` reads the stored picture past any cache
   between the provider and Pocket ID, so its recorded digest and its drift
-  checks describe the picture the server holds now. Destroy removes the picture
-  only if it is still the one recorded after the provider's last upload
-  (`stored_sha256`, which a refresh no longer replaces): a picture replaced or
-  removed outside Terraform stops the destroy with an error that changes
-  nothing. Apply the configuration again to upload the file and destroy
-  afterwards, or run `terraform state rm` to leave the picture as it is. When
-  the picture could not be read back after an upload, `stored_sha256` stays null
-  and the next plan shows an upload that records it. Pocket ID has no
-  conditional delete, so a picture uploaded between the provider's check and
-  its delete request is still removed.
+  checks describe the picture the server holds now. Destroy restores the default
+  picture only if the picture served is still the one recorded after the
+  provider's last upload (`stored_sha256`, which a refresh no longer replaces).
+  If it is different (replaced or removed outside Terraform, or encoded
+  differently after a Pocket ID upgrade), destroy sends no request, leaves the
+  picture as it is, warns, and removes the resource from the state. When
+  `stored_sha256` is null (the picture could not be read back after an upload)
+  destroy stops with an error: apply again, which uploads the file and records
+  it, then destroy, or run `terraform state rm`; the next plan shows that upload.
+  Two windows cannot be closed. `stored_sha256` is read right after the upload,
+  so a different picture uploaded by someone else in between becomes the
+  recorded one: it proves the bytes the provider observed, not who uploaded
+  them, and a later destroy removes it. And Pocket ID has no conditional
+  delete, so a picture uploaded between the provider's check and its delete
+  request is removed too.
 - In `pocketid_groups`, each group's `user_count` is now the size of its
   `member_ids`, counted from the same pass over the users, instead of the count
   the group list reported from an earlier request; the two could disagree when a
