@@ -61,3 +61,8 @@
 - On Pocket ID 2.17, restricting a client no longer signs out (back-channel
   logout) the users who are about to be allowed: the provider writes the
   groups before it turns the restriction on.
+- Changing `is_public` on a `pocketid_client` now works in place: a client
+  that becomes confidential gets a secret generated (with
+  `generate_secret = true`), and one that becomes public has the secret this
+  resource generated revoked. Before, a client made confidential had no
+  usable secret.

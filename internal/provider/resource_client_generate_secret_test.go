@@ -131,3 +131,45 @@ func TestAccResourceClient_generateSecretInPlace(t *testing.T) {
 		},
 	})
 }
+
+func testAccClientPublicConfig(name string, public bool) string {
+	return testAccProviderConfig() + fmt.Sprintf(`
+resource "pocketid_client" "test" {
+  name          = %q
+  callback_urls = ["https://example.invalid/callback"]
+  is_public     = %t
+}
+`, name, public)
+}
+
+// is_public changes in place: becoming confidential generates the secret
+// this resource holds, becoming public revokes it.
+func TestAccResourceClient_publicFlip(t *testing.T) {
+	name := acctest.RandomWithPrefix("tf-acc-flip")
+	var id string
+	sameClient := func(s *terraform.State) error {
+		rs := s.RootModule().Resources["pocketid_client.test"]
+		if id == "" {
+			id = rs.Primary.ID
+		}
+		if rs.Primary.ID != id {
+			return fmt.Errorf("the client was replaced")
+		}
+		return nil
+	}
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: testAccClientPublicConfig(name, true), Check: resource.ComposeAggregateTestCheckFunc(testAccCheckHeldSecret("pocketid_client.test", false), sameClient)},
+			{Config: testAccClientPublicConfig(name, false), Check: resource.ComposeAggregateTestCheckFunc(
+				resource.TestCheckResourceAttr("pocketid_client.test", "is_public", "false"),
+				testAccCheckHeldSecret("pocketid_client.test", true), sameClient,
+			)},
+			{Config: testAccClientPublicConfig(name, true), Check: resource.ComposeAggregateTestCheckFunc(
+				resource.TestCheckResourceAttr("pocketid_client.test", "is_public", "true"),
+				testAccCheckHeldSecret("pocketid_client.test", false), sameClient,
+			)},
+		},
+	})
+}

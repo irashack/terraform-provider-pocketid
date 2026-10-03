@@ -154,7 +154,7 @@ func (r *clientResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				},
 			},
 			"is_public": schema.BoolAttribute{
-				Description: "Whether this is a public client (no client secret). Defaults to false.",
+				Description: "Whether this is a public client (no client secret). Defaults to false. Changes in place: a client that becomes confidential gets a secret generated when `generate_secret` is true, and one that becomes public has the secret this resource generated revoked.",
 				Optional:    true,
 				Computed:    true,
 				Default:     booldefault.StaticBool(false),

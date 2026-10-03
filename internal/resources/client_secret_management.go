@@ -55,22 +55,26 @@ func generatesSecret(generate types.Bool) bool {
 // planSecretAction decides what an update does about the resource's secret,
 // and false when the plan does not determine it yet.
 //
-// A secret is generated only on a transition: generate_secret from false to
-// true. A confidential client in state without a secret (imported, or created
-// before Terraform managed it) keeps having none, so upgrading the provider or
-// importing a client never creates a secret behind the user's back.
+// The resource holds a secret when the client is confidential and
+// generate_secret is true. A secret is generated only on a transition into
+// that: generate_secret from false to true, or is_public from true to false.
+// A confidential client in state without a secret (imported, or created
+// before Terraform managed it) keeps having none, so upgrading the provider
+// or importing a client never creates a secret behind the user's back.
+// Leaving it (generate_secret to false, or is_public to true) revokes the
+// secret this resource generated.
 func planSecretAction(state, plan clientResourceModel) (secretAction, bool) {
 	if plan.GenerateSecret.IsUnknown() || plan.IsPublic.IsUnknown() {
 		return secretKeep, false
 	}
 	holds := holdsSecret(state)
-	if !plan.GenerateSecret.ValueBool() {
+	if !plan.GenerateSecret.ValueBool() || plan.IsPublic.ValueBool() {
 		if holds {
 			return secretRevoke, true
 		}
 		return secretNone, true
 	}
-	if !holds && !generatesSecret(state.GenerateSecret) && !plan.IsPublic.ValueBool() {
+	if !holds && (!generatesSecret(state.GenerateSecret) || state.IsPublic.ValueBool()) {
 		return secretGenerate, true
 	}
 	return secretKeep, true
