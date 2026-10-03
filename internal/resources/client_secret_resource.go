@@ -264,7 +264,7 @@ func (r *clientSecretResource) Create(ctx context.Context, req resource.CreateRe
 			"OIDC client "+clientID+" is a public client, and Pocket ID gives public clients no secrets; no secret was created.")
 		return
 	}
-	before, err := r.listClientSecrets(ctx, clientID)
+	before, err := r.client.ListClientSecrets(ctx, clientID)
 	if err != nil {
 		resp.Diagnostics.AddError("Error listing client secrets", "Could not list the secrets of OIDC client "+clientID+" before creating one; no secret was created: "+err.Error())
 		return
@@ -375,7 +375,7 @@ func (r *clientSecretResource) reportFailedCreate(ctx context.Context, clientID 
 		detail := "Pocket ID refused to create a secret for OIDC client " + clientID + " (" + cause.Error() + "); no secret was created."
 		if client.IsNotFound(cause, client.ResourceOIDCClient) {
 			detail = "OIDC client " + clientID + " no longer exists; no secret was created."
-		} else if after, err := r.listClientSecrets(ctx, clientID); err == nil && len(after) >= client.MaxClientSecrets {
+		} else if after, err := r.client.ListClientSecrets(ctx, clientID); err == nil && len(after) >= client.MaxClientSecrets {
 			detail = clientSecretLimitDetail(clientID, after) + " Pocket ID refused another; no secret was created."
 		}
 		resp.Diagnostics.AddError("Error creating client secret", detail)
@@ -384,7 +384,7 @@ func (r *clientSecretResource) reportFailedCreate(ctx context.Context, clientID 
 
 	detail := "The request to create a secret for OIDC client " + clientID + " failed (" + cause.Error() + ") after it was sent, " +
 		"so a secret may have been created. The request was not retried. "
-	after, err := r.listClientSecrets(ctx, clientID)
+	after, err := r.client.ListClientSecrets(ctx, clientID)
 	if err != nil {
 		detail += "The client's secrets could not be listed afterwards (" + err.Error() + "); list them in Pocket ID before applying again."
 		resp.Diagnostics.AddError("Client secret creation result uncertain", detail)
@@ -412,20 +412,6 @@ func (r *clientSecretResource) reportFailedCreate(ctx context.Context, clientID 
 	}
 	detail += "\n\nSecrets on the client now:\n" + describeClientSecrets(after, known)
 	resp.Diagnostics.AddError("Client secret creation result uncertain", detail)
-}
-
-// listClientSecrets lists a client's secrets and refuses a list that cannot
-// be relied on (client.CheckClientSecretList): every list this resource
-// stores, prints, or takes as proof of absence goes through it.
-func (r *clientSecretResource) listClientSecrets(ctx context.Context, clientID string) ([]client.ClientSecretMetadata, error) {
-	secrets, err := r.client.ListClientSecrets(ctx, clientID)
-	if err != nil {
-		return nil, err
-	}
-	if err := client.CheckClientSecretList(secrets); err != nil {
-		return nil, err
-	}
-	return secrets, nil
 }
 
 // clientSecretListed reports whether a secret with this ID is in the list.
@@ -478,7 +464,7 @@ func (r *clientSecretResource) Read(ctx context.Context, req resource.ReadReques
 	}
 	clientID, secretID := state.ClientID.ValueString(), state.ID.ValueString()
 
-	secrets, err := r.listClientSecrets(ctx, clientID)
+	secrets, err := r.client.ListClientSecrets(ctx, clientID)
 	if err != nil {
 		if client.IsNotFound(err, client.ResourceOIDCClient) {
 			tflog.Warn(ctx, "OIDC client no longer exists; removing its client secret from state", map[string]any{"client_id": clientID, "secret_id": secretID})

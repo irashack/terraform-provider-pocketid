@@ -40,8 +40,9 @@ var ErrCreatedSecretMalformed = errors.New("the server created a client secret b
 
 // ErrMalformedSecretList marks a secret list that cannot be relied on: an
 // entry without a usable ID, an ID listed twice, or a prefix outside
-// Pocket ID's contract. Such a list proves neither presence nor absence.
-// The error repeats nothing from the response.
+// Pocket ID's contract. Such a list proves neither presence nor absence;
+// ListClientSecrets returns it instead of the list. The error repeats nothing
+// from the response.
 var ErrMalformedSecretList = errors.New("the client secret list Pocket ID returned is malformed")
 
 // clientSecretPrefixLength is how many leading characters of a secret Pocket
@@ -283,9 +284,15 @@ func decodeCreatedSecret(response []byte) (*ClientSecret, error) {
 }
 
 // ListClientSecrets lists an OIDC client's secrets without their values.
-// Pocket ID 2.14.0 and later only. The entries are not checked: a caller that
-// stores or prints them, or takes a missing entry as proof that a secret is
-// gone, checks the list with CheckClientSecretList first.
+// Pocket ID 2.14.0 and later only.
+//
+// A list is returned only when it can be relied on: every entry has a usable
+// (UUID) ID that appears once, and a prefix inside Pocket ID's contract
+// (empty, or four printable ASCII characters). Any other list, an empty
+// object entry such as `[{}]` among them, proves neither the presence nor the
+// absence of a secret and is refused with ErrMalformedSecretList, so no
+// caller can take "the secret is not listed" from it. An empty or null list
+// is a client without secrets. The error repeats nothing from the response.
 func (c *Client) ListClientSecrets(ctx context.Context, clientID string) ([]ClientSecretMetadata, error) {
 	id, err := clientIDSegment(clientID)
 	if err != nil {
@@ -300,15 +307,17 @@ func (c *Client) ListClientSecrets(ctx context.Context, clientID string) ([]Clie
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("error unmarshaling client secret list")
 	}
+	if err := checkClientSecretList(result); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
-// CheckClientSecretList refuses, with ErrMalformedSecretList, a secret list
+// checkClientSecretList refuses, with ErrMalformedSecretList, a secret list
 // that cannot be relied on: an entry whose ID is not a UUID (such as an
 // empty object), an ID listed twice, or a prefix outside Pocket ID's
-// contract (empty, or four printable ASCII characters). An empty list is a
-// client without secrets. Nothing from a refused list is repeated.
-func CheckClientSecretList(secrets []ClientSecretMetadata) error {
+// contract. An empty list is a client without secrets.
+func checkClientSecretList(secrets []ClientSecretMetadata) error {
 	seen := make(map[string]bool, len(secrets))
 	for _, secret := range secrets {
 		if ValidateUUID("client secret", secret.ID) != nil || seen[secret.ID] || !validClientSecretPrefix(secret.Prefix) {
@@ -341,9 +350,9 @@ func (c *Client) DeleteClientSecret(ctx context.Context, clientID, secretID stri
 // only once the secret is confirmed absent: by Pocket ID's own not-found
 // error for the secret or for its client (a client's secrets live in the
 // client, so they go with it), or by a list of the client's secrets read
-// after the DELETE that passes CheckClientSecretList and no longer
-// contains it. A successful DELETE is
-// confirmed the same way. Any other outcome is an error that names the
+// after the DELETE that ListClientSecrets accepts (a malformed list confirms
+// nothing) and no longer contains it. A successful DELETE is confirmed the
+// same way. Any other outcome is an error that names the
 // secret's ID: the secret may still be valid. The DELETE is never retried;
 // the list is a read and follows the read retry rules.
 func (c *Client) RevokeClientSecret(ctx context.Context, clientID, secretID string) error {
@@ -356,9 +365,6 @@ func (c *Client) RevokeClientSecret(ctx context.Context, clientID, secretID stri
 	}
 
 	remaining, listErr := c.ListClientSecrets(ctx, clientID)
-	if listErr == nil {
-		listErr = CheckClientSecretList(remaining)
-	}
 	if listErr != nil {
 		if IsNotFound(listErr, ResourceOIDCClient) {
 			return nil

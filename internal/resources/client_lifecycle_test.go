@@ -221,7 +221,7 @@ func TestClientCreateRevokesServerCreatedSecret(t *testing.T) {
 		{name: "revoke_rejected_list_failed_rolls_back", createdID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", revokeStatus: 404, listStatus: 403, wantError: true, wantRevokes: 1, wantDeletes: 1},
 		{name: "revoke_uncertain_retained", createdID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", revokeStatus: 503, listStatus: 200, listBody: `[{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}]`, wantError: true, wantRevokes: 1, retained: true},
 		{name: "revoke_uncertain_but_confirmed_gone", createdID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", revokeStatus: 503, listStatus: 200, listBody: `[]`, wantRevokes: 1, wantSecretPost: 1},
-		{name: "revoke_404_confirmed_gone", createdID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", revokeStatus: 404, listStatus: 200, listBody: `[{"id":"other"}]`, wantRevokes: 1, wantSecretPost: 1},
+		{name: "revoke_404_confirmed_gone", createdID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", revokeStatus: 404, listStatus: 200, listBody: `[{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc"}]`, wantRevokes: 1, wantSecretPost: 1},
 		{name: "unidentified_secret_rolls_back", createdID: "", wantError: true, wantDeletes: 1},
 		// Revoke rejected, then the rollback DELETE fails: only Pocket ID's own
 		// not-found error proves the client (and its secret) is gone.

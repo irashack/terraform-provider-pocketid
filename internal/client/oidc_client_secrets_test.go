@@ -583,9 +583,11 @@ func TestClient_RevokeClientSecret(t *testing.T) {
 	}
 }
 
-// A list that cannot be relied on is refused without repeating any of it;
-// an empty or null list is a client without secrets.
-func TestClient_CheckClientSecretList(t *testing.T) {
+// ListClientSecrets returns a list only when it can be relied on: one that
+// cannot is refused without repeating any of it and without a partial result,
+// so no caller can read "not listed" from it; an empty or null list is a
+// client without secrets.
+func TestClient_ListClientSecrets_Validated(t *testing.T) {
 	const leaked = "WHOLEsecretVALUEinTheWrongField"
 	const id1, id2 = "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"
 	entry := func(id, prefix string) string {
@@ -594,17 +596,19 @@ func TestClient_CheckClientSecretList(t *testing.T) {
 	for name, tc := range map[string]struct {
 		body string
 		ok   bool
+		n    int
 	}{
-		"empty":             {`[]`, true},
-		"null":              {`null`, true},
-		"valid":             {"[" + entry(id1, "abcd") + "," + entry(id2, "") + "]", true},
-		"printable prefix":  {"[" + entry(id1, " ~!:") + "]", true},
-		"empty object":      {`[{}]`, false},
-		"ID not a UUID":     {"[" + entry("not-a-uuid", "abcd") + "]", false},
-		"duplicate IDs":     {"[" + entry(id1, "abcd") + "," + entry(id1, "abcd") + "]", false},
-		"value as prefix":   {"[" + entry(id1, leaked) + "]", false},
-		"short prefix":      {"[" + entry(id1, "ab") + "]", false},
-		"control in prefix": {"[" + entry(id1, `a\tbc`) + "]", false},
+		"empty":             {`[]`, true, 0},
+		"null":              {`null`, true, 0},
+		"valid":             {"[" + entry(id1, "abcd") + "," + entry(id2, "") + "]", true, 2},
+		"printable prefix":  {"[" + entry(id1, " ~!:") + "]", true, 1},
+		"empty object":      {`[{}]`, false, 0},
+		"ID not a UUID":     {"[" + entry("not-a-uuid", "abcd") + "]", false, 0},
+		"valid then empty":  {"[" + entry(id1, "abcd") + ",{}]", false, 0},
+		"duplicate IDs":     {"[" + entry(id1, "abcd") + "," + entry(id1, "abcd") + "]", false, 0},
+		"value as prefix":   {"[" + entry(id1, leaked) + "]", false, 0},
+		"short prefix":      {"[" + entry(id1, "ab") + "]", false, 0},
+		"control in prefix": {"[" + entry(id1, `a\tbc`) + "]", false, 0},
 	} {
 		t.Run(name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -614,13 +618,13 @@ func TestClient_CheckClientSecretList(t *testing.T) {
 			c, err := client.NewClient(server.URL, "synthetic-token", false, 2)
 			require.NoError(t, err)
 			secrets, err := c.ListClientSecrets(context.Background(), "c1")
-			require.NoError(t, err, "decoding alone accepts it")
-			err = client.CheckClientSecretList(secrets)
 			if tc.ok {
-				assert.NoError(t, err)
+				require.NoError(t, err)
+				assert.Len(t, secrets, tc.n)
 				return
 			}
 			require.ErrorIs(t, err, client.ErrMalformedSecretList)
+			assert.Nil(t, secrets)
 			assert.NotContains(t, err.Error(), leaked)
 			assert.NotContains(t, err.Error(), "not-a-uuid")
 		})
