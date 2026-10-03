@@ -338,6 +338,10 @@ func TestGroupMembersResource_SchemaAndMetadata(t *testing.T) {
 	for _, claim := range []string{"unresolved_user_ids", "may yet take effect", "plans for the resource are refused", "destroy stops with an error", "terraform state rm"} {
 		assert.Contains(t, sch.MarkdownDescription, claim)
 	}
+	// Replacement order is part of the contract.
+	for _, claim := range []string{"Replace this resource only by destroying the old one first", "create_before_destroy = true", "inherited from a resource that depends on it"} {
+		assert.Contains(t, sch.MarkdownDescription, claim)
+	}
 	unresolved, ok := sch.Attributes["unresolved_user_ids"].(schema.SetAttribute)
 	require.True(t, ok)
 	assert.True(t, unresolved.Computed)
@@ -423,6 +427,44 @@ func TestGroupMembersResource_Create_UnknownUserIsAnErrorButTheAddedMembersAreKe
 	r.Delete(context.Background(), resource.DeleteRequest{State: resp.State}, deleted)
 	require.False(t, deleted.Diagnostics.HasError(), "%v", deleted.Diagnostics)
 	assert.Empty(t, s.memberSet())
+}
+
+// Every diagnostic that leaves a tainted resource behind says that the
+// replacement must destroy the old resource first.
+func TestGroupMembersResource_TaintingDiagnosticsStateTheReplacementOrder(t *testing.T) {
+	const note = "create_before_destroy"
+	partial := func() *resource.CreateResponse {
+		s, c := newGMServer(t)
+		r, sch := gmResource(t, c)
+		return gmCreate(t, r, sch, s.groupID, []string{gmUUID(101), gmUUID(999)})
+	}
+	unreadable := func() *resource.CreateResponse {
+		s, c := newGMServer(t)
+		s.putAppliesThenFails, s.failGetsAfterPut = http.StatusInternalServerError, true
+		r, sch := gmResource(t, c)
+		return gmCreate(t, r, sch, s.groupID, []string{gmUUID(101)})
+	}
+	unchanged := func() *resource.CreateResponse {
+		s, c := newGMServer(t)
+		s.putStatus = http.StatusInternalServerError
+		r, sch := gmResource(t, c)
+		return gmCreate(t, r, sch, s.groupID, []string{gmUUID(101)})
+	}
+	for name, create := range map[string]func() *resource.CreateResponse{"partial result": partial, "unreadable group": unreadable, "unchanged group": unchanged} {
+		t.Run(name, func(t *testing.T) {
+			resp := create()
+			require.True(t, resp.Diagnostics.HasError())
+			require.False(t, resp.State.Raw.IsNull(), "the resource is kept, so it is tainted")
+			assert.Contains(t, resp.Diagnostics.Errors()[0].Detail(), note)
+		})
+	}
+
+	// An error that keeps no resource has no replacement to order.
+	s, c := newGMServer(t)
+	r, sch := gmResource(t, c)
+	nothingChanged := gmCreate(t, r, sch, s.groupID, []string{gmUUID(999)})
+	require.True(t, nothingChanged.Diagnostics.HasError())
+	assert.NotContains(t, nothingChanged.Diagnostics.Errors()[0].Detail(), note)
 }
 
 // A request whose valid part changed nothing leaves nothing to keep.

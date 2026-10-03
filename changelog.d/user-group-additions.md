@@ -120,3 +120,12 @@
   succeed without removing that user. Existing state needs no change and an
   unchanged configuration still plans empty. To give up on a group without
   changing it, run `terraform state rm`.
+- **Replace `pocketid_group_members` only by destroying the old resource
+  first**, which is Terraform's default order. Do not set
+  `create_before_destroy = true` on it, directly or through ordering inherited
+  from a resource that depends on it. When the resource is replaced for the same
+  group (tainted by a failed create or update, or `-replace`), the provider
+  cannot tell the old resource's cleanup from the members the new resource has
+  just recorded, so in the other order the old resource's destroy removes users
+  the new resource's state still lists. The description and the errors that
+  leave a tainted resource behind say so.

@@ -343,3 +343,53 @@ func TestGroupMembersProtocol_PrivateMarkerAloneIsHonored(t *testing.T) {
 	allowed := h.plan(h.decode(refreshed.NewState), config, h.object(group, group, []string{user}, nil), refreshed.Private)
 	assert.Empty(t, gmDiagErrors(allowed.Diagnostics))
 }
+
+// KNOWN LIMITATION, pinned here so that a change to it is noticed: replacing a
+// tainted pocketid_group_members with create_before_destroy is unsafe, and the
+// description and the recovery diagnostics say not to do it.
+//
+// The failed create left candidate A, and the late request then granted A. In
+// create-before-destroy order the replacement is created first: it finds A
+// already a member, writes nothing and records A as its own. The old resource is
+// destroyed afterwards and removes its candidate A. The apply succeeds, the new
+// resource's state lists A, and the group is empty. A second read of the group
+// cannot tell the two generations' ownership apart, so the provider cannot fix
+// this from the group alone; the protection is the documented contract of
+// destroying the old resource first (see the destroy-before-create test above).
+func TestGroupMembersProtocol_CreateBeforeDestroyOfATaintedResourceRemovesTheReplacementsMembers(t *testing.T) {
+	s, c := newGMServer(t)
+	s.putHeld = true
+	h := newGMHarness(t, c)
+	group, user := s.groupID, gmUUID(101)
+	config := h.object("", group, []string{user}, nil)
+
+	create := h.plan(h.null(), config, config, nil)
+	applied := h.apply(h.null(), config, create.PlannedState, create.PlannedPrivate)
+	require.NotEmpty(t, gmDiagErrors(applied.Diagnostics))
+	tainted := h.decode(applied.NewState)
+	candidates, null, _ := h.attr(tainted, "unresolved_user_ids")
+	require.False(t, null)
+	require.Equal(t, []string{user}, candidates)
+	// The failed create's own diagnostics state the ordering contract.
+	assert.Contains(t, gmDiagErrors(applied.Diagnostics), "create_before_destroy")
+	assert.Contains(t, gmDiagErrors(applied.Diagnostics), "destroyed before the new one is created")
+
+	s.releasePut() // the request commits late: the group now holds the user
+
+	// Create before destroy: the replacement is created first, from a null prior
+	// state, with no private data.
+	replacement := h.plan(h.null(), config, config, nil)
+	require.Empty(t, gmDiagErrors(replacement.Diagnostics))
+	recreated := h.apply(h.null(), config, replacement.PlannedState, replacement.PlannedPrivate)
+	require.Empty(t, gmDiagErrors(recreated.Diagnostics))
+	assert.Equal(t, 1, s.putCount(), "the replacement found the user already a member and wrote nothing")
+	newMembers, _, _ := h.attr(h.decode(recreated.NewState), "user_ids")
+	assert.Equal(t, []string{user}, newMembers, "the new resource records the user as its member")
+
+	// Then the old resource is destroyed, and removes its candidate.
+	destroyed := h.apply(tainted, h.null(), h.dynamic(h.null()), replacement.PlannedPrivate)
+	require.Empty(t, gmDiagErrors(destroyed.Diagnostics), "the apply succeeds")
+	assert.Empty(t, s.memberSet(), "the group is empty although the new resource's state lists the user")
+	stillClaimed, _, _ := h.attr(h.decode(recreated.NewState), "user_ids")
+	assert.Equal(t, []string{user}, stillClaimed)
+}
