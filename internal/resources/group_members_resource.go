@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
@@ -72,6 +73,8 @@ func (r *groupMembersResource) Schema(_ context.Context, _ resource.SchemaReques
 			"~> **Concurrent changes by others** Pocket ID can only replace a group's whole member list, so a change to this group's members made by something else (the Pocket ID admin interface, another Terraform run, an onboarding service) in the instant between this provider reading the members and writing them is overwritten, and no check can prevent it. " +
 			"Within one Terraform run the provider serializes every write of user-group relations, so this resource, `pocketid_group_membership` and `pocketid_user` do not overwrite each other.\n\n" +
 			"~> **LDAP groups** A group synchronized from LDAP gets its membership rewritten by the next LDAP synchronization. Do not manage its members with this resource.\n\n" +
+			"**Partial results.** If Pocket ID applies only part of a request (it skips an ID that names no user), the resource reports the error and still records the members the group actually holds, so that Terraform marks it tainted and destroying it removes those members; nothing is left unmanaged. " +
+			"When a request fails in a way that does not show whether it was applied, the group is read once and what it holds is recorded; if that read fails too, the members last read are kept and a refresh reconciles them.\n\n" +
 			"**Destroying** the resource removes the users in `user_ids` from the group. Members added outside Terraform since the last refresh stay. The group itself is not deleted.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -152,6 +155,70 @@ func groupMembersList(ids []string) string {
 	return fmt.Sprintf("%s and %d more", strings.Join(ids[:shown], ", "), len(ids)-shown)
 }
 
+// groupMembersSame reports whether a and b hold the same IDs.
+func groupMembersSame(a, b []string) bool {
+	return len(groupMembersDiff(a, b)) == 0 && len(groupMembersDiff(b, a)) == 0
+}
+
+// groupMembersPut is what became of one PUT of a membership.
+type groupMembersPut struct {
+	// Changed is false only when the group provably holds what it held before:
+	// the request was refused outright, or it was answered or re-read and
+	// nothing differs. Otherwise the group's members may have changed.
+	Changed bool
+	// Observed is the membership read after the request, if it could be read.
+	Observed      []string
+	ObservedKnown bool
+	// Gone: the group no longer exists.
+	Gone bool
+	// Err is why the request itself failed, or nil. A failure that does not
+	// prove the change was not applied is still followed by a read.
+	Err error
+}
+
+// put replaces the group's members with ids and finds out what the group holds
+// afterwards. before is the membership read just before. The PUT is never
+// repeated. An accepted answer is taken as read; an answer that cannot be used,
+// or a failure that does not prove the request was refused (a server error, a
+// broken connection, an interrupted body), is followed by one read of the group,
+// because the change may have been made.
+func (r *groupMembersResource) put(ctx context.Context, groupID string, ids, before []string) groupMembersPut {
+	got, err := r.client.SetGroupMembers(ctx, groupID, ids)
+	if err == nil {
+		return groupMembersPut{Changed: !groupMembersSame(got, before), Observed: got, ObservedKnown: true}
+	}
+	if client.IsNotFound(err, client.ResourceUserGroup) {
+		return groupMembersPut{Gone: true, Err: err}
+	}
+	if client.IsDefiniteRejection(err) || errors.Is(err, client.ErrInvalidIdentifier) {
+		return groupMembersPut{Err: err}
+	}
+
+	reread, readErr := r.client.GetUserGroupDetail(ctx, groupID)
+	switch {
+	case readErr == nil:
+		return groupMembersPut{Changed: !groupMembersSame(reread.MemberIDs, before), Observed: reread.MemberIDs, ObservedKnown: true, Err: err}
+	case client.IsNotFound(readErr, client.ResourceUserGroup):
+		return groupMembersPut{Gone: true, Err: err}
+	default:
+		return groupMembersPut{Changed: true, Err: err}
+	}
+}
+
+// groupMembersWrite is the outcome of write.
+type groupMembersWrite struct {
+	// OK: the group now holds exactly the requested members.
+	OK bool
+	// Changed: the group's members may have been changed by this call even
+	// though it did not succeed, so the resource must stay in state to be able
+	// to reconcile or undo that.
+	Changed bool
+	// Members is what to record in state when Changed and not OK: the
+	// membership observed after the request, or, when that could not be read,
+	// the one read before it.
+	Members []string
+}
+
 // write replaces the group's members with want, after checking that the
 // replacement removes nobody the plan did not show.
 //
@@ -159,13 +226,13 @@ func groupMembersList(ids []string) string {
 // Terraform's state recorded): anyone else joined since the plan was made, and
 // replacing the membership would silently remove them. The result is checked
 // against what was asked for, because Pocket ID drops IDs that name no user
-// without an error. The caller holds the group's lock. It reports whether the
-// group now holds exactly want; if not, an error is in diags.
-func (r *groupMembersResource) write(ctx context.Context, groupID string, known, want []string, diags *diag.Diagnostics) bool {
+// without an error. The caller holds the membership lock. On failure the error
+// is in diags, and the outcome says whether the group may have changed.
+func (r *groupMembersResource) write(ctx context.Context, groupID string, known, want []string, diags *diag.Diagnostics) groupMembersWrite {
 	current, err := r.client.GetUserGroupDetail(ctx, groupID)
 	if err != nil {
 		diags.AddError("Error reading group", fmt.Sprintf("Could not read group %s before changing its members: %s", groupID, err))
-		return false
+		return groupMembersWrite{}
 	}
 	if unplanned := groupMembersDiff(current.MemberIDs, append(append([]string(nil), known...), want...)); len(unplanned) > 0 {
 		diags.AddError(
@@ -175,40 +242,46 @@ func (r *groupMembersResource) write(ctx context.Context, groupID string, known,
 				"Add them to user_ids, or import the group (terraform import pocketid_group_members.<name> %s) so that the plan shows them. Nothing was changed.",
 				groupID, len(unplanned), groupMembersList(unplanned), groupID),
 		)
-		return false
+		return groupMembersWrite{}
 	}
-	if len(groupMembersDiff(current.MemberIDs, want)) == 0 && len(groupMembersDiff(want, current.MemberIDs)) == 0 {
-		return true // already exactly right: nothing to write
+	if groupMembersSame(current.MemberIDs, want) {
+		return groupMembersWrite{OK: true} // already exactly right: nothing to write
 	}
 
-	got, err := r.client.SetGroupMembers(ctx, groupID, want)
-	if errors.Is(err, client.ErrResultUnread) {
-		// The change was made; what the group holds now is unknown. Read it.
-		reread, readErr := r.client.GetUserGroupDetail(ctx, groupID)
-		if readErr != nil {
-			diags.AddError(
-				"Group members may have changed",
-				fmt.Sprintf("Pocket ID accepted the new members of group %s but its answer could not be read, and reading the group afterwards failed too: %s. Refresh and plan again to see what the group holds.", groupID, readErr),
-			)
-			return false
+	result := r.put(ctx, groupID, want, current.MemberIDs)
+	switch {
+	case result.Gone:
+		diags.AddError("Group not found", fmt.Sprintf("Group %s does not exist (any longer). Nothing was changed.", groupID))
+		return groupMembersWrite{}
+	case result.Err != nil && !result.Changed && !result.ObservedKnown:
+		// Refused outright.
+		diags.AddError("Error setting group members", fmt.Sprintf("Pocket ID refused to set the members of group %s: %s. Nothing was changed.", groupID, result.Err))
+		return groupMembersWrite{}
+	case !result.ObservedKnown:
+		diags.AddError(
+			"Group members may have changed",
+			fmt.Sprintf("The request to set the members of group %s failed (%s) and reading the group afterwards failed too, so it is not known whether the members changed. "+
+				"The resource keeps the members last read; refresh and plan again to see what the group holds.", groupID, result.Err),
+		)
+		return groupMembersWrite{Changed: true, Members: current.MemberIDs}
+	}
+
+	if groupMembersSame(result.Observed, want) {
+		if result.Err != nil {
+			diags.AddWarning("Request failed but the members were set",
+				fmt.Sprintf("The request to set the members of group %s failed (%s), but reading the group afterwards shows the requested members, so the change is recorded.", groupID, result.Err))
 		}
-		got, err = reread.MemberIDs, nil
+		return groupMembersWrite{OK: true, Changed: true}
 	}
-	if err != nil {
-		diags.AddError("Error setting group members", fmt.Sprintf("Could not set the members of group %s: %s", groupID, err))
-		return false
-	}
-	return groupMembersCheck(groupID, want, got, diags)
+	groupMembersReportDifference(groupID, want, result.Observed, result.Err, diags)
+	return groupMembersWrite{Changed: result.Changed, Members: result.Observed}
 }
 
-// groupMembersCheck compares what the group holds with what was asked for and
-// adds an error naming any difference.
-func groupMembersCheck(groupID string, want, got []string, diags *diag.Diagnostics) bool {
+// groupMembersReportDifference adds an error naming how what the group holds
+// differs from what was asked for.
+func groupMembersReportDifference(groupID string, want, got []string, requestErr error, diags *diag.Diagnostics) {
 	missing := groupMembersDiff(want, got)
 	extra := groupMembersDiff(got, want)
-	if len(missing) == 0 && len(extra) == 0 {
-		return true
-	}
 	var parts []string
 	if len(missing) > 0 {
 		parts = append(parts, fmt.Sprintf("%d requested user(s) are not members, most likely because no such user exists: %s", len(missing), groupMembersList(missing)))
@@ -216,11 +289,14 @@ func groupMembersCheck(groupID string, want, got []string, diags *diag.Diagnosti
 	if len(extra) > 0 {
 		parts = append(parts, fmt.Sprintf("%d member(s) were not requested: %s", len(extra), groupMembersList(extra)))
 	}
+	lead := "Pocket ID changed the members of group %s, but the group does not hold what was asked for"
+	if requestErr != nil {
+		lead = "The request to set the members of group %s failed (" + requestErr.Error() + ") and the group does not hold what was asked for"
+	}
 	diags.AddError(
 		"Group members differ from the request",
-		fmt.Sprintf("Pocket ID changed the members of group %s, but the group does not hold what was asked for: %s. The change was applied as far as the server allowed; correct user_ids and apply again.", groupID, strings.Join(parts, "; ")),
+		fmt.Sprintf(lead+": %s. The resource records the members the group actually holds; correct user_ids and apply again.", groupID, strings.Join(parts, "; ")),
 	)
-	return false
 }
 
 // Create replaces the group's membership with user_ids.
@@ -242,11 +318,33 @@ func (r *groupMembersResource) Create(ctx context.Context, req resource.CreateRe
 
 	// A new resource knows of no member: every current member must be one of
 	// want.
-	if !r.write(ctx, groupID, nil, want, &resp.Diagnostics) {
+	outcome := r.write(ctx, groupID, nil, want, &resp.Diagnostics)
+	if !outcome.OK {
+		if outcome.Changed {
+			// The group's members changed (for example the valid users of a
+			// request that also named a user that does not exist were added).
+			// Keep the resource, with the members the group actually holds, so
+			// that destroying it removes them and a refresh sees them; the
+			// error stays, so Terraform marks the resource tainted.
+			r.keep(ctx, &plan, outcome.Members, &resp.State, &resp.Diagnostics)
+		}
 		return
 	}
 	plan.ID = types.StringValue(groupID)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// keep records the resource with the given members, after a write that failed
+// but may have changed the group.
+func (r *groupMembersResource) keep(ctx context.Context, model *groupMembersResourceModel, members []string, state *tfsdk.State, diags *diag.Diagnostics) {
+	set, setDiags := ugIDSetValueResource(ctx, members)
+	diags.Append(setDiags...)
+	if setDiags.HasError() {
+		return
+	}
+	model.ID = types.StringValue(model.GroupID.ValueString())
+	model.UserIDs = set
+	diags.Append(state.Set(ctx, model)...)
 }
 
 // Read refreshes the state with the group's actual members.
@@ -307,7 +405,13 @@ func (r *groupMembersResource) Update(ctx context.Context, req resource.UpdateRe
 	// see lockMembershipWrites.
 	defer lockMembershipWrites()()
 
-	if !r.write(ctx, groupID, known, want, &resp.Diagnostics) {
+	outcome := r.write(ctx, groupID, known, want, &resp.Diagnostics)
+	if !outcome.OK {
+		if outcome.Changed {
+			// Record what the group actually holds, not the prior members and
+			// not the plan; the error stays.
+			r.keep(ctx, &plan, outcome.Members, &resp.State, &resp.Diagnostics)
+		}
 		return
 	}
 	plan.ID = types.StringValue(groupID)
@@ -346,26 +450,23 @@ func (r *groupMembersResource) Delete(ctx context.Context, req resource.DeleteRe
 		return // none of the managed users is a member any more
 	}
 
-	got, err := r.client.SetGroupMembers(ctx, groupID, remaining)
-	if errors.Is(err, client.ErrResultUnread) {
-		reread, readErr := r.client.GetUserGroupDetail(ctx, groupID)
-		if readErr != nil {
-			resp.Diagnostics.AddError(
-				"Group members may have changed",
-				fmt.Sprintf("Pocket ID accepted the removal of the members of group %s but its answer could not be read, and reading the group afterwards failed too: %s", groupID, readErr),
-			)
-			return
-		}
-		got, err = reread.MemberIDs, nil
-	}
-	if err != nil {
-		if client.IsNotFound(err, client.ResourceUserGroup) {
-			return // the group was deleted in the meantime
-		}
-		resp.Diagnostics.AddError("Error removing group members", fmt.Sprintf("Could not remove the members of group %s: %s", groupID, err))
+	result := r.put(ctx, groupID, remaining, current.MemberIDs)
+	switch {
+	case result.Gone:
+		return // the group was deleted in the meantime
+	case !result.ObservedKnown && result.Err != nil && !result.Changed:
+		resp.Diagnostics.AddError("Error removing group members", fmt.Sprintf("Pocket ID refused to remove the members of group %s: %s", groupID, result.Err))
+		return
+	case !result.ObservedKnown:
+		resp.Diagnostics.AddError(
+			"Group members may have changed",
+			fmt.Sprintf("The request to remove the members of group %s failed (%s) and reading the group afterwards failed too, so it is not known whether they were removed.", groupID, result.Err),
+		)
 		return
 	}
-	groupMembersCheck(groupID, remaining, got, &resp.Diagnostics)
+	if !groupMembersSame(result.Observed, remaining) {
+		groupMembersReportDifference(groupID, remaining, result.Observed, result.Err, &resp.Diagnostics)
+	}
 }
 
 // ImportState imports a group's membership. The import identifier is the

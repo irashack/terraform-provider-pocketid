@@ -137,9 +137,11 @@ func TestAccResourceGroupMembers_Lifecycle(t *testing.T) {
 	})
 }
 
-// Pocket ID drops an ID that names no user and still answers 200. The
-// resource turns that into an error and records nothing.
-func TestAccResourceGroupMembers_UnknownUserIsAnError(t *testing.T) {
+// Pocket ID drops an ID that names no user and still answers 200. The resource
+// turns that into an error naming the ID, but the valid user of the same request
+// was added, so the resource is kept (tainted) with the members the group
+// holds: the next apply replaces it, and destroying it removes them.
+func TestAccResourceGroupMembers_UnknownUserIsAnErrorAndTheAddedMemberStaysManaged(t *testing.T) {
 	testAccPreCheck(t)
 	name := acctest.RandomWithPrefix("tf-acc-gm")
 	groupID := gmAccCreate(t, "user-groups", map[string]string{"name": name, "friendlyName": name})
@@ -148,10 +150,25 @@ func TestAccResourceGroupMembers_UnknownUserIsAnError(t *testing.T) {
 
 	resource.Test(t, resource.TestCase{
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		Steps: []resource.TestStep{{
-			Config:      gmAccConfig(groupID, u1, missing),
-			ExpectError: regexp.MustCompile(`(?s)Group members differ from the request.*` + missing),
-		}},
+		// The final destroy removes the member the failed create added.
+		CheckDestroy: func(*terraform.State) error { return gmAccCheckMembers(groupID)(nil) },
+		Steps: []resource.TestStep{
+			{
+				Config:      gmAccConfig(groupID, u1, missing),
+				ExpectError: regexp.MustCompile(`(?s)Group members differ from the request.*` + missing),
+			},
+			{
+				// The server did add the valid user, and the failed resource is
+				// still in state: the corrected configuration replaces it.
+				PreConfig: func() {
+					if err := gmAccCheckMembers(groupID, u1)(nil); err != nil {
+						t.Fatalf("after the failed create: %v", err)
+					}
+				},
+				Config: gmAccConfig(groupID, u1),
+				Check:  gmAccCheckMembers(groupID, u1),
+			},
+		},
 	})
 }
 

@@ -43,6 +43,15 @@ type gmServer struct {
 	putStatus int
 	// putBody, when not nil, replaces the PUT response body.
 	putBody any
+	// putAppliesThenFails applies every PUT and then answers with this status
+	// instead of the group.
+	putAppliesThenFails int
+	// putInterrupted applies every PUT and then breaks the connection in the
+	// middle of the response body.
+	putInterrupted bool
+	// failGetsAfterPut answers every GET of the group with 403 once a PUT was
+	// received.
+	failGetsAfterPut bool
 	// getStatus / getBody, when set, answer every GET of the group.
 	getStatus int
 	getBody   any
@@ -89,6 +98,10 @@ func (s *gmServer) serve(w http.ResponseWriter, r *http.Request) {
 			gmReply(w, s.getStatus, s.getBody)
 			return
 		}
+		if s.failGetsAfterPut && len(s.puts) > 0 {
+			gmReply(w, 403, map[string]any{"error": "no"})
+			return
+		}
 		if !s.exists {
 			gmReply(w, 404, map[string]any{"error": "User group not found", "code": "not_found", "details": map[string]any{"resource": "User group"}})
 			return
@@ -121,6 +134,19 @@ func (s *gmServer) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		s.members = kept
+		if s.putAppliesThenFails != 0 {
+			gmReply(w, s.putAppliesThenFails, map[string]any{"error": "boom"})
+			return
+		}
+		if s.putInterrupted {
+			conn, buf, err := w.(http.Hijacker).Hijack()
+			if err == nil {
+				_, _ = buf.WriteString("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 4000\r\n\r\n{\"id\":\"")
+				_ = buf.Flush()
+				_ = conn.Close()
+			}
+			return
+		}
 		if s.putBody != nil {
 			gmReply(w, 200, s.putBody)
 			return
@@ -293,9 +319,12 @@ func TestGroupMembersResource_Create_AlreadyExactlyRight(t *testing.T) {
 	assert.Zero(t, s.putCount(), "an identical membership is not rewritten")
 }
 
-// Pocket ID drops IDs that name no user and still answers 200. That must be an
-// error naming the ID, not a recorded success.
-func TestGroupMembersResource_Create_UnknownUserIsAnError(t *testing.T) {
+// Pocket ID drops IDs that name no user and still answers 200. That is an
+// error naming the ID. But the valid users of the same request were added, so
+// the resource is kept, with the members the group actually holds: destroying
+// it removes them, where a failed create with no state would leave them
+// unmanaged for good.
+func TestGroupMembersResource_Create_UnknownUserIsAnErrorButTheAddedMembersAreKept(t *testing.T) {
 	s, c := newGMServer(t)
 	r, sch := gmResource(t, c)
 
@@ -304,7 +333,107 @@ func TestGroupMembersResource_Create_UnknownUserIsAnError(t *testing.T) {
 	assert.Equal(t, "Group members differ from the request", resp.Diagnostics.Errors()[0].Summary())
 	assert.Contains(t, resp.Diagnostics.Errors()[0].Detail(), gmUUID(999))
 	assert.NotContains(t, resp.Diagnostics.Errors()[0].Detail(), gmUUID(101))
-	assert.True(t, resp.State.Raw.IsNull())
+
+	require.False(t, resp.State.Raw.IsNull(), "the group's membership changed, so the resource keeps its identity")
+	assert.Equal(t, []string{gmUUID(101)}, gmStateIDs(t, resp.State), "the state holds what the group actually holds, not the plan")
+	var id string
+	require.False(t, resp.State.GetAttribute(context.Background(), path.Root("id"), &id).HasError())
+	assert.Equal(t, s.groupID, id)
+	assert.Equal(t, []string{gmUUID(101)}, s.memberSet())
+
+	// Removing the failed configuration removes the member it added.
+	deleted := &resource.DeleteResponse{State: resp.State}
+	r.Delete(context.Background(), resource.DeleteRequest{State: resp.State}, deleted)
+	require.False(t, deleted.Diagnostics.HasError(), "%v", deleted.Diagnostics)
+	assert.Empty(t, s.memberSet())
+}
+
+// A request whose valid part changed nothing leaves nothing to keep.
+func TestGroupMembersResource_Create_NothingChangedMeansNoState(t *testing.T) {
+	s, c := newGMServer(t)
+	r, sch := gmResource(t, c)
+
+	resp := gmCreate(t, r, sch, s.groupID, []string{gmUUID(999)})
+	require.True(t, resp.Diagnostics.HasError())
+	assert.True(t, resp.State.Raw.IsNull(), "the group still holds what it held")
+	assert.Empty(t, s.memberSet())
+}
+
+// The same on update: the state follows what the group holds after a partial
+// result, not the stale prior members and not the plan.
+func TestGroupMembersResource_Update_PartialResultKeepsTheActualMembers(t *testing.T) {
+	s, c := newGMServer(t, gmUUID(101), gmUUID(102))
+	r, sch := gmResource(t, c)
+
+	resp := gmUpdate(t, r, sch, s.groupID, []string{gmUUID(101), gmUUID(102)}, []string{gmUUID(102), gmUUID(103), gmUUID(999)})
+	require.True(t, resp.Diagnostics.HasError())
+	assert.Contains(t, resp.Diagnostics.Errors()[0].Detail(), gmUUID(999))
+	assert.Equal(t, []string{gmUUID(102), gmUUID(103)}, s.memberSet())
+	assert.Equal(t, []string{gmUUID(102), gmUUID(103)}, gmStateIDs(t, resp.State))
+}
+
+// An update that was refused changes nothing and leaves the prior state alone.
+func TestGroupMembersResource_Update_RefusedLeavesTheStateAlone(t *testing.T) {
+	s, c := newGMServer(t, gmUUID(101))
+	s.putStatus = http.StatusForbidden
+	r, sch := gmResource(t, c)
+
+	resp := gmUpdate(t, r, sch, s.groupID, []string{gmUUID(101)}, []string{gmUUID(102)})
+	require.True(t, resp.Diagnostics.HasError())
+	assert.Equal(t, []string{gmUUID(101)}, gmStateIDs(t, resp.State))
+	assert.Equal(t, 1, s.putCount())
+}
+
+// The request failed after the change was made (a server error, a broken
+// connection, an interrupted response body): the group is read, and what it
+// holds is the truth.
+func TestGroupMembersResource_FailureAfterTheChangeIsReconciledByReading(t *testing.T) {
+	cases := map[string]func(s *gmServer){
+		"server error after the change": func(s *gmServer) { s.putAppliesThenFails = http.StatusInternalServerError },
+		"interrupted response body":     func(s *gmServer) { s.putInterrupted = true },
+	}
+	for name, configure := range cases {
+		t.Run(name, func(t *testing.T) {
+			s, c := newGMServer(t)
+			configure(s)
+			r, sch := gmResource(t, c)
+
+			resp := gmCreate(t, r, sch, s.groupID, []string{gmUUID(101), gmUUID(102)})
+			require.False(t, resp.Diagnostics.HasError(), "the group holds the requested members: %v", resp.Diagnostics)
+			assert.Len(t, resp.Diagnostics.Warnings(), 1, "the failed request is reported")
+			assert.Equal(t, []string{gmUUID(101), gmUUID(102)}, gmStateIDs(t, resp.State))
+			assert.Equal(t, 1, s.putCount(), "never sent twice")
+		})
+	}
+}
+
+// The change may have been made but the group cannot be read afterwards either:
+// the resource keeps its identity, with the members read before the request, so
+// that a refresh can reconcile it.
+func TestGroupMembersResource_UnknownOutcomeKeepsTheIdentity(t *testing.T) {
+	s, c := newGMServer(t)
+	s.putAppliesThenFails = http.StatusInternalServerError
+	s.failGetsAfterPut = true
+	r, sch := gmResource(t, c)
+
+	resp := gmCreate(t, r, sch, s.groupID, []string{gmUUID(101)})
+	require.True(t, resp.Diagnostics.HasError())
+	assert.Equal(t, "Group members may have changed", resp.Diagnostics.Errors()[0].Summary())
+	require.False(t, resp.State.Raw.IsNull(), "an unknown outcome keeps the resource so that it can be reconciled")
+	assert.Empty(t, gmStateIDs(t, resp.State), "the members last read, before the request")
+	assert.Equal(t, 1, s.putCount())
+}
+
+// A failure after which the group provably holds what it held records nothing.
+func TestGroupMembersResource_FailureThatChangedNothingIsNotRecorded(t *testing.T) {
+	s, c := newGMServer(t)
+	s.putStatus = http.StatusInternalServerError
+	r, sch := gmResource(t, c)
+
+	resp := gmCreate(t, r, sch, s.groupID, []string{gmUUID(101)})
+	require.True(t, resp.Diagnostics.HasError())
+	assert.True(t, resp.State.Raw.IsNull(), "the re-read shows the group unchanged")
+	assert.Equal(t, 1, s.putCount())
 }
 
 // A success response that does not list the users is read back with a GET.

@@ -7,7 +7,9 @@ description: |-
   ~> Do not combine with other writers of the same group's membership For one group, do not use this resource together with pocketid_group_membership, with the groups attribute of pocketid_user on any user who is, or should be, a member, or with a second pocketid_group_members. Each of those replaces or edits the same membership list, and they undo each other's changes on every apply.
   ~> Adopting a group that already has members Creating this resource refuses to remove members that user_ids does not list, because a plan for a new resource cannot show them. Import the group first (terraform import pocketid_group_members.<name> <group_id>), so the plan shows each member that would be removed, or list every current member.
   ~> Removing members can end sessions (Pocket ID 2.17) When a user stops being a member, Pocket ID 2.17 can sign that user out of group-restricted OIDC clients that have a back-channel logout URL, if the group was what let them in. Removing a user from user_ids and destroying this resource both remove members.
+  ~> Concurrent changes by others Pocket ID can only replace a group's whole member list, so a change to this group's members made by something else (the Pocket ID admin interface, another Terraform run, an onboarding service) in the instant between this provider reading the members and writing them is overwritten, and no check can prevent it. Within one Terraform run the provider serializes every write of user-group relations, so this resource, pocketid_group_membership and pocketid_user do not overwrite each other.
   ~> LDAP groups A group synchronized from LDAP gets its membership rewritten by the next LDAP synchronization. Do not manage its members with this resource.
+  Partial results. If Pocket ID applies only part of a request (it skips an ID that names no user), the resource reports the error and still records the members the group actually holds, so that Terraform marks it tainted and destroying it removes those members; nothing is left unmanaged. When a request fails in a way that does not show whether it was applied, the group is read once and what it holds is recorded; if that read fails too, the members last read are kept and a refresh reconciles them.
   Destroying the resource removes the users in user_ids from the group. Members added outside Terraform since the last refresh stay. The group itself is not deleted.
 ---
 
@@ -23,7 +25,11 @@ The group is written with one request (`PUT /api/user-groups/{id}/users`) that r
 
 ~> **Removing members can end sessions (Pocket ID 2.17)** When a user stops being a member, Pocket ID 2.17 can sign that user out of group-restricted OIDC clients that have a back-channel logout URL, if the group was what let them in. Removing a user from `user_ids` and destroying this resource both remove members.
 
+~> **Concurrent changes by others** Pocket ID can only replace a group's whole member list, so a change to this group's members made by something else (the Pocket ID admin interface, another Terraform run, an onboarding service) in the instant between this provider reading the members and writing them is overwritten, and no check can prevent it. Within one Terraform run the provider serializes every write of user-group relations, so this resource, `pocketid_group_membership` and `pocketid_user` do not overwrite each other.
+
 ~> **LDAP groups** A group synchronized from LDAP gets its membership rewritten by the next LDAP synchronization. Do not manage its members with this resource.
+
+**Partial results.** If Pocket ID applies only part of a request (it skips an ID that names no user), the resource reports the error and still records the members the group actually holds, so that Terraform marks it tainted and destroying it removes those members; nothing is left unmanaged. When a request fails in a way that does not show whether it was applied, the group is read once and what it holds is recorded; if that read fails too, the members last read are kept and a refresh reconciles them.
 
 **Destroying** the resource removes the users in `user_ids` from the group. Members added outside Terraform since the last refresh stay. The group itself is not deleted.
 

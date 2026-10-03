@@ -57,3 +57,11 @@
   came from this file rather than an identical image. After a Pocket ID upgrade
   that changes how pictures are scaled, one extra upload can be planned. There
   is no import.
+- `pocketid_group_members` keeps the members Pocket ID actually applied when a
+  request is only partly applied (for example when `user_ids` names a user that
+  does not exist, the others are still added): it reports the error and records
+  the group's real members, so destroying the resource removes them. When a
+  request fails without showing whether it was applied, the group is read once
+  and what it holds is recorded. It also refuses a group record that lacks its
+  users instead of reading it as an empty group, and takes the same
+  provider-wide lock as the other membership writers.
