@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -297,4 +298,84 @@ func TestUpload_OnlyPostAndPut(t *testing.T) {
 		assert.NoError(t, err, method)
 	}
 	assert.Equal(t, int32(2), requests.Load())
+}
+
+// framingServer records how each request's body was framed on the wire: its
+// Content-Length header (empty when absent) and its Transfer-Encoding.
+func framingServer(t *testing.T) (string, func() (string, []string, int)) {
+	t.Helper()
+	var mu sync.Mutex
+	var contentLength string
+	var transferEncoding []string
+	var bodyLength int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		contentLength = r.Header.Get("Content-Length")
+		transferEncoding = r.TransferEncoding
+		bodyLength = len(body)
+		mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+	return server.URL, func() (string, []string, int) {
+		mu.Lock()
+		defer mu.Unlock()
+		return contentLength, transferEncoding, bodyLength
+	}
+}
+
+// Every body goes out with an exact Content-Length, never chunked: an empty
+// one as Content-Length: 0, a JSON one and a multipart upload with their
+// length. A request without a body declares none.
+func TestSend_BodyFraming(t *testing.T) {
+	url, seen := framingServer(t)
+	c, err := NewClient(url, "test-token", false, 5)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
+		_, err = c.send(ctx, method, "/api/x", "application/json", []byte{})
+		require.NoError(t, err)
+		length, encoding, n := seen()
+		// Go declares an explicitly empty body only for methods that usually
+		// carry one; a DELETE simply has none. Neither is ever chunked.
+		wantLength := "0"
+		if method == http.MethodDelete {
+			wantLength = ""
+		}
+		assert.Equal(t, wantLength, length, "%s with an empty body", method)
+		assert.Empty(t, encoding, method)
+		assert.Zero(t, n)
+
+		payload := []byte(`{"name":"framing"}`)
+		_, err = c.send(ctx, method, "/api/x", "application/json", payload)
+		require.NoError(t, err)
+		length, encoding, n = seen()
+		assert.Equal(t, fmt.Sprint(len(payload)), length, "%s with a JSON body", method)
+		assert.Empty(t, encoding, method)
+		assert.Equal(t, len(payload), n)
+	}
+
+	_, err = c.doRequest(ctx, http.MethodPut, "/api/x", map[string]string{"a": "b"})
+	require.NoError(t, err)
+	length, encoding, n := seen()
+	assert.Equal(t, fmt.Sprint(n), length, "doRequest's JSON body")
+	assert.Empty(t, encoding)
+
+	for _, file := range []MultipartFile{pngFile(), {FieldName: "file", FileName: "empty.png", Content: nil}} {
+		_, err = c.upload(ctx, http.MethodPost, "/api/x", file, 0)
+		require.NoError(t, err)
+		length, encoding, n = seen()
+		assert.NotEmpty(t, length, "an upload declares its length")
+		assert.Equal(t, fmt.Sprint(n), length)
+		assert.Empty(t, encoding)
+	}
+
+	_, err = c.send(ctx, http.MethodGet, "/api/x", "application/json", nil)
+	require.NoError(t, err)
+	length, encoding, n = seen()
+	assert.Empty(t, length, "a GET without a body declares no length")
+	assert.Empty(t, encoding)
+	assert.Zero(t, n)
 }

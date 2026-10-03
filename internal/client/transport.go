@@ -219,24 +219,10 @@ func isRetryableError(err error) bool {
 // its size limit and classified. Neither the request nor the response body is
 // logged, and errors carry only the status and Pocket ID's error code.
 func (c *Client) send(ctx context.Context, method, endpoint, contentType string, payload []byte) ([]byte, error) {
-	// The body is a one-shot reader: wrapped so that NewRequest does not
-	// recognize a *bytes.Reader and set GetBody. Without GetBody, Go's
-	// transport cannot replay the request on its own (it does that for
-	// GET-like requests on a reused connection that turns out to be dead),
-	// so "sent once" holds below this function too. The length is set
-	// explicitly instead.
-	var reqBody io.Reader
-	if payload != nil {
-		reqBody = struct{ io.Reader }{bytes.NewReader(payload)}
-	}
-
 	url := fmt.Sprintf("%s%s", c.baseURL, endpoint)
-	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
+	req, err := newRequest(ctx, method, url, payload)
 	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-	if payload != nil {
-		req.ContentLength = int64(len(payload))
+		return nil, err
 	}
 
 	// Set headers
@@ -473,6 +459,31 @@ func parseRetryAfter(value string, now time.Time) time.Duration {
 		}
 	}
 	return 0
+}
+
+// newRequest builds the request send sends. A non-empty payload becomes a
+// one-shot body: wrapped so that NewRequest does not recognize a
+// *bytes.Reader and set GetBody, so Go's transport has nothing to replay the
+// request from; its length is set explicitly so it is sent with
+// Content-Length, never chunked. An empty but non-nil payload is
+// http.NoBody, Go's marker for an explicitly empty body (Content-Length: 0);
+// a nil payload is no body at all.
+func newRequest(ctx context.Context, method, url string, payload []byte) (*http.Request, error) {
+	var body io.Reader
+	switch {
+	case len(payload) > 0:
+		body = struct{ io.Reader }{bytes.NewReader(payload)}
+	case payload != nil:
+		body = http.NoBody
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	if len(payload) > 0 {
+		req.ContentLength = int64(len(payload))
+	}
+	return req, nil
 }
 
 // TransportError is a request that got no usable HTTP response: the
