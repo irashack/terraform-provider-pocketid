@@ -34,11 +34,16 @@ type fakeScimEndpoint struct {
 	url       string
 }
 
-// newFakeScimEndpoint listens on every interface (the container reaches the
-// host through host.docker.internal) for the length of the test.
+// newFakeScimEndpoint listens on the loopback interface only, for the length
+// of the test. The fixture's container reaches the host as
+// host.docker.internal, and under the OrbStack runtime this machine uses that
+// name connects to services bound to the host's loopback address, so nothing
+// here is reachable from the network. (A runtime that does not forward to
+// loopback needs a wider bind; the test then fails to sync rather than
+// exposing anything.)
 func newFakeScimEndpoint(t *testing.T, token string) *fakeScimEndpoint {
 	t.Helper()
-	listener, err := net.Listen("tcp", ":0")
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	fake := &fakeScimEndpoint{token: token}
 	server := &http.Server{Handler: http.HandlerFunc(fake.serve)}
