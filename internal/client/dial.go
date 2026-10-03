@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"time"
 )
 
 // newTransport builds the HTTP transport every request goes through.
@@ -25,6 +26,15 @@ import (
 //
 // The TLS connection is set up here (DialTLSContext) with config, the same
 // settings Go's transport would use: the server name is the URL's host.
+//
+// Go's transport dials on a context it detaches from the request's
+// cancellation and deadline, so that a connection being set up can serve a
+// later request; it would let a server that accepts TCP and never completes
+// the TLS handshake hold the connection and its goroutine indefinitely after
+// the request gave up. Connections here are never reused, so each stage
+// (connecting, then the TLS handshake) runs under the request's own
+// cancellation and deadline again (see withRequestContext), and under a
+// fixed limit of its own besides (connectTimeout, tlsHandshakeTimeout).
 func newTransport(config *tls.Config) *http.Transport {
 	dialer := gatedDialer{tlsConfig: config}
 	return &http.Transport{
@@ -35,12 +45,68 @@ func newTransport(config *tls.Config) *http.Transport {
 	}
 }
 
+// Fixed limits for the stages of setting up a connection, applied whatever
+// the request allows; the request's own deadline usually ends them sooner
+// (the provider's timeout defaults to 30 seconds). They are the values of
+// Go's DefaultTransport, so a connection is never held longer than with the
+// standard library's default client.
+const (
+	// connectTimeout bounds name resolution and the TCP connection.
+	connectTimeout = 30 * time.Second
+	// tlsHandshakeTimeout bounds the TLS handshake.
+	tlsHandshakeTimeout = 10 * time.Second
+)
+
+// requestContextKey is the context key under which withRequestContext
+// stores a request's context for the dialer.
+type requestContextKey struct{}
+
+// withRequestContext returns ctx carrying itself, for the request built
+// from it. Go's transport keeps a request context's values in the dial
+// context it detaches, so stageContext can find the request's cancellation
+// and deadline again.
+func withRequestContext(ctx context.Context) context.Context {
+	return context.WithValue(ctx, requestContextKey{}, ctx)
+}
+
+// stageContext returns the context one connection stage runs under: ctx,
+// the transport's dial context, ended at limit from now, at the request's
+// deadline if that is earlier, and as soon as the request is cancelled.
+// release frees it once the stage is over; an established connection is not
+// affected by its later end.
+func stageContext(ctx context.Context, limit time.Duration) (_ context.Context, release func()) {
+	deadline := time.Now().Add(limit)
+	request, scoped := ctx.Value(requestContextKey{}).(context.Context)
+	if scoped {
+		if requestDeadline, ok := request.Deadline(); ok && requestDeadline.Before(deadline) {
+			deadline = requestDeadline
+		}
+	}
+	ctx, cancel := context.WithDeadline(ctx, deadline)
+	if !scoped {
+		return ctx, cancel
+	}
+	stop := context.AfterFunc(request, cancel)
+	return ctx, func() {
+		stop()
+		cancel()
+	}
+}
+
 type gatedDialer struct {
 	tlsConfig *tls.Config
 }
 
+// connect opens the TCP connection, within connectTimeout and the request's
+// own bounds.
+func (d gatedDialer) connect(ctx context.Context, network, addr string) (net.Conn, error) {
+	ctx, release := stageContext(ctx, connectTimeout)
+	defer release()
+	return (&net.Dialer{}).DialContext(ctx, network, addr)
+}
+
 func (d gatedDialer) dial(ctx context.Context, network, addr string) (net.Conn, error) {
-	conn, err := (&net.Dialer{}).DialContext(ctx, network, addr)
+	conn, err := d.connect(ctx, network, addr)
 	if err != nil {
 		return nil, err
 	}
@@ -48,7 +114,7 @@ func (d gatedDialer) dial(ctx context.Context, network, addr string) (net.Conn, 
 }
 
 func (d gatedDialer) dialTLS(ctx context.Context, network, addr string) (net.Conn, error) {
-	raw, err := (&net.Dialer{}).DialContext(ctx, network, addr)
+	raw, err := d.connect(ctx, network, addr)
 	if err != nil {
 		return nil, err
 	}
@@ -60,8 +126,12 @@ func (d gatedDialer) dialTLS(ctx context.Context, network, addr string) (net.Con
 		}
 		config.ServerName = host
 	}
+	handshakeCtx, release := stageContext(ctx, tlsHandshakeTimeout)
+	defer release()
 	conn := tls.Client(raw, config)
-	if err := conn.HandshakeContext(ctx); err != nil {
+	// An interrupted handshake closes raw itself; closing it again is
+	// harmless and covers every other failure.
+	if err := conn.HandshakeContext(handshakeCtx); err != nil {
 		_ = raw.Close()
 		return nil, err
 	}

@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/http/httptrace"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-log/tflogtest"
@@ -145,4 +146,120 @@ func TestTLSConnectionsVerifyTheServer(t *testing.T) {
 	require.NoError(t, err)
 	_, err = insecure.send(context.Background(), http.MethodGet, "/", "application/json", nil)
 	assert.NoError(t, err, "skip_tls_verify accepts it")
+}
+
+// A server that accepts the TCP connection and never answers the TLS
+// handshake holds nothing once the request is over, whether the request was
+// cancelled or reached the provider's timeout: the server sees the
+// connection end well before tlsHandshakeTimeout, which would otherwise be
+// the only limit (and before it, nothing: Go dials on a context detached from
+// the request's).
+func TestStalledHandshakeEndsWithTheRequest(t *testing.T) {
+	cases := map[string]struct {
+		timeout int64
+		cancel  bool
+	}{
+		"request cancelled":   {timeout: 30, cancel: true},
+		"provider timeout 1s": {timeout: 1},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			require.NoError(t, err)
+			defer func() { _ = listener.Close() }()
+			accepted := make(chan net.Conn, 1)
+			go func() {
+				if conn, err := listener.Accept(); err == nil {
+					accepted <- conn // and never written to: the handshake stalls
+				}
+			}()
+
+			c, err := NewClient("https://"+listener.Addr().String(), "test-token", true, tc.timeout)
+			require.NoError(t, err)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			result := make(chan error, 1)
+			go func() {
+				_, err := c.doRequest(ctx, http.MethodPost, "/api/x", nil)
+				result <- err
+			}()
+
+			var conn net.Conn
+			select {
+			case conn = <-accepted:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the client never connected")
+			}
+			defer func() { _ = conn.Close() }()
+			if tc.cancel {
+				cancel()
+			}
+			select {
+			case err := <-result:
+				require.Error(t, err)
+			case <-time.After(10 * time.Second):
+				t.Fatal("the request did not end")
+			}
+
+			// The ClientHello is read, then the read ends because the client
+			// closed the connection (EOF, or a reset).
+			ended := make(chan struct{})
+			go func() {
+				_, _ = io.Copy(io.Discard, conn)
+				close(ended)
+			}()
+			select {
+			case <-ended:
+			case <-time.After(tlsHandshakeTimeout / 2):
+				t.Fatal("the connection outlived its request")
+			}
+		})
+	}
+}
+
+// Each connection stage ends at its own limit, at the request's deadline if
+// that is earlier, and when the request is cancelled, even though the
+// transport hands the dialer a context detached from the request.
+func TestStageContextFollowsTheRequest(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		// What Go's transport passes the dialer: the request context's
+		// values without its cancellation or deadline.
+		detached := func(request context.Context) context.Context {
+			return context.WithoutCancel(withRequestContext(request))
+		}
+
+		ctx, release := stageContext(context.Background(), time.Minute)
+		deadline, ok := ctx.Deadline()
+		require.True(t, ok)
+		assert.Equal(t, time.Now().Add(time.Minute), deadline, "the stage's own limit, with no request")
+		release()
+
+		request, cancelRequest := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, release = stageContext(detached(request), time.Minute)
+		deadline, _ = ctx.Deadline()
+		want, _ := request.Deadline()
+		assert.Equal(t, want, deadline, "the request's earlier deadline")
+		cancelRequest()
+		synctest.Wait()
+		assert.ErrorIs(t, ctx.Err(), context.Canceled, "the request's cancellation")
+		release()
+
+		request, cancelRequest = context.WithTimeout(context.Background(), time.Hour)
+		ctx, release = stageContext(detached(request), time.Minute)
+		deadline, _ = ctx.Deadline()
+		assert.Equal(t, time.Now().Add(time.Minute), deadline, "the stage's limit, when the request allows more")
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		assert.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
+		release()
+		cancelRequest()
+
+		// release ends the stage and stops following the request.
+		request, cancelRequest = context.WithCancel(context.Background())
+		ctx, release = stageContext(detached(request), time.Minute)
+		release()
+		assert.ErrorIs(t, ctx.Err(), context.Canceled)
+		cancelRequest()
+		synctest.Wait()
+	})
 }

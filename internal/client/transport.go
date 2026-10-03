@@ -275,6 +275,17 @@ type sendOptions struct {
 // sendWith is send with options, and also returns the response's
 // Content-Type header (server-controlled: compare it, do not log it).
 func (c *Client) sendWith(ctx context.Context, method, endpoint, contentType string, payload []byte, options sendOptions) ([]byte, string, error) {
+	// The HTTP timeout is applied to the request's context as well as to the
+	// HTTP client (whose own deadline it reaches first), so that setting up
+	// the connection, which Go's transport does on a context detached from
+	// the request's, is bounded by it too (see withRequestContext).
+	if timeout := c.httpClient.Timeout; timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	ctx = withRequestContext(ctx)
+
 	url := fmt.Sprintf("%s%s", c.baseURL, endpoint)
 	req, err := newRequest(ctx, method, url, payload)
 	if err != nil {

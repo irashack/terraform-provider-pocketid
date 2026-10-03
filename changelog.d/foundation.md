@@ -53,3 +53,7 @@
   valid ID for its kind, and it must never contain the API key. A list that
   holds an ID no Pocket ID object can have fails as a whole. Such a response
   is reported as an error that does not include the value.
+- Setting up a connection to Pocket ID now ends with the request: when a run
+  is cancelled or the provider's `timeout` passes, a connection still waiting
+  for the server's TLS handshake is closed at once. Connecting is also limited
+  to 30 seconds and the TLS handshake to 10 seconds whatever the `timeout`.
