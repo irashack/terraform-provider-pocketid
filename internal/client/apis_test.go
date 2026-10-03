@@ -3,6 +3,7 @@ package client_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -69,6 +70,10 @@ func TestClient_CreateAPI_UnusableID(t *testing.T) {
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "the API may exist")
 			assert.NotContains(t, err.Error(), "../other")
+			// The POST was accepted, so the result is unread; an ID that fails its
+			// check says so as well.
+			assert.ErrorIs(t, err, client.ErrResultUnread)
+			assert.Equal(t, name != "garbage", errors.Is(err, client.ErrInvalidIdentifier))
 		})
 	}
 }
@@ -86,6 +91,7 @@ func TestClient_CreateAPI_IDReflectingKey(t *testing.T) {
 	require.NoError(t, err)
 	_, err = c.CreateAPI(context.Background(), &client.APICreateRequest{Name: "Inventory", Resource: "urn:x"})
 	require.ErrorIs(t, err, client.ErrInvalidIdentifier)
+	assert.ErrorIs(t, err, client.ErrResultUnread)
 	assert.Contains(t, err.Error(), "contains the API key")
 	assert.NotContains(t, err.Error(), key)
 }
@@ -154,6 +160,7 @@ func TestClient_APIResponses_ReflectedKeyRefused(t *testing.T) {
 			// A create is refused, and says the API may exist.
 			created, err := get.CreateAPI(ctx, &client.APICreateRequest{Name: "Inventory", Resource: "urn:x"})
 			require.ErrorIs(t, err, client.ErrInvalidIdentifier)
+			assert.ErrorIs(t, err, client.ErrResultUnread)
 			assert.Nil(t, created)
 			assert.Contains(t, err.Error(), "the API may exist")
 			assert.NotContains(t, err.Error(), apiReflectTestKey)
@@ -188,6 +195,31 @@ func TestClient_APIResponses_OtherAPIRefused(t *testing.T) {
 	assert.NotContains(t, err.Error(), other)
 }
 
+// An answer to a write the server accepted that cannot be decoded at all is an
+// unread result, like one that decodes into something unusable; a read that
+// cannot be decoded is not.
+func TestClient_APIWrites_UndecodableAnswerIsUnread(t *testing.T) {
+	c := apiReflectTestServer(t, func(w http.ResponseWriter, r *http.Request) { _, _ = fmt.Fprint(w, `not json`) })
+	ctx := context.Background()
+	for label, call := range map[string]func() error{
+		"update": func() error {
+			_, err := c.UpdateAPI(ctx, apiTestAPIID, &client.APIUpdateRequest{Name: "x"})
+			return err
+		},
+		"permissions": func() error { _, err := c.UpdateAPIPermissions(ctx, apiTestAPIID, nil); return err },
+		"cimd":        func() error { _, err := c.UpdateAPICIMDAccess(ctx, apiTestAPIID, false, nil); return err },
+		"create": func() error {
+			_, err := c.CreateAPI(ctx, &client.APICreateRequest{Name: "x", Resource: "urn:x"})
+			return err
+		},
+	} {
+		assert.ErrorIs(t, call(), client.ErrResultUnread, label)
+	}
+	_, err := c.GetAPI(ctx, apiTestAPIID)
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, client.ErrResultUnread, "a read is not a mutation")
+}
+
 // The checks leave a normal response alone: UUID identifiers, text without
 // the key, null permissions.
 func TestClient_APIResponses_NormalPass(t *testing.T) {
@@ -215,6 +247,7 @@ func TestClient_GrantResponses_ReflectedKeyRefused(t *testing.T) {
 			c := apiReflectTestServer(t, func(w http.ResponseWriter, r *http.Request) { _, _ = fmt.Fprint(w, body) })
 			applied, err := c.SetAPIClientAccess(ctx, apiTestAPIID, "app", client.APIClientGrant{UserDelegatedAccess: true})
 			require.ErrorIs(t, err, client.ErrResultUnread)
+			assert.ErrorIs(t, err, client.ErrInvalidIdentifier, "the reason stays in the chain")
 			assert.Nil(t, applied)
 			assert.NotContains(t, err.Error(), apiReflectTestKey)
 		})
@@ -450,6 +483,7 @@ func TestClient_SetAPIClientAccess_IncompleteResponse(t *testing.T) {
 			require.Error(t, err)
 			assert.Nil(t, applied)
 			assert.ErrorIs(t, err, client.ErrResultUnread)
+			assert.ErrorIs(t, err, client.ErrIncompleteGrantResponse, "the reason stays in the chain")
 			assert.False(t, client.IsDefiniteRejection(err))
 			assert.NotContains(t, err.Error(), "BODY-MARKER")
 		})

@@ -112,12 +112,15 @@ func (c *Client) CreateAPI(ctx context.Context, req *APICreateRequest) (*API, er
 	if err != nil {
 		return nil, err
 	}
+	// The POST was accepted: whatever is wrong with its answer, the API may
+	// exist, so every failure from here wraps ErrResultUnread (and, for an
+	// identifier or text that fails its check, ErrInvalidIdentifier).
 	result, err := decodeAPI(body)
 	if err != nil {
-		return nil, fmt.Errorf("API creation returned an unreadable response; the API may exist: inspect before recovery: %w", err)
+		return nil, fmt.Errorf("API creation returned an unreadable response; the API may exist: inspect before recovery: %w: %w", ErrResultUnread, err)
 	}
 	if err := c.apiCheckResponse(result, ""); err != nil {
-		return nil, fmt.Errorf("API creation returned an unusable response, so no follow-up request uses it; the API may exist: inspect before recovery: %w", err)
+		return nil, fmt.Errorf("API creation returned an unusable response, so no follow-up request uses it; the API may exist: inspect before recovery: %w: %w", ErrResultUnread, err)
 	}
 	return result, nil
 }
@@ -250,6 +253,9 @@ func (c *Client) apiCheckPermissionIDs(lists ...[]string) error {
 func (c *Client) decodeCheckedAPI(body []byte, addressed string, mutation bool) (*API, error) {
 	api, err := decodeAPI(body)
 	if err != nil {
+		if mutation {
+			return nil, fmt.Errorf("API %s: %w: %w", addressed, ErrResultUnread, err)
+		}
 		return nil, err
 	}
 	if err := c.apiCheckResponse(api, addressed); err != nil {
@@ -369,8 +375,10 @@ func (c *Client) UpdateAPICIMDAccess(ctx context.Context, id string, enabled boo
 //
 // A successful response must carry all four grant fields (see
 // decodeAPIClientGrant). One that does not (null, {}, a partial object, the
-// wrong types) is not a grant: it is reported as an error wrapping
-// ErrResultUnread, because the write may have been applied.
+// wrong types, a permission ID that fails the identifier check) is not a
+// grant: it is reported as an error wrapping ErrResultUnread, because the
+// write may have been applied, and the reason (ErrIncompleteGrantResponse or
+// ErrInvalidIdentifier).
 func (c *Client) SetAPIClientAccess(ctx context.Context, apiID, clientID string, grant APIClientGrant) (*APIClientGrant, error) {
 	path, err := c.apiClientPath(apiID, clientID)
 	if err != nil {
@@ -391,8 +399,10 @@ func (c *Client) SetAPIClientAccess(ctx context.Context, apiID, clientID string,
 		err = c.apiCheckPermissionIDs(applied.UserDelegatedPermissionIDs, applied.ClientPermissionIDs)
 	}
 	if err != nil {
-		// The PUT was accepted: what it stored is unknown, not empty.
-		return nil, fmt.Errorf("API access of client %s: %w: the response did not describe a grant", clientID, ErrResultUnread)
+		// The PUT was accepted: what it stored is unknown, not empty. The error
+		// carries both sentinels: ErrResultUnread, and the reason
+		// (ErrIncompleteGrantResponse or ErrInvalidIdentifier).
+		return nil, fmt.Errorf("API access of client %s: %w: %w", clientID, ErrResultUnread, err)
 	}
 	return &applied, nil
 }
