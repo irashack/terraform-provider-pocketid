@@ -19,8 +19,10 @@ changes, listed first; state written by 2.4.103 and 2.4.104 keeps working, and
   refused before a request. The `pocketid_group` data source's `id` must be a
   UUID, and with both `id` and `name` set they must name the same group.
   Clients registered from a Client ID Metadata Document cannot be imported,
-  looked up by ID or managed. A value containing the provider's API key is
-  refused wherever it would be sent or shown.
+  looked up by ID or managed. An identifier containing the provider's API key
+  is refused before it is used, a request body carrying the key outside a
+  secret value is not sent, and an answer carrying it is not used; see
+  "Answers Pocket ID did not send as expected".
 - **`pocketid_client.allowed_user_groups` is a set** (also on the client data
   sources): `allowed_user_groups[0]` must become `tolist(...)[0]` or a `for`
   expression.
@@ -77,9 +79,28 @@ plan with a refresh. What can show up once, and is not a change to Pocket ID:
 ### When a result is uncertain
 
 A change Pocket ID may or may not have made (a lost or unreadable answer, a
-server or proxy error, a timeout) is never sent again by itself, and the
-resource keeps what it needs to settle it:
+server or proxy error, a timeout) is never sent again by itself. What the
+resource keeps depends on what the provider could confirm:
 
+- **A create whose answer named no usable object** (lost, unreadable, or
+  without an ID the provider can use): nothing is recorded in state, because
+  the provider cannot tell what, if anything, it created.
+  `pocketid_client_secret`, `pocketid_api` and `pocketid_signup_token` say
+  what Pocket ID holds now (secrets by ID and prefix, an API by ID and name;
+  signup tokens are listed by the `pocketid_signup_tokens` data source) so
+  that you can import or revoke it. A chosen `id` or `client_id` is the
+  exception, below.
+- **A create whose answer named the new object, but the rest of the answer
+  was unusable or a later step failed:** the provider keeps that validated ID
+  in state (with nothing else from an unusable answer) and Terraform marks the
+  resource tainted, so the next apply replaces it. Examples: a client secret
+  whose value or metadata could not be read (the next apply revokes it), a
+  signup token not created as requested whose deletion could not be
+  confirmed (the next apply deletes it), an API whose permissions or CIMD
+  access could not be set, and a user or client whose groups, claims or
+  secret could not be set and that was not confirmed removed afterwards.
+  When Pocket ID refused such a step outright and the new user or client is
+  then confirmed removed, nothing is recorded.
 - `pocketid_user` created with a chosen `id`: computed `unresolved_creation`
   is true, and changing, deleting or replacing the user is refused, because a
   user found under that ID may be someone else's. Check the user, then
@@ -113,9 +134,6 @@ resource keeps what it needs to settle it:
   lists the client's secrets by ID and prefix, to revoke); a revocation that
   could not be confirmed is retried by the next apply, after a refresh checks
   whether the secret still exists.
-- `pocketid_client_secret`, `pocketid_api` and `pocketid_signup_token`: nothing
-  is recorded, and the error names what Pocket ID holds now (secrets by ID and
-  prefix, an API by ID and name) so that you can import or revoke it.
 
 ### Answers Pocket ID did not send as expected
 
@@ -123,13 +141,26 @@ The provider now refuses an answer it cannot rely on instead of reading it as
 empty or partial: a body that is not the JSON expected, a list or object
 without the fields that say what the server holds (a client's or a user's
 groups, a group's members, a grant's access), an ID that is not the object
-asked for, or one that contains the API key. You see a fixed message that
-quotes nothing from the response, such as "error unmarshaling response: the
-response is not the JSON this provider expects", or, after a change Pocket ID
-accepted, "the server accepted the change, but its result could not be read",
-with a note to inspect the object before trying again. Nothing from such an
-answer reaches state. A server or proxy that rewrites Pocket ID's answers can
+asked for, or any text that contains the API key, in plain or escaped JSON
+(a name, a claim's key or value, a URL, a setting, a number). You see a fixed
+message that quotes nothing from the response, such as "error unmarshaling
+response: the response is not the JSON this provider expects", or, after a
+change Pocket ID accepted, "the server accepted the change, but its result
+could not be read", with a note to inspect the object before trying again.
+Nothing from such an answer reaches state, a log line or a diagnostic. The
+one exception is the validated ID of an object the answer shows was created,
+kept so that the next apply can replace it ("When a result is uncertain").
+Secret values (client secrets, SCIM, signup and one-time tokens, the SMTP and
+LDAP passwords) are not checked for the key: they go only to sensitive state
+and are never shown. A server or proxy that rewrites Pocket ID's answers can
 therefore make applies fail that used to pass; that is deliberate.
+
+Your configuration is held to the same rule where the provider handles it: an
+identifier (from configuration, state or an import ID) that contains the key
+is refused before any request, log line or diagnostic uses it, a request
+whose body would carry the key outside a secret value is not sent, and
+plan-time validation messages name the attribute and its rule, never the
+configured value. Terraform itself still shows configured values in plans.
 
 ### New resources and data sources
 
