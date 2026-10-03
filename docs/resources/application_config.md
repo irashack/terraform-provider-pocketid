@@ -51,53 +51,54 @@ resource "pocketid_application_config" "with_smtp" {
 
 ### Optional
 
-- `accent_color` (String) Accent color used in the UI.
-- `allow_own_account_edit` (String) Whether users can edit their own account ("true" or "false").
-- `allow_user_signups` (String) User signup mode: "disabled", "withToken", or "open".
-- `app_name` (String) The name of the application.
-- `cimd_url_allowlist` (String) JSON array of allowed Client ID Metadata Document URLs. When omitted, retains the current server value.
-- `disable_animations` (String) Whether to disable UI animations ("true" or "false").
-- `email_api_key_expiration_enabled` (String) Whether API key expiration emails are enabled ("true" or "false").
-- `email_login_notification_enabled` (String) Whether login notification emails are enabled ("true" or "false").
-- `email_one_time_access_as_admin_enabled` (String) Whether admins can use one-time access email links ("true" or "false").
-- `email_one_time_access_as_unauthenticated_enabled` (String) Whether unauthenticated users can request one-time access email links ("true" or "false").
-- `email_verification_enabled` (String) Whether email verification is enabled ("true" or "false").
-- `emails_verified` (String) Whether user emails are considered verified ("true" or "false").
-- `home_page_url` (String) URL of the application home page.
-- `ldap_admin_group_name` (String) LDAP group name granting admin privileges.
-- `ldap_attribute_group_member` (String) LDAP attribute for group membership.
-- `ldap_attribute_group_name` (String) LDAP attribute for the group name.
-- `ldap_attribute_group_unique_identifier` (String) LDAP attribute for the group unique identifier.
-- `ldap_attribute_user_display_name` (String) LDAP attribute for the user display name.
-- `ldap_attribute_user_email` (String) LDAP attribute for the user email.
-- `ldap_attribute_user_first_name` (String) LDAP attribute for the user first name.
-- `ldap_attribute_user_last_name` (String) LDAP attribute for the user last name.
-- `ldap_attribute_user_profile_picture` (String) LDAP attribute for the user profile picture.
-- `ldap_attribute_user_unique_identifier` (String) LDAP attribute for the user unique identifier.
-- `ldap_attribute_user_username` (String) LDAP attribute for the username.
-- `ldap_base` (String) LDAP search base.
-- `ldap_bind_dn` (String) LDAP bind DN.
-- `ldap_bind_password` (String, Sensitive) LDAP bind password.
-- `ldap_enabled` (String) Whether LDAP integration is enabled ("true" or "false").
-- `ldap_skip_cert_verify` (String) Whether to skip LDAP certificate verification ("true" or "false").
-- `ldap_soft_delete_users` (String) Whether to soft-delete users removed from LDAP ("true" or "false").
-- `ldap_url` (String) LDAP server URL.
-- `ldap_user_group_search_filter` (String) LDAP user group search filter.
-- `ldap_user_search_filter` (String) LDAP user search filter.
-- `require_user_email` (String) Whether a user email is required ("true" or "false").
-- `session_duration` (String) Session duration in minutes.
-- `signup_default_custom_claims` (String) JSON object of custom claims assigned to users created via signup.
-- `signup_default_user_group_ids` (String) JSON array of user group IDs assigned to users created via signup.
-- `smtp_from` (String) Email address used as the sender.
-- `smtp_host` (String) SMTP server host.
-- `smtp_password` (String, Sensitive) SMTP authentication password.
-- `smtp_port` (String) SMTP server port.
-- `smtp_skip_cert_verify` (String) Whether to skip SMTP certificate verification ("true" or "false").
-- `smtp_tls` (String) SMTP TLS mode: "none", "starttls", or "tls".
-- `smtp_user` (String) SMTP authentication user.
-- `webauthn_allow_synced_passkeys` (String) Whether synced passkeys are allowed (true or false). When omitted, retains the current server value.
-- `webauthn_authenticator_attachment` (String) Authenticator attachment: any, platform, or cross-platform. When omitted, retains the current server value.
-- `webauthn_user_verification` (String) Passkey user verification: required or preferred. When omitted, retains the current server value.
+- `accent_color` (String) The accent color of the UI. Accepted values: "default" or a CSS color. Pocket ID's default is "default"; an empty value is refused, because Pocket ID would store the default instead. When omitted, the server's current value is kept.
+- `allow_own_account_edit` (String) Whether users can edit their own account details. Accepted values: "true" or "false". Pocket ID's default is "true"; an empty value is refused. When omitted, the server's current value is kept.
+- `allow_user_signups` (String) Who can create an account. Accepted values: "disabled", "withToken" (with a signup token only) or "open". Pocket ID's default is "disabled"; an empty value is refused. When omitted, the server's current value is kept.
+- `app_name` (String) The name of the application. Accepted values: 1 to 30 characters. Pocket ID's default is "Pocket ID"; an empty value is refused. When omitted, the server's current value is kept.
+- `auto_create_oidc_client_secret` (String) Whether Pocket ID creates a client secret of its own when a confidential OIDC client is created. Accepted values: "true" or "false". Pocket ID's default is "true"; an empty value is refused. Requires Pocket ID 2.17.0 or later: on an older server this attribute is null and setting it is refused at plan time. When omitted, the server's current value is kept.
+- `cimd_url_allowlist` (String) The Client ID Metadata Document URLs Pocket ID accepts. Accepted values: a JSON array of URL patterns (the syntax of callback URLs, wildcards allowed), such as ["https://*.example.com/*"]; "[]" for none. Pocket ID's default is "[]"; an empty value is refused, because Pocket ID would store the default instead. When omitted, the server's current value is kept.
+- `disable_animations` (String) Whether to disable UI animations. Accepted values: "true" or "false". Pocket ID's default is "false"; an empty value is refused. When omitted, the server's current value is kept.
+- `email_api_key_expiration_enabled` (String) Whether users are e-mailed before an API key expires. Accepted values: "true" or "false". Pocket ID's default is "false"; an empty value is refused. When omitted, the server's current value is kept.
+- `email_login_notification_enabled` (String) Whether users are e-mailed when they sign in from a new device. Accepted values: "true" or "false". Pocket ID's default is "false"; an empty value is refused. When omitted, the server's current value is kept.
+- `email_one_time_access_as_admin_enabled` (String) Whether administrators can e-mail users a one-time sign-in link. Accepted values: "true" or "false". Pocket ID's default is "false"; an empty value is refused. When omitted, the server's current value is kept.
+- `email_one_time_access_as_unauthenticated_enabled` (String) Whether users can request a one-time sign-in link by e-mail without signing in. Accepted values: "true" or "false". Pocket ID's default is "false"; an empty value is refused. When omitted, the server's current value is kept.
+- `email_verification_enabled` (String) Whether users must verify their e-mail address. Accepted values: "true" or "false". Pocket ID's default is "false"; an empty value is refused. When omitted, the server's current value is kept.
+- `emails_verified` (String) Whether user e-mail addresses are considered verified. Accepted values: "true" or "false". Pocket ID's default is "false"; an empty value is refused. When omitted, the server's current value is kept.
+- `home_page_url` (String) Where Pocket ID sends users after they sign in to it directly. Accepted values: a URL or path. Pocket ID's default is "/settings/account"; an empty value is refused. When omitted, the server's current value is kept.
+- `ldap_admin_group_name` (String) The LDAP group whose members are Pocket ID administrators. Empty by default. When omitted, the server's current value is kept.
+- `ldap_attribute_group_member` (String) The LDAP attribute listing a group's members. Pocket ID's default is "member"; an empty value is refused, because Pocket ID would store the default instead. When omitted, the server's current value is kept.
+- `ldap_attribute_group_name` (String) The LDAP attribute holding a group's name. Empty by default. When omitted, the server's current value is kept.
+- `ldap_attribute_group_unique_identifier` (String) The LDAP attribute that uniquely identifies a group. Empty by default. When omitted, the server's current value is kept.
+- `ldap_attribute_user_display_name` (String) The LDAP attribute holding a user's display name. Pocket ID's default is "cn"; an empty value is refused, because Pocket ID would store the default instead. When omitted, the server's current value is kept.
+- `ldap_attribute_user_email` (String) The LDAP attribute holding a user's e-mail address. Empty by default. When omitted, the server's current value is kept.
+- `ldap_attribute_user_first_name` (String) The LDAP attribute holding a user's first name. Empty by default. When omitted, the server's current value is kept.
+- `ldap_attribute_user_last_name` (String) The LDAP attribute holding a user's last name. Empty by default. When omitted, the server's current value is kept.
+- `ldap_attribute_user_profile_picture` (String) The LDAP attribute holding a user's profile picture. Empty by default. When omitted, the server's current value is kept.
+- `ldap_attribute_user_unique_identifier` (String) The LDAP attribute that uniquely identifies a user. Empty by default. When omitted, the server's current value is kept.
+- `ldap_attribute_user_username` (String) The LDAP attribute holding a user's username. Empty by default. When omitted, the server's current value is kept.
+- `ldap_base` (String) The LDAP search base. Empty by default. When omitted, the server's current value is kept.
+- `ldap_bind_dn` (String) The DN Pocket ID binds to the LDAP server as. Empty by default. When omitted, the server's current value is kept.
+- `ldap_bind_password` (String, Sensitive) The LDAP bind password. Empty by default. When omitted, the server's current value is kept.
+- `ldap_enabled` (String) Whether LDAP synchronization is enabled. Accepted values: "true" or "false". Pocket ID's default is "false"; an empty value is refused. When omitted, the server's current value is kept.
+- `ldap_skip_cert_verify` (String) Whether to skip verifying the LDAP server's certificate. Accepted values: "true" or "false". Pocket ID's default is "false"; an empty value is refused. When omitted, the server's current value is kept.
+- `ldap_soft_delete_users` (String) Whether users removed from LDAP are disabled instead of deleted. Accepted values: "true" or "false". Pocket ID's default is "true"; an empty value is refused. When omitted, the server's current value is kept.
+- `ldap_url` (String) The LDAP server's URL. Empty by default. When omitted, the server's current value is kept.
+- `ldap_user_group_search_filter` (String) The LDAP filter that selects groups. Pocket ID's default is "(objectClass=groupOfNames)"; an empty value is refused, because Pocket ID would store the default instead. When omitted, the server's current value is kept.
+- `ldap_user_search_filter` (String) The LDAP filter that selects users. Pocket ID's default is "(objectClass=person)"; an empty value is refused, because Pocket ID would store the default instead. When omitted, the server's current value is kept.
+- `require_user_email` (String) Whether every user must have an e-mail address. Accepted values: "true" or "false". Pocket ID's default is "true"; an empty value is refused. When omitted, the server's current value is kept.
+- `session_duration` (String) How long a sign-in session lasts, in minutes. Accepted values: a whole number of minutes, at least 1. Pocket ID's default is "60"; an empty value is refused. When omitted, the server's current value is kept.
+- `signup_default_custom_claims` (String) The custom claims every new user gets. Accepted values: a JSON array of objects with string "key" and "value" properties, such as [{"key":"department","value":"it"}]; "[]" for none. Pocket ID's default is "[]"; an empty value is refused, because Pocket ID would store the default instead. When omitted, the server's current value is kept.
+- `signup_default_user_group_ids` (String) The user groups every new user is added to. Accepted values: a JSON array of user group IDs, such as ["<group-id>"]; "[]" for none. Pocket ID's default is "[]"; an empty value is refused, because Pocket ID would store the default instead. When omitted, the server's current value is kept.
+- `smtp_from` (String) The sender address of e-mail Pocket ID sends. Accepted values: a plain e-mail address, without a display name. Empty by default. When omitted, the server's current value is kept.
+- `smtp_host` (String) The SMTP server's host name. Empty by default. When omitted, the server's current value is kept.
+- `smtp_password` (String, Sensitive) The SMTP password. Empty by default. When omitted, the server's current value is kept.
+- `smtp_port` (String) The SMTP server's port. Empty by default. When omitted, the server's current value is kept.
+- `smtp_skip_cert_verify` (String) Whether to skip verifying the SMTP server's certificate. Accepted values: "true" or "false". Pocket ID's default is "false"; an empty value is refused. When omitted, the server's current value is kept.
+- `smtp_tls` (String) How the SMTP connection is secured. Accepted values: "none", "starttls" or "tls". Pocket ID's default is "none"; an empty value is refused. When omitted, the server's current value is kept.
+- `smtp_user` (String) The SMTP user name. Empty by default. When omitted, the server's current value is kept.
+- `webauthn_allow_synced_passkeys` (String) Whether passkeys synced between devices are allowed. Accepted values: "true" or "false". Pocket ID's default is "true"; an empty value is refused. When omitted, the server's current value is kept.
+- `webauthn_authenticator_attachment` (String) Which authenticators can hold a new passkey. Accepted values: "any", "platform" or "cross-platform". Pocket ID's default is "any"; an empty value is refused. When omitted, the server's current value is kept.
+- `webauthn_user_verification` (String) Whether passkey sign-in requires user verification. Accepted values: "required" or "preferred". Pocket ID's default is "required"; an empty value is refused. When omitted, the server's current value is kept.
 
 ### Read-Only
 

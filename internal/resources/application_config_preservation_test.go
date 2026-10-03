@@ -106,13 +106,15 @@ func TestApplicationConfigSMTPPreservesSettings(t *testing.T) {
 }
 
 func TestApplicationConfigExplicitValues(t *testing.T) {
-	current := &client.ApplicationConfig{WebauthnUserVerification: "preferred", WebauthnAllowSyncedPasskeys: "true", WebauthnAuthenticatorAttachment: "any", CIMDURLAllowlist: `["https://old.example.invalid"]`}
-	plan := &applicationConfigModel{WebauthnUserVerification: types.StringValue("required"), WebauthnAllowSyncedPasskeys: types.StringValue("false"), WebauthnAuthenticatorAttachment: types.StringValue("platform"), CIMDURLAllowlist: types.StringValue("")}
+	current := &client.ApplicationConfig{WebauthnUserVerification: "preferred", WebauthnAllowSyncedPasskeys: "true", WebauthnAuthenticatorAttachment: "any", CIMDURLAllowlist: `["https://old.example.invalid"]`, SmtpHost: "smtp.old.example.invalid"}
+	plan := &applicationConfigModel{WebauthnUserVerification: types.StringValue("required"), WebauthnAllowSyncedPasskeys: types.StringValue("false"), WebauthnAuthenticatorAttachment: types.StringValue("platform"), CIMDURLAllowlist: types.StringValue("[]"), SmtpHost: types.StringValue("")}
 	cfg := modelToApplicationConfig(plan, current)
 	require.Equal(t, "required", cfg.WebauthnUserVerification)
 	require.Equal(t, "false", cfg.WebauthnAllowSyncedPasskeys)
 	require.Equal(t, "platform", cfg.WebauthnAuthenticatorAttachment)
-	require.Empty(t, cfg.CIMDURLAllowlist, "explicit empty must remain distinct from omitted")
+	require.Equal(t, "[]", cfg.CIMDURLAllowlist)
+	// smtp_host's default is empty, so "" is a valid explicit value.
+	require.Empty(t, cfg.SmtpHost, "explicit empty must remain distinct from omitted")
 }
 
 // A server that reports, and requires, a setting this provider has never heard

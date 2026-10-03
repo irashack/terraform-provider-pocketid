@@ -3,6 +3,7 @@ package resources
 import (
 	"context"
 	"fmt"
+	"reflect"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -10,8 +11,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"golang.org/x/mod/semver"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
 )
@@ -25,6 +28,7 @@ var (
 	_ resource.Resource                = &applicationConfigResource{}
 	_ resource.ResourceWithConfigure   = &applicationConfigResource{}
 	_ resource.ResourceWithImportState = &applicationConfigResource{}
+	_ resource.ResourceWithModifyPlan  = &applicationConfigResource{}
 )
 
 func init() { register(NewApplicationConfigResource) }
@@ -98,6 +102,9 @@ type applicationConfigModel struct {
 	LdapAttributeGroupName             types.String `tfsdk:"ldap_attribute_group_name"`
 	LdapAdminGroupName                 types.String `tfsdk:"ldap_admin_group_name"`
 	LdapSoftDeleteUsers                types.String `tfsdk:"ldap_soft_delete_users"`
+
+	// OIDC (Pocket ID 2.17.0+)
+	AutoCreateOIDCClientSecret types.String `tfsdk:"auto_create_oidc_client_secret"`
 }
 
 // applicationConfigToModel maps a client.ApplicationConfig onto the framework
@@ -156,6 +163,9 @@ func applicationConfigToModel(cfg *client.ApplicationConfig, m *applicationConfi
 	m.LdapAttributeGroupName = types.StringValue(cfg.LdapAttributeGroupName)
 	m.LdapAdminGroupName = types.StringValue(cfg.LdapAdminGroupName)
 	m.LdapSoftDeleteUsers = types.StringValue(cfg.LdapSoftDeleteUsers)
+
+	// Null when the server does not have the setting (before 2.17.0).
+	m.AutoCreateOIDCClientSecret = types.StringPointerValue(cfg.AutoCreateOIDCClientSecret)
 }
 
 // mergedString returns the planned value if it is set (known and non-null),
@@ -230,16 +240,44 @@ func modelToApplicationConfig(plan *applicationConfigModel, current *client.Appl
 	cfg.LdapAdminGroupName = mergedString(plan.LdapAdminGroupName, current.LdapAdminGroupName)
 	cfg.LdapSoftDeleteUsers = mergedString(plan.LdapSoftDeleteUsers, current.LdapSoftDeleteUsers)
 
+	// applyConfig refuses a planned value the server has no key for, so a
+	// value is only ever sent to a server that reported the key.
+	if !plan.AutoCreateOIDCClientSecret.IsNull() && !plan.AutoCreateOIDCClientSecret.IsUnknown() {
+		value := plan.AutoCreateOIDCClientSecret.ValueString()
+		cfg.AutoCreateOIDCClientSecret = &value
+	}
+
 	return &cfg
 }
 
-func optionalComputedString(description string, sensitive bool) schema.StringAttribute {
-	return schema.StringAttribute{
-		Description: description,
-		Optional:    true,
-		Computed:    true,
-		Sensitive:   sensitive,
+// appConfigModelValue returns the model's value for a setting's attribute.
+func appConfigModelValue(m *applicationConfigModel, attribute string) types.String {
+	value := reflect.ValueOf(m).Elem()
+	for i := 0; i < value.NumField(); i++ {
+		if value.Type().Field(i).Tag.Get("tfsdk") == attribute {
+			if s, ok := value.Field(i).Interface().(types.String); ok {
+				return s
+			}
+		}
 	}
+	return types.StringNull()
+}
+
+// unsupportedAppConfigSettings names the version-dependent settings that plan
+// sets (known, not null) although the server did not report their keys.
+func unsupportedAppConfigSettings(plan *applicationConfigModel, current *client.ApplicationConfig) []appConfigSetting {
+	var unsupported []appConfigSetting
+	for _, setting := range appConfigSettings {
+		if setting.minVersion == "" {
+			continue
+		}
+		value := appConfigModelValue(plan, setting.attribute)
+		if value.IsNull() || value.IsUnknown() || appConfigKeyReported(current, setting.key) {
+			continue
+		}
+		unsupported = append(unsupported, setting)
+	}
+	return unsupported
 }
 
 // Metadata returns the resource type name.
@@ -249,70 +287,28 @@ func (r *applicationConfigResource) Metadata(_ context.Context, req resource.Met
 
 // Schema defines the schema for the resource.
 func (r *applicationConfigResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	attributes := map[string]schema.Attribute{
+		"id": schema.StringAttribute{
+			Description: "Fixed identifier of the application configuration singleton.",
+			Computed:    true,
+			PlanModifiers: []planmodifier.String{
+				stringplanmodifier.UseStateForUnknown(),
+			},
+		},
+	}
+	for _, setting := range appConfigSettings {
+		attributes[setting.attribute] = schema.StringAttribute{
+			Description: setting.description(),
+			Optional:    true,
+			Computed:    true,
+			Sensitive:   setting.sensitive,
+			Validators:  []validator.String{appConfigValueValidator{setting: setting}},
+		}
+	}
 	resp.Schema = schema.Schema{
 		Description:         "Manages the global application configuration of a Pocket-ID instance.",
 		MarkdownDescription: "Manages the global application configuration of a Pocket-ID instance. This is a singleton resource: only one should exist per instance. Any attribute left unset inherits the current server-side value, and removing the resource from configuration leaves the live configuration untouched.",
-		Attributes: map[string]schema.Attribute{
-			"id": schema.StringAttribute{
-				Description: "Fixed identifier of the application configuration singleton.",
-				Computed:    true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
-			},
-
-			"app_name":                      optionalComputedString("The name of the application.", false),
-			"session_duration":              optionalComputedString("Session duration in minutes.", false),
-			"home_page_url":                 optionalComputedString("URL of the application home page.", false),
-			"emails_verified":               optionalComputedString("Whether user emails are considered verified (\"true\" or \"false\").", false),
-			"disable_animations":            optionalComputedString("Whether to disable UI animations (\"true\" or \"false\").", false),
-			"allow_own_account_edit":        optionalComputedString("Whether users can edit their own account (\"true\" or \"false\").", false),
-			"allow_user_signups":            optionalComputedString("User signup mode: \"disabled\", \"withToken\", or \"open\".", false),
-			"signup_default_user_group_ids": optionalComputedString("JSON array of user group IDs assigned to users created via signup.", false),
-			"signup_default_custom_claims":  optionalComputedString("JSON object of custom claims assigned to users created via signup.", false),
-			"accent_color":                  optionalComputedString("Accent color used in the UI.", false),
-			"require_user_email":            optionalComputedString("Whether a user email is required (\"true\" or \"false\").", false),
-
-			"webauthn_user_verification":        optionalComputedString("Passkey user verification: required or preferred. When omitted, retains the current server value.", false),
-			"webauthn_allow_synced_passkeys":    optionalComputedString("Whether synced passkeys are allowed (true or false). When omitted, retains the current server value.", false),
-			"webauthn_authenticator_attachment": optionalComputedString("Authenticator attachment: any, platform, or cross-platform. When omitted, retains the current server value.", false),
-			"cimd_url_allowlist":                optionalComputedString("JSON array of allowed Client ID Metadata Document URLs. When omitted, retains the current server value.", false),
-
-			"smtp_host":             optionalComputedString("SMTP server host.", false),
-			"smtp_port":             optionalComputedString("SMTP server port.", false),
-			"smtp_from":             optionalComputedString("Email address used as the sender.", false),
-			"smtp_user":             optionalComputedString("SMTP authentication user.", false),
-			"smtp_password":         optionalComputedString("SMTP authentication password.", true),
-			"smtp_tls":              optionalComputedString("SMTP TLS mode: \"none\", \"starttls\", or \"tls\".", false),
-			"smtp_skip_cert_verify": optionalComputedString("Whether to skip SMTP certificate verification (\"true\" or \"false\").", false),
-
-			"email_one_time_access_as_admin_enabled":           optionalComputedString("Whether admins can use one-time access email links (\"true\" or \"false\").", false),
-			"email_one_time_access_as_unauthenticated_enabled": optionalComputedString("Whether unauthenticated users can request one-time access email links (\"true\" or \"false\").", false),
-			"email_login_notification_enabled":                 optionalComputedString("Whether login notification emails are enabled (\"true\" or \"false\").", false),
-			"email_api_key_expiration_enabled":                 optionalComputedString("Whether API key expiration emails are enabled (\"true\" or \"false\").", false),
-			"email_verification_enabled":                       optionalComputedString("Whether email verification is enabled (\"true\" or \"false\").", false),
-
-			"ldap_enabled":                           optionalComputedString("Whether LDAP integration is enabled (\"true\" or \"false\").", false),
-			"ldap_url":                               optionalComputedString("LDAP server URL.", false),
-			"ldap_bind_dn":                           optionalComputedString("LDAP bind DN.", false),
-			"ldap_bind_password":                     optionalComputedString("LDAP bind password.", true),
-			"ldap_base":                              optionalComputedString("LDAP search base.", false),
-			"ldap_user_search_filter":                optionalComputedString("LDAP user search filter.", false),
-			"ldap_user_group_search_filter":          optionalComputedString("LDAP user group search filter.", false),
-			"ldap_skip_cert_verify":                  optionalComputedString("Whether to skip LDAP certificate verification (\"true\" or \"false\").", false),
-			"ldap_attribute_user_unique_identifier":  optionalComputedString("LDAP attribute for the user unique identifier.", false),
-			"ldap_attribute_user_username":           optionalComputedString("LDAP attribute for the username.", false),
-			"ldap_attribute_user_email":              optionalComputedString("LDAP attribute for the user email.", false),
-			"ldap_attribute_user_first_name":         optionalComputedString("LDAP attribute for the user first name.", false),
-			"ldap_attribute_user_last_name":          optionalComputedString("LDAP attribute for the user last name.", false),
-			"ldap_attribute_user_display_name":       optionalComputedString("LDAP attribute for the user display name.", false),
-			"ldap_attribute_user_profile_picture":    optionalComputedString("LDAP attribute for the user profile picture.", false),
-			"ldap_attribute_group_member":            optionalComputedString("LDAP attribute for group membership.", false),
-			"ldap_attribute_group_unique_identifier": optionalComputedString("LDAP attribute for the group unique identifier.", false),
-			"ldap_attribute_group_name":              optionalComputedString("LDAP attribute for the group name.", false),
-			"ldap_admin_group_name":                  optionalComputedString("LDAP group name granting admin privileges.", false),
-			"ldap_soft_delete_users":                 optionalComputedString("Whether to soft-delete users removed from LDAP (\"true\" or \"false\").", false),
-		},
+		Attributes:          attributes,
 	}
 }
 
@@ -334,6 +330,50 @@ func (r *applicationConfigResource) Configure(_ context.Context, req resource.Co
 	r.client = c
 }
 
+// ModifyPlan refuses, at plan time, a version-dependent setting that is
+// configured for a server older than the setting. Without a configured client
+// (provider settings not yet known) the same check runs before the update.
+func (r *applicationConfigResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() || r.client == nil {
+		return
+	}
+	version, versionRead := "", false
+	for _, setting := range appConfigSettings {
+		if setting.minVersion == "" {
+			continue
+		}
+		var configured types.String
+		resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root(setting.attribute), &configured)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		if configured.IsNull() || configured.IsUnknown() {
+			continue
+		}
+		if !versionRead {
+			var err error
+			version, err = r.client.GetCurrentVersion(ctx)
+			if err != nil {
+				resp.Diagnostics.AddAttributeError(path.Root(setting.attribute), "Could not check the Pocket ID version",
+					fmt.Sprintf("%s requires Pocket ID %s or later, and the server's version could not be read: %s", setting.attribute, setting.minVersion, err))
+				return
+			}
+			versionRead = true
+		}
+		// A server without the version endpoint (before 2.3.0) is older
+		// than every version a setting needs.
+		if version != "" && semver.Compare("v"+version, "v"+setting.minVersion) >= 0 {
+			continue
+		}
+		running := version
+		if running == "" {
+			running = "a release before 2.3.0"
+		}
+		resp.Diagnostics.AddAttributeError(path.Root(setting.attribute), "Setting not supported by this Pocket ID",
+			fmt.Sprintf("%s requires Pocket ID %s or later; the server runs %s, which does not have this setting. Remove %s from the configuration.", setting.attribute, setting.minVersion, running, setting.attribute))
+	}
+}
+
 // applyConfig merges the plan with the current server config, performs the PUT
 // and writes the response back into the plan model.
 func (r *applicationConfigResource) applyConfig(ctx context.Context, plan *applicationConfigModel, diags *diag.Diagnostics) {
@@ -343,6 +383,17 @@ func (r *applicationConfigResource) applyConfig(ctx context.Context, plan *appli
 			"Error reading application configuration",
 			"Could not read current application configuration: "+err.Error(),
 		)
+		return
+	}
+
+	for _, setting := range unsupportedAppConfigSettings(plan, current) {
+		diags.AddAttributeError(
+			path.Root(setting.attribute),
+			"Setting not supported by this Pocket ID",
+			fmt.Sprintf("%s requires Pocket ID %s or later, and this server does not have the setting. Nothing was changed. Remove %s from the configuration.", setting.attribute, setting.minVersion, setting.attribute),
+		)
+	}
+	if diags.HasError() {
 		return
 	}
 

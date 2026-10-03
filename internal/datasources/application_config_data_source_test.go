@@ -2,10 +2,15 @@ package datasources_test
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -46,7 +51,7 @@ func TestApplicationConfigDataSource_Schema(t *testing.T) {
 	assert.NotEmpty(t, resp.Schema.Description)
 
 	// All attributes are computed.
-	for _, name := range []string{"id", "app_name", "webauthn_user_verification", "webauthn_allow_synced_passkeys", "webauthn_authenticator_attachment", "cimd_url_allowlist", "ldap_enabled"} {
+	for _, name := range []string{"id", "app_name", "webauthn_user_verification", "webauthn_allow_synced_passkeys", "webauthn_authenticator_attachment", "cimd_url_allowlist", "ldap_enabled", "auto_create_oidc_client_secret"} {
 		attr, ok := resp.Schema.Attributes[name].(schema.StringAttribute)
 		require.True(t, ok, "attribute %s should exist", name)
 		assert.True(t, attr.Computed, "attribute %s should be computed", name)
@@ -93,4 +98,41 @@ func TestApplicationConfigDataSource_Configure(t *testing.T) {
 			}
 		})
 	}
+}
+
+// readApplicationConfigDataSource runs the data source's Read against a fake
+// server that reports vars.
+func readApplicationConfigDataSource(t *testing.T, vars []client.AppConfigVariable) map[string]tftypes.Value {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/application-configuration/all", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(vars)
+	}))
+	defer server.Close()
+	c, err := client.NewClient(server.URL, "synthetic-token", false, 30)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	d := datasources.NewApplicationConfigDataSource()
+	d.(datasource.DataSourceWithConfigure).Configure(ctx, datasource.ConfigureRequest{ProviderData: c}, &datasource.ConfigureResponse{})
+	var schemaResp datasource.SchemaResponse
+	d.Schema(ctx, datasource.SchemaRequest{}, &schemaResp)
+	objectType := schemaResp.Schema.Type().TerraformType(ctx)
+	resp := datasource.ReadResponse{State: tfsdk.State{Schema: schemaResp.Schema, Raw: tftypes.NewValue(objectType, nil)}}
+	d.Read(ctx, datasource.ReadRequest{}, &resp)
+	require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
+	values := map[string]tftypes.Value{}
+	require.NoError(t, resp.State.Raw.As(&values))
+	return values
+}
+
+func TestApplicationConfigDataSource_AutoCreateOIDCClientSecret(t *testing.T) {
+	values := readApplicationConfigDataSource(t, []client.AppConfigVariable{{Key: "appName", Value: "Fixture"}, {Key: "autoCreateOidcClientSecret", Value: "false"}})
+	var value string
+	require.NoError(t, values["auto_create_oidc_client_secret"].As(&value))
+	assert.Equal(t, "false", value)
+
+	values = readApplicationConfigDataSource(t, []client.AppConfigVariable{{Key: "appName", Value: "Fixture"}})
+	assert.True(t, values["auto_create_oidc_client_secret"].IsNull(), "null on a server without the setting")
 }

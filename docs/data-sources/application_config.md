@@ -35,7 +35,8 @@ output "ldap_enabled" {
 - `allow_own_account_edit` (String) Whether users can edit their own account.
 - `allow_user_signups` (String) User signup mode.
 - `app_name` (String) The name of the application.
-- `cimd_url_allowlist` (String) JSON array of allowed Client ID Metadata Document URLs.
+- `auto_create_oidc_client_secret` (String) Whether Pocket ID creates a client secret of its own when a confidential OIDC client is created. Null on a server before Pocket ID 2.17.0, which does not have the setting.
+- `cimd_url_allowlist` (String) JSON array of the Client ID Metadata Document URL patterns Pocket ID accepts.
 - `disable_animations` (String) Whether UI animations are disabled.
 - `email_api_key_expiration_enabled` (String) Whether API key expiration emails are enabled.
 - `email_login_notification_enabled` (String) Whether login notification emails are enabled.
@@ -67,8 +68,8 @@ output "ldap_enabled" {
 - `ldap_user_search_filter` (String) LDAP user search filter.
 - `require_user_email` (String) Whether a user email is required.
 - `session_duration` (String) Session duration in minutes.
-- `signup_default_custom_claims` (String) JSON object of custom claims assigned to users created via signup.
-- `signup_default_user_group_ids` (String) JSON array of user group IDs assigned to users created via signup.
+- `signup_default_custom_claims` (String) JSON array of the custom claims every new user gets, as objects with string "key" and "value" properties.
+- `signup_default_user_group_ids` (String) JSON array of the user group IDs every new user is added to.
 - `smtp_from` (String) Email address used as the sender.
 - `smtp_host` (String) SMTP server host.
 - `smtp_password` (String, Sensitive) SMTP authentication password.

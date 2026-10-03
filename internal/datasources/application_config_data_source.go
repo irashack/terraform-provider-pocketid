@@ -87,6 +87,8 @@ type applicationConfigDataSourceModel struct {
 	LdapAttributeGroupName             types.String `tfsdk:"ldap_attribute_group_name"`
 	LdapAdminGroupName                 types.String `tfsdk:"ldap_admin_group_name"`
 	LdapSoftDeleteUsers                types.String `tfsdk:"ldap_soft_delete_users"`
+
+	AutoCreateOIDCClientSecret types.String `tfsdk:"auto_create_oidc_client_secret"`
 }
 
 func computedString(description string, sensitive bool) schema.StringAttribute {
@@ -119,15 +121,15 @@ func (d *applicationConfigDataSource) Schema(_ context.Context, _ datasource.Sch
 			"disable_animations":            computedString("Whether UI animations are disabled.", false),
 			"allow_own_account_edit":        computedString("Whether users can edit their own account.", false),
 			"allow_user_signups":            computedString("User signup mode.", false),
-			"signup_default_user_group_ids": computedString("JSON array of user group IDs assigned to users created via signup.", false),
-			"signup_default_custom_claims":  computedString("JSON object of custom claims assigned to users created via signup.", false),
+			"signup_default_user_group_ids": computedString("JSON array of the user group IDs every new user is added to.", false),
+			"signup_default_custom_claims":  computedString("JSON array of the custom claims every new user gets, as objects with string \"key\" and \"value\" properties.", false),
 			"accent_color":                  computedString("Accent color used in the UI.", false),
 			"require_user_email":            computedString("Whether a user email is required.", false),
 
 			"webauthn_user_verification":        computedString("Passkey user verification: required or preferred.", false),
 			"webauthn_allow_synced_passkeys":    computedString("Whether synced passkeys are allowed (true or false).", false),
 			"webauthn_authenticator_attachment": computedString("Authenticator attachment: any, platform, or cross-platform.", false),
-			"cimd_url_allowlist":                computedString("JSON array of allowed Client ID Metadata Document URLs.", false),
+			"cimd_url_allowlist":                computedString("JSON array of the Client ID Metadata Document URL patterns Pocket ID accepts.", false),
 
 			"smtp_host":             computedString("SMTP server host.", false),
 			"smtp_port":             computedString("SMTP server port.", false),
@@ -163,6 +165,8 @@ func (d *applicationConfigDataSource) Schema(_ context.Context, _ datasource.Sch
 			"ldap_attribute_group_name":              computedString("LDAP attribute for the group name.", false),
 			"ldap_admin_group_name":                  computedString("LDAP group name granting admin privileges.", false),
 			"ldap_soft_delete_users":                 computedString("Whether users removed from LDAP are soft-deleted.", false),
+
+			"auto_create_oidc_client_secret": computedString("Whether Pocket ID creates a client secret of its own when a confidential OIDC client is created. Null on a server before Pocket ID 2.17.0, which does not have the setting.", false),
 		},
 	}
 }
@@ -252,6 +256,8 @@ func (d *applicationConfigDataSource) Read(ctx context.Context, _ datasource.Rea
 		LdapAttributeGroupName:             types.StringValue(cfg.LdapAttributeGroupName),
 		LdapAdminGroupName:                 types.StringValue(cfg.LdapAdminGroupName),
 		LdapSoftDeleteUsers:                types.StringValue(cfg.LdapSoftDeleteUsers),
+
+		AutoCreateOIDCClientSecret: types.StringPointerValue(cfg.AutoCreateOIDCClientSecret),
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
