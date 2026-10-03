@@ -35,7 +35,11 @@
   until a read succeeds: run `terraform plan` or `terraform apply` without
   `-refresh=false`, or `terraform state rm` the resource and import it again.
   A grant whose creation ended that way is recorded without its access flags
-  and permissions until a refresh reads them.
+  and permissions until a refresh reads them. An answer from Pocket ID that
+  does not describe the grant (empty, `null` or missing fields) is handled
+  the same way instead of being read as "no grant": a write's answer
+  triggers the read-back, and a grant list with such an entry fails the
+  refresh rather than dropping the resource from state.
 - New data sources `pocketid_api` (look up one API by `id` or by its exact
   `resource` identifier) and `pocketid_apis` (every API, oldest first, read
   across all pages), each with the API's permissions keyed by permission key

@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -238,6 +239,11 @@ func (c *Client) UpdateAPICIMDAccess(ctx context.Context, id string, enabled boo
 // a granted permission turns on access for its subject type. A grant with
 // nothing in it removes the client's access. Callers compare the result with
 // what they asked for. Nil lists are sent as []. The PUT is never retried.
+//
+// A successful response must carry all four grant fields (see
+// decodeAPIClientGrant). One that does not (null, {}, a partial object, the
+// wrong types) is not a grant: it is reported as an error wrapping
+// ErrResultUnread, because the write may have been applied.
 func (c *Client) SetAPIClientAccess(ctx context.Context, apiID, clientID string, grant APIClientGrant) (*APIClientGrant, error) {
 	path, err := apiClientPath(apiID, clientID)
 	if err != nil {
@@ -253,9 +259,10 @@ func (c *Client) SetAPIClientAccess(ctx context.Context, apiID, clientID string,
 	if err != nil {
 		return nil, err
 	}
-	var applied APIClientGrant
-	if err := json.Unmarshal(body, &applied); err != nil {
-		return nil, fmt.Errorf("API access of client %s: %w: the response could not be decoded", clientID, ErrResultUnread)
+	applied, err := decodeAPIClientGrant(body)
+	if err != nil {
+		// The PUT was accepted: what it stored is unknown, not empty.
+		return nil, fmt.Errorf("API access of client %s: %w: the response did not describe a grant", clientID, ErrResultUnread)
 	}
 	return &applied, nil
 }
@@ -276,7 +283,9 @@ func (c *Client) RemoveAPIClientAccess(ctx context.Context, apiID, clientID stri
 
 // ListClientAPIGrants returns every API the client may reach, with its grants
 // (GET /api/api-access/{clientId}/apis; one unpaginated list). A missing
-// client is reported as IsNotFound(err, ResourceOIDCClient).
+// client is reported as IsNotFound(err, ResourceOIDCClient). An answer that is
+// not a list, or whose entries lack the API or the grant fields, is an error
+// wrapping ErrIncompleteGrantResponse, never an empty or missing grant.
 func (c *Client) ListClientAPIGrants(ctx context.Context, clientID string) ([]ClientAPIGrant, error) {
 	segment, err := clientIDSegment(clientID)
 	if err != nil {
@@ -286,11 +295,7 @@ func (c *Client) ListClientAPIGrants(ctx context.Context, clientID string) ([]Cl
 	if err != nil {
 		return nil, err
 	}
-	var grants []ClientAPIGrant
-	if err := json.Unmarshal(body, &grants); err != nil {
-		return nil, fmt.Errorf("error unmarshaling response: %w", err)
-	}
-	return grants, nil
+	return decodeClientAPIGrants(body)
 }
 
 // FindClientAPIGrant returns the grant the client holds on the API, or nil
@@ -322,6 +327,116 @@ func apiClientPath(apiID, clientID string) (string, error) {
 		return "", err
 	}
 	return "/api/apis/" + api + "/clients/" + client, nil
+}
+
+// ErrIncompleteGrantResponse marks a successful response that does not
+// describe a grant completely: not the object or list expected, or without the
+// fields that say what the client may do. It is a fixed message; the response
+// is never quoted.
+var ErrIncompleteGrantResponse = errors.New("the response did not describe the API grants completely")
+
+// The fields every grant object carries (api.apiClientGrantDto has no
+// omitempty), from v2.14.0 to v2.17.0.
+const (
+	grantFieldUserAccess = "userDelegatedAccess"
+	grantFieldClientAcc  = "clientAccess"
+	grantFieldUserIDs    = "userDelegatedPermissionIds"
+	grantFieldClientIDs  = "clientPermissionIds"
+)
+
+// grantFromFields reads the four grant fields from a decoded JSON object. Each
+// must be present: the access flags as booleans, the permission lists as
+// arrays of strings. A list may be null, which Go's nil slice encodes as and
+// which means no permissions (the server answers [] today). A field that is
+// missing, or of another type, makes the object no grant, so that an empty or
+// partial object can never read as "access revoked".
+func grantFromFields(fields map[string]json.RawMessage) (APIClientGrant, bool) {
+	flag := func(name string) (bool, bool) {
+		raw, ok := fields[name]
+		if !ok {
+			return false, false
+		}
+		var value *bool
+		if json.Unmarshal(raw, &value) != nil || value == nil {
+			return false, false
+		}
+		return *value, true
+	}
+	list := func(name string) ([]string, bool) {
+		raw, ok := fields[name]
+		if !ok {
+			return nil, false
+		}
+		var elements []*string
+		if json.Unmarshal(raw, &elements) != nil {
+			return nil, false
+		}
+		ids := make([]string, 0, len(elements))
+		for _, element := range elements {
+			if element == nil {
+				return nil, false
+			}
+			ids = append(ids, *element)
+		}
+		return ids, true
+	}
+	var g APIClientGrant
+	var ok [4]bool
+	g.UserDelegatedAccess, ok[0] = flag(grantFieldUserAccess)
+	g.ClientAccess, ok[1] = flag(grantFieldClientAcc)
+	g.UserDelegatedPermissionIDs, ok[2] = list(grantFieldUserIDs)
+	g.ClientPermissionIDs, ok[3] = list(grantFieldClientIDs)
+	return g, ok[0] && ok[1] && ok[2] && ok[3]
+}
+
+// decodeAPIClientGrant decodes the answer to PUT /api/apis/{id}/clients/{id}
+// (api.apiClientGrantDto). Anything that is not an object with all four grant
+// fields is an error.
+func decodeAPIClientGrant(body []byte) (APIClientGrant, error) {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(body, &fields) != nil {
+		return APIClientGrant{}, ErrIncompleteGrantResponse
+	}
+	grant, ok := grantFromFields(fields)
+	if !ok {
+		return APIClientGrant{}, ErrIncompleteGrantResponse
+	}
+	return grant, nil
+}
+
+// decodeClientAPIGrants decodes the answer to GET /api/api-access/{clientId}/apis
+// (a list of api.clientApiGrantDto, [] when there are none). Every entry must
+// name its API and carry the four grant fields; one that does not fails the
+// whole read, because it may be the entry that was looked for.
+func decodeClientAPIGrants(body []byte) ([]ClientAPIGrant, error) {
+	var entries []json.RawMessage
+	if json.Unmarshal(body, &entries) != nil || entries == nil {
+		return nil, ErrIncompleteGrantResponse
+	}
+	grants := make([]ClientAPIGrant, len(entries))
+	for i, entry := range entries {
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(entry, &fields) != nil {
+			return nil, ErrIncompleteGrantResponse
+		}
+		grant, ok := grantFromFields(fields)
+		if !ok {
+			return nil, ErrIncompleteGrantResponse
+		}
+		var api API
+		if raw, present := fields["api"]; !present || json.Unmarshal(raw, &api) != nil || api.ID == "" {
+			return nil, ErrIncompleteGrantResponse
+		}
+		var cimd struct {
+			Access        bool     `json:"cimdGrantedAccess"`
+			PermissionIDs []string `json:"cimdGrantedPermissionIds"`
+		}
+		if json.Unmarshal(entry, &cimd) != nil {
+			return nil, ErrIncompleteGrantResponse
+		}
+		grants[i] = ClientAPIGrant{API: api, APIClientGrant: grant, CIMDGrantedAccess: cimd.Access, CIMDGrantedPermissionIDs: cimd.PermissionIDs}
+	}
+	return grants, nil
 }
 
 func decodeAPI(body []byte) (*API, error) {

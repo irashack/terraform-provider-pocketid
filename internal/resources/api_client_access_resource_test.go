@@ -50,6 +50,9 @@ type apiAccessTestPocketID struct {
 	failures map[string]apiTestFailure
 	// tamper may change what a grant write stores.
 	tamper func(g *client.APIClientGrant)
+	// putBody and listBody, when set, replace the body of a successful grant
+	// write (after it was applied) and of the client's grant list.
+	putBody, listBody *string
 }
 
 func newAPIAccessTestPocketID(t *testing.T) (*apiAccessTestPocketID, *client.Client) {
@@ -156,6 +159,10 @@ func (f *apiAccessTestPocketID) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	if failing {
 		f.fail(w, failure, route)
+		return
+	}
+	if override := map[string]*string{"PUT grant": f.putBody, "GET grants": f.listBody}[route]; override != nil {
+		_, _ = w.Write([]byte(*override))
 		return
 	}
 	body, _ := json.Marshal(out)
@@ -549,6 +556,103 @@ func TestAPIClientAccessRefused(t *testing.T) {
 	assert.False(t, apiAccessRefused(fmt.Errorf("%w: %w", refusal, client.ErrResultUnread)))
 	assert.False(t, apiAccessRefused(client.ErrResultUnread))
 	assert.False(t, apiAccessRefused(errors.New("connection reset")))
+}
+
+// A successful answer to the grant PUT that does not describe a grant (null,
+// {}, a partial object) is an unread result, not "no grant": the write may
+// have been applied, so the resource reads the grant back, keeps the pair's
+// identity, and never records access that was not confirmed as false.
+func TestAPIClientAccess_IncompletePutResponse(t *testing.T) {
+	const prior = "user=true[read] client=true[write]"
+	for name, body := range map[string]string{
+		"null":           `null`,
+		"empty object":   `{}`,
+		"partial object": `{"userDelegatedAccess":true}`,
+		"no list fields": `{"userDelegatedAccess":true,"clientAccess":false}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Run("create, read back", func(t *testing.T) {
+				f, c := newAPIAccessTestPocketID(t)
+				h := newAPIHarness(t, c)
+				f.putBody = &body
+				step := apiAccessRun(t, h, nil, nil, apiAccessConfig([]string{"read"}, nil))
+				require.NotNil(t, step.apply)
+				errs := apiHarnessErrors(step.apply.Diagnostics)
+				assert.Contains(t, errs, "API access result uncertain")
+				assert.NotContains(t, errs, "stored no grant")
+				require.NotNil(t, step.state, "the identity of a grant the server holds is kept")
+				assert.Equal(t, "user=true[read] client=false[]", apiAccessSummary(t, step.state))
+				assert.False(t, apiAccessHasMarker(step.private), "a confirmed read-back needs no marker")
+			})
+			t.Run("create, read back fails", func(t *testing.T) {
+				f, c := newAPIAccessTestPocketID(t)
+				h := newAPIHarness(t, c)
+				f.putBody = &body
+				f.failures["GET grants"] = apiTestFailure{status: 403}
+				step := apiAccessRun(t, h, nil, nil, apiAccessConfig([]string{"read"}, nil))
+				require.NotNil(t, step.apply)
+				assert.Contains(t, apiHarnessErrors(step.apply.Diagnostics), "API access result uncertain")
+				require.NotNil(t, step.state)
+				assert.Equal(t, apiAccessTestAPI+"/"+apiAccessTestClient, step.state.ID.ValueString())
+				assert.True(t, step.state.UserDelegatedAccess.IsNull() && step.state.ClientAccess.IsNull(), "access is unknown, not false")
+				assert.True(t, step.state.UserDelegatedPermissions.IsNull() && step.state.ClientPermissions.IsNull(), "permissions are unknown, not empty")
+				assert.True(t, apiAccessHasMarker(step.private))
+			})
+			t.Run("update, read back", func(t *testing.T) {
+				f, c := newAPIAccessTestPocketID(t)
+				h := newAPIHarness(t, c)
+				created := apiAccessMustApply(t, h, nil, nil, apiAccessConfig([]string{"read"}, []string{"write"}))
+				require.Equal(t, prior, apiAccessSummary(t, created.state))
+				f.putBody = &body
+				step := apiAccessRun(t, h, created.state, created.private, apiAccessConfig([]string{"read", "write"}, nil))
+				require.NotNil(t, step.apply)
+				assert.Contains(t, apiHarnessErrors(step.apply.Diagnostics), "API access result uncertain")
+				require.NotNil(t, step.state)
+				assert.Equal(t, "user=true[read write] client=false[]", apiAccessSummary(t, step.state), "state shows what the server holds")
+				assert.False(t, apiAccessHasMarker(step.private))
+			})
+			t.Run("update, read back fails", func(t *testing.T) {
+				f, c := newAPIAccessTestPocketID(t)
+				h := newAPIHarness(t, c)
+				created := apiAccessMustApply(t, h, nil, nil, apiAccessConfig([]string{"read"}, []string{"write"}))
+				f.putBody = &body
+				f.failures["GET grants"] = apiTestFailure{status: 403}
+				step := apiAccessRun(t, h, created.state, created.private, apiAccessConfig([]string{"read", "write"}, nil))
+				require.NotNil(t, step.apply)
+				assert.Contains(t, apiHarnessErrors(step.apply.Diagnostics), "API access result uncertain")
+				require.NotNil(t, step.state)
+				assert.Equal(t, prior, apiAccessSummary(t, step.state), "no revocation is recorded that no read confirmed")
+				assert.True(t, apiAccessHasMarker(step.private))
+			})
+		})
+	}
+}
+
+// A grant list that is not a list, or whose entries do not say what the client
+// may do, fails the refresh and leaves the resource in state: it is not
+// evidence that the grant is gone.
+func TestAPIClientAccessRead_IncompleteList(t *testing.T) {
+	entry := func(fields string) string {
+		return fmt.Sprintf(`[{"api":{"id":%q,"permissions":[]}%s}]`, apiAccessTestAPI, fields)
+	}
+	for name, body := range map[string]string{
+		"null":                `null`,
+		"empty object":        `{}`,
+		"empty entry":         `[{}]`,
+		"entry without grant": entry(``),
+		"entry missing lists": entry(`,"userDelegatedAccess":true,"clientAccess":false`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, c := newAPIAccessTestPocketID(t)
+			h := newAPIHarness(t, c)
+			created := apiAccessMustApply(t, h, nil, nil, apiAccessConfig([]string{"read"}, nil))
+			f.listBody = &body
+			errs, refreshed, _ := apiAccessRefresh(t, h, created.state, created.private)
+			assert.Contains(t, errs, "Error reading API access")
+			require.NotNil(t, refreshed, "the resource stays in state")
+			assert.Equal(t, apiAccessSummary(t, created.state), apiAccessSummary(t, refreshed))
+		})
+	}
 }
 
 // A destroy is never held back by an unresolved outcome: removing the grant

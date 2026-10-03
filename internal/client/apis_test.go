@@ -184,6 +184,124 @@ func TestClient_SetAPIClientAccess_Result(t *testing.T) {
 	assert.ErrorIs(t, err, client.ErrResultUnread)
 }
 
+// A successful answer to the grant PUT that does not describe a grant (null,
+// {}, a partial object, the wrong types) is not an empty grant: the write was
+// accepted, so the result is unread, and the caller reads the grant back. The
+// body is never quoted.
+func TestClient_SetAPIClientAccess_IncompleteResponse(t *testing.T) {
+	const all = `"userDelegatedAccess":true,"clientAccess":false,"userDelegatedPermissionIds":[],"clientPermissionIds":[]`
+	without := func(field string) string {
+		fields := map[string]string{
+			"userDelegatedAccess": `"userDelegatedAccess":true`, "clientAccess": `"clientAccess":false`,
+			"userDelegatedPermissionIds": `"userDelegatedPermissionIds":[]`, "clientPermissionIds": `"clientPermissionIds":[]`,
+		}
+		delete(fields, field)
+		var parts []string
+		for _, key := range []string{"userDelegatedAccess", "clientAccess", "userDelegatedPermissionIds", "clientPermissionIds"} {
+			if part, ok := fields[key]; ok {
+				parts = append(parts, part)
+			}
+		}
+		return "{" + strings.Join(parts, ",") + `,"note":"BODY-MARKER"}`
+	}
+	for name, body := range map[string]string{
+		"null":                      `null`,
+		"empty object":              `{"note":"BODY-MARKER"}`,
+		"array":                     `[{"note":"BODY-MARKER"}]`,
+		"string":                    `"BODY-MARKER"`,
+		"number":                    `7`,
+		"empty body":                ``,
+		"missing user access":       without("userDelegatedAccess"),
+		"missing client access":     without("clientAccess"),
+		"missing user permissions":  without("userDelegatedPermissionIds"),
+		"missing client permission": without("clientPermissionIds"),
+		"null flag":                 `{"userDelegatedAccess":null,"clientAccess":false,"userDelegatedPermissionIds":[],"clientPermissionIds":[]}`,
+		"string flag":               `{"userDelegatedAccess":"true","clientAccess":false,"userDelegatedPermissionIds":[],"clientPermissionIds":[]}`,
+		"list is an object":         `{"userDelegatedAccess":true,"clientAccess":false,"userDelegatedPermissionIds":{},"clientPermissionIds":[]}`,
+		"list holds a number":       `{"userDelegatedAccess":true,"clientAccess":false,"userDelegatedPermissionIds":[7],"clientPermissionIds":[]}`,
+		"list holds a null":         `{"userDelegatedAccess":true,"clientAccess":false,"userDelegatedPermissionIds":[null],"clientPermissionIds":[]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := apiTestServer(t, func(w http.ResponseWriter, r *http.Request) { _, _ = fmt.Fprint(w, body) })
+			applied, err := c.SetAPIClientAccess(context.Background(), apiTestAPIID, "app", client.APIClientGrant{UserDelegatedAccess: true})
+			require.Error(t, err)
+			assert.Nil(t, applied)
+			assert.ErrorIs(t, err, client.ErrResultUnread)
+			assert.False(t, client.IsDefiniteRejection(err))
+			assert.NotContains(t, err.Error(), "BODY-MARKER")
+		})
+	}
+
+	// The same fields complete are a grant, whatever else the object carries,
+	// and a list the server leaves null means no permissions.
+	for name, tc := range map[string]struct {
+		body  string
+		empty bool
+	}{
+		"complete":             {`{` + all + `}`, false},
+		"extra fields":         {`{` + all + `,"later":{"x":1}}`, false},
+		"empty grant":          {`{"userDelegatedAccess":false,"clientAccess":false,"userDelegatedPermissionIds":[],"clientPermissionIds":[]}`, true},
+		"null permission list": {`{"userDelegatedAccess":false,"clientAccess":false,"userDelegatedPermissionIds":null,"clientPermissionIds":null}`, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := apiTestServer(t, func(w http.ResponseWriter, r *http.Request) { _, _ = fmt.Fprint(w, tc.body) })
+			applied, err := c.SetAPIClientAccess(context.Background(), apiTestAPIID, "app", client.APIClientGrant{UserDelegatedAccess: true})
+			require.NoError(t, err)
+			assert.Equal(t, tc.empty, applied.IsEmpty())
+			assert.NotNil(t, applied.UserDelegatedPermissionIDs)
+			assert.NotNil(t, applied.ClientPermissionIDs)
+		})
+	}
+}
+
+// An answer to the grant list that is not a list, or whose entries do not say
+// what the client may do, is a failed read, not a client with no grant.
+func TestClient_ListClientAPIGrants_IncompleteResponse(t *testing.T) {
+	grantFields := `"userDelegatedAccess":true,"clientAccess":false,"userDelegatedPermissionIds":[],"clientPermissionIds":[]`
+	api := fmt.Sprintf(`"api":{"id":%q,"permissions":[]}`, apiTestAPIID)
+	for name, body := range map[string]string{
+		"null":                      `null`,
+		"empty object":              `{"note":"BODY-MARKER"}`,
+		"string":                    `"BODY-MARKER"`,
+		"empty body":                ``,
+		"empty entry":               `[{}]`,
+		"null entry":                `[null]`,
+		"entry without grant":       `[{` + api + `,"cimdGrantedAccess":false,"cimdGrantedPermissionIds":[]}]`,
+		"entry without api":         `[{` + grantFields + `}]`,
+		"api without id":            `[{"api":{"permissions":[]},` + grantFields + `}]`,
+		"api is null":               `[{"api":null,` + grantFields + `}]`,
+		"missing user access":       `[{` + api + `,"clientAccess":false,"userDelegatedPermissionIds":[],"clientPermissionIds":[]}]`,
+		"missing client access":     `[{` + api + `,"userDelegatedAccess":true,"userDelegatedPermissionIds":[],"clientPermissionIds":[]}]`,
+		"missing user permissions":  `[{` + api + `,"userDelegatedAccess":true,"clientAccess":false,"clientPermissionIds":[]}]`,
+		"missing client permission": `[{` + api + `,"userDelegatedAccess":true,"clientAccess":false,"userDelegatedPermissionIds":[]}]`,
+		"flag of the wrong type":    `[{` + api + `,"userDelegatedAccess":"yes","clientAccess":false,"userDelegatedPermissionIds":[],"clientPermissionIds":[]}]`,
+		"one incomplete entry":      `[{` + api + `,` + grantFields + `},{"api":{"id":"` + apiTestPermissionID + `"}}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := apiTestServer(t, func(w http.ResponseWriter, r *http.Request) { _, _ = fmt.Fprint(w, body) })
+			grants, err := c.ListClientAPIGrants(context.Background(), "app")
+			require.Error(t, err)
+			assert.Nil(t, grants)
+			assert.ErrorIs(t, err, client.ErrIncompleteGrantResponse)
+			assert.NotContains(t, err.Error(), "BODY-MARKER")
+			// The lookup fails too: it must not report a client without a grant.
+			grant, err := c.FindClientAPIGrant(context.Background(), "app", apiTestAPIID)
+			assert.Error(t, err)
+			assert.Nil(t, grant)
+		})
+	}
+
+	// Complete entries, with null permission lists and without the CIMD fields.
+	c := apiTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprintf(w, `[{%s,"userDelegatedAccess":true,"clientAccess":false,"userDelegatedPermissionIds":null,"clientPermissionIds":null}]`, api)
+	})
+	grant, err := c.FindClientAPIGrant(context.Background(), "app", apiTestAPIID)
+	require.NoError(t, err)
+	require.NotNil(t, grant)
+	assert.True(t, grant.UserDelegatedAccess)
+	assert.Empty(t, grant.UserDelegatedPermissionIDs)
+}
+
 func TestClient_RemoveAPIClientAccess_ConfirmedAbsence(t *testing.T) {
 	for name, tc := range map[string]struct {
 		body             string

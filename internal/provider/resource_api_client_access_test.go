@@ -5,6 +5,7 @@ package provider_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"slices"
@@ -397,4 +398,99 @@ resource "pocketid_api_client_access" "test" {
 			},
 		},
 	})
+}
+
+// testAccGrantShape describes the fields of a decoded grant object: each of
+// the four grant fields as "bool", "array", "null" or "missing".
+func testAccGrantShape(t *testing.T, raw map[string]json.RawMessage) map[string]string {
+	t.Helper()
+	shape := map[string]string{}
+	for _, field := range []string{"userDelegatedAccess", "clientAccess", "userDelegatedPermissionIds", "clientPermissionIds"} {
+		value, ok := raw[field]
+		switch {
+		case !ok:
+			shape[field] = "missing"
+		case string(value) == "null":
+			shape[field] = "null"
+		case string(value) == "true" || string(value) == "false":
+			shape[field] = "bool"
+		case strings.HasPrefix(string(value), "["):
+			shape[field] = "array"
+		default:
+			shape[field] = "other"
+		}
+	}
+	return shape
+}
+
+// The grant responses carry all four grant fields in every case the provider
+// relies on, and the client accepts them: access flags are always booleans
+// and the permission lists are arrays (the server's DTOs have no omitempty,
+// so a nil list could be null; an empty grant is answered with empty arrays).
+// The client refuses a response without these fields, since it would read as
+// no grant at all, so this is the server behavior that validation depends on.
+func TestAccAPIClientGrant_responseShape(t *testing.T) {
+	testAccPreCheck(t)
+	ctx := context.Background()
+	c, err := testClient()
+	require.NoError(t, err)
+	rName := acctest.RandomWithPrefix("tf-acc-apigrant")
+	api, err := c.CreateAPI(ctx, &client.APICreateRequest{Name: rName, Resource: testAccResourceAPIResource(acctest.RandString(8))})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = c.DeleteAPI(context.Background(), api.ID) })
+	api, err = c.UpdateAPIPermissions(ctx, api.ID, []client.APIPermissionInput{{Key: "read", Name: "Read"}})
+	require.NoError(t, err)
+	readID := api.Permissions[0].ID
+	confidential := testAccResourceAPIClient(t, rName+"-confidential")
+	public, err := c.CreateClient(ctx, &client.OIDCClientCreateRequest{Name: rName + "-public", CallbackURLs: []string{"https://example.com/callback"}, IsPublic: true, PkceEnabled: true})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = c.DeleteClient(context.Background(), public.ID) })
+
+	put := func(clientID string, grant client.APIClientGrant) map[string]string {
+		var raw map[string]json.RawMessage
+		status, err := testAccAPI("PUT", "/api/apis/"+api.ID+"/clients/"+clientID, grant, &raw)
+		require.NoError(t, err)
+		require.Equal(t, 200, status)
+		return testAccGrantShape(t, raw)
+	}
+	for name, tc := range map[string]struct {
+		clientID string
+		grant    client.APIClientGrant
+	}{
+		"empty grant":                {confidential, client.APIClientGrant{UserDelegatedPermissionIDs: []string{}, ClientPermissionIDs: []string{}}},
+		"access without permissions": {confidential, client.APIClientGrant{UserDelegatedAccess: true, ClientAccess: true, UserDelegatedPermissionIDs: []string{}, ClientPermissionIDs: []string{}}},
+		"permissions":                {confidential, client.APIClientGrant{UserDelegatedPermissionIDs: []string{readID}, ClientPermissionIDs: []string{readID}}},
+		"public client":              {public.ID, client.APIClientGrant{ClientAccess: true, UserDelegatedPermissionIDs: []string{}, ClientPermissionIDs: []string{readID}}},
+	} {
+		shape := put(tc.clientID, tc.grant)
+		t.Logf("PUT %s: %v", name, shape)
+		assert.Equal(t, "bool", shape["userDelegatedAccess"], name)
+		assert.Equal(t, "bool", shape["clientAccess"], name)
+		for _, field := range []string{"userDelegatedPermissionIds", "clientPermissionIds"} {
+			assert.Contains(t, []string{"array", "null"}, shape[field], "%s: %s", name, field)
+		}
+		// The client decodes the same response without treating it as unread.
+		applied, err := c.SetAPIClientAccess(ctx, api.ID, tc.clientID, tc.grant)
+		require.NoError(t, err, name)
+		// A public client's client access is dropped, leaving nothing here.
+		assert.Equal(t, name == "empty grant" || name == "public client", applied.IsEmpty(), name)
+	}
+
+	var list []map[string]json.RawMessage
+	status, err := testAccAPI("GET", "/api/api-access/"+confidential+"/apis", nil, &list)
+	require.NoError(t, err)
+	require.Equal(t, 200, status)
+	require.Len(t, list, 1)
+	shape := testAccGrantShape(t, list[0])
+	t.Logf("GET list: %v", shape)
+	assert.Equal(t, "bool", shape["userDelegatedAccess"])
+	assert.Equal(t, "bool", shape["clientAccess"])
+	assert.Equal(t, "array", shape["userDelegatedPermissionIds"])
+	assert.Equal(t, "array", shape["clientPermissionIds"])
+	var apiObject map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(list[0]["api"], &apiObject))
+	assert.Contains(t, apiObject, "id")
+	grant, err := c.FindClientAPIGrant(ctx, confidential, api.ID)
+	require.NoError(t, err)
+	require.NotNil(t, grant)
 }
