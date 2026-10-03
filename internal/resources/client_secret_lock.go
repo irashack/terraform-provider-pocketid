@@ -29,9 +29,8 @@ var (
 // it compares against (or the mutation) to the last read that interprets the
 // result:
 //   - pocketid_client_secret: Create (the list before, the POST, the list
-//     after an uncertain result) and Delete (the DELETE and its confirming
-//     list);
-//   - pocketid_client_secret: also Read (the list it interprets);
+//     after an uncertain result), Read (the list it interprets) and Delete
+//     (the DELETE and its confirming list);
 //   - pocketid_client: on create, from revoking the secret Pocket ID 2.17
 //     creates with a client (with its confirming list) to generating its own,
 //     and the cleanup of a failed create step (deleting the client deletes
@@ -48,8 +47,8 @@ var (
 // client (it is not reentrant). Changes made outside this process (another
 // apply, Pocket ID's interface) are not covered.
 //
-// Take it once, at the top of the resource operation (Create, Update or
-// Delete), never inside a helper that such an operation also calls. Nothing
+// Take it once per sequence in the resource operation (Create, Read, Update
+// or Delete), never inside a helper that such an operation also calls. Nothing
 // in the client package takes it, so a holder may run any sequence of client
 // calls (generate, create, list, revoke) and helpers such as
 // pocketid_client's revokeServerCreatedSecret under it. A new client's ID,
