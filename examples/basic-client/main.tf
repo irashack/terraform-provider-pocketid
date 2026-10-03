@@ -3,7 +3,7 @@ terraform {
   required_providers {
     pocketid = {
       source  = "registry.terraform.io/irashack/pocketid"
-      version = "2.3.1"
+      version = "3.0.0"
     }
   }
 }
