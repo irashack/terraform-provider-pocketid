@@ -179,6 +179,48 @@ renamed binary of this provider. The test uses supported state replacement, chec
 encrypted state/backups and saved-plan encryption, preserves the ID and secret, and
 requires an empty subsequent plan. No development overrides are used.
 
+## Release 3.0.0 evidence — 2026-10-03
+
+The first release of the project on its own terms (UPSTREAM.md); supported servers
+are Pocket ID 2.14.0 through 2.17.0. macOS ARM64, Docker via OrbStack, Go 1.27.1,
+golangci-lint 2.13.2, OpenTofu 1.13.1, Terraform 1.16.4. Results below were
+produced from commit `29af154`, the last source change before the release commit
+(the two later commits change CHANGELOG.md and README.md only).
+
+Checks: `make check` (fmt, vet, race unit tests, script tests, build, golangci-lint
+with 0 issues), `make docs-check`, `make vuln` (no reachable vulnerabilities),
+`make actionlint` and `go mod tidy` (no diff) all passed. `make release-check` was
+not run locally (GoReleaser is not installed on this machine); the release workflow
+runs it.
+
+Acceptance, `make test-acc-supported` (the full provider and data-source suites on
+one disposable fixture per version; top-level tests, no failures, no skips):
+
+| Pocket ID | `internal/provider` | `internal/datasources` |
+|---|---|---|
+| 2.14.0 | 173/173 | 114/114 |
+| 2.15.0 | 173/173 | 114/114 |
+| 2.16.0 | 173/173 | 114/114 |
+| 2.17.0 | 173/173 | 114/114 |
+
+Native proofs, 12 of 12 passing, binaries built from `29af154` and stamped 3.0.0 in
+a mirror: on 2.17.0 with both OpenTofu and Terraform, `lifecycle.py`, `upgrade.py`,
+`client_upgrade.py` (empty plan after the switch), `upgrade_users_groups.py` and
+`application_config.py`; `lifecycle.py` also on 2.14.0 with both tools. The old
+provider for the upgrade proofs was the 2.4.104 archive kept from that release's
+verification (`terraform-provider-pocketid_2.4.104_darwin_arm64.zip`; its unpacked
+binary for `upgrade_users_groups.py`); the archive could not be re-verified
+against the published SHA256SUMS during this run because the release asset was not
+reachable anonymously.
+
+Independent review: every package and the integrated tree were reviewed by Codex
+(gpt-6-astra) in several rounds before and during integration; the reviews are
+recorded with the release commit's history in the project's issue notes, not here.
+Known limits carried into 3.0.0: PostgreSQL-backed servers were covered by source
+inspection only (UUID comparison is case-insensitive for that reason); the
+admin-key containment rules refuse legitimate values that happen to contain the key
+(documented in CHANGELOG.md).
+
 ## Release 2.4.104 evidence — 2026-10-02
 
 Pocket ID 2.17.0 support; supported servers move to 2.17.0 and 2.16.0. macOS ARM64,
