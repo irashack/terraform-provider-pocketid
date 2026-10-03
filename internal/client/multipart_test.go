@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"mime"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -202,4 +204,93 @@ func TestUpload_ErrorsAndRedaction(t *testing.T) {
 			}
 		})
 	}
+}
+
+// keepAliveServer answers the first request on each connection with 204 and
+// keeps the connection open, then reads the next request on it and closes the
+// connection without answering: the stale reused connection Go's transport
+// would replay a replayable request on. It counts the requests it read.
+func keepAliveServer(t *testing.T) (string, *atomic.Int32) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	var requests atomic.Int32
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer func() { _ = conn.Close() }()
+				reader := bufio.NewReader(conn)
+				for served := 0; ; served++ {
+					req, err := http.ReadRequest(reader)
+					if err != nil {
+						return
+					}
+					_, _ = io.Copy(io.Discard, req.Body)
+					requests.Add(1)
+					if served > 0 {
+						return // close without an answer
+					}
+					_, _ = io.WriteString(conn, "HTTP/1.1 204 No Content\r\n\r\n")
+				}
+			}()
+		}
+	}()
+	return "http://" + listener.Addr().String(), &requests
+}
+
+// A request with a body is never sent a second time by Go's transport when
+// the reused connection it went out on turns out to be dead, whatever the
+// method: the body has no GetBody to replay it from.
+func TestSend_BodyNeverReplayedOnAReusedConnection(t *testing.T) {
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut} {
+		t.Run(method, func(t *testing.T) {
+			url, requests := keepAliveServer(t)
+			c, err := NewClient(url, "test-token", false, 5)
+			require.NoError(t, err)
+
+			_, err = c.send(context.Background(), method, "/api/x", "application/json", []byte(`{"a":1}`))
+			require.NoError(t, err)
+			_, err = c.send(context.Background(), method, "/api/x", "application/json", []byte(`{"a":2}`))
+			require.Error(t, err, "the second request goes out on the reused connection, which closes")
+			assert.Equal(t, int32(2), requests.Load(), "the failed request is not sent again")
+		})
+	}
+	t.Run("upload", func(t *testing.T) {
+		url, requests := keepAliveServer(t)
+		c, err := NewClient(url, "test-token", false, 5)
+		require.NoError(t, err)
+		_, err = c.upload(context.Background(), http.MethodPost, "/api/x", pngFile(), 0)
+		require.NoError(t, err)
+		_, err = c.upload(context.Background(), http.MethodPut, "/api/x", pngFile(), 0)
+		require.Error(t, err)
+		assert.Equal(t, int32(2), requests.Load())
+	})
+}
+
+// Uploads use POST or PUT only; anything else is refused before sending.
+func TestUpload_OnlyPostAndPut(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	c, err := NewClient(server.URL, "test-token", false, 30)
+	require.NoError(t, err)
+
+	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodDelete, http.MethodPatch, http.MethodOptions, ""} {
+		_, err := c.upload(context.Background(), method, "/api/x", pngFile(), 0)
+		assert.ErrorIs(t, err, ErrInvalidUpload, method)
+	}
+	assert.Zero(t, requests.Load())
+	for _, method := range []string{http.MethodPost, http.MethodPut} {
+		_, err := c.upload(context.Background(), method, "/api/x", pngFile(), 0)
+		assert.NoError(t, err, method)
+	}
+	assert.Equal(t, int32(2), requests.Load())
 }

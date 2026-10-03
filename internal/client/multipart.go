@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"mime"
 	"mime/multipart"
+	"net/http"
 	"net/textproto"
 	"strings"
 )
@@ -67,13 +68,18 @@ func hasControl(value string) bool {
 }
 
 // upload sends one file as multipart/form-data to endpoint (which may carry
-// a query, such as "?light=false") and returns the response body. It is never
-// retried, whatever the method or the answer: a failed upload is reported, not
+// a query, such as "?light=false") and returns the response body. method must
+// be POST or PUT, the methods Pocket ID's upload endpoints use and ones Go's
+// transport never replays; the body is a one-shot reader (see send). It is
+// never retried, whatever the answer: a failed upload is reported, not
 // repeated. maxBytes is the endpoint's own size limit (0 or more than
 // maxUploadBytes means maxUploadBytes); a larger file is refused before
 // anything is sent. Errors, logging, size limits on the response and the
 // redaction of the API key are those of every other request.
 func (c *Client) upload(ctx context.Context, method, endpoint string, file MultipartFile, maxBytes int64) ([]byte, error) {
+	if method != http.MethodPost && method != http.MethodPut {
+		return nil, fmt.Errorf("%w: an upload is sent with POST or PUT", ErrInvalidUpload)
+	}
 	if maxBytes <= 0 || maxBytes > maxUploadBytes {
 		maxBytes = maxUploadBytes
 	}

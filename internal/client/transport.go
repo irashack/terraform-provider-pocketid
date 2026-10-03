@@ -211,15 +211,24 @@ func isRetryableError(err error) bool {
 // its size limit and classified. Neither the request nor the response body is
 // logged, and errors carry only the status and Pocket ID's error code.
 func (c *Client) send(ctx context.Context, method, endpoint, contentType string, payload []byte) ([]byte, error) {
+	// The body is a one-shot reader: wrapped so that NewRequest does not
+	// recognize a *bytes.Reader and set GetBody. Without GetBody, Go's
+	// transport cannot replay the request on its own (it does that for
+	// GET-like requests on a reused connection that turns out to be dead),
+	// so "sent once" holds below this function too. The length is set
+	// explicitly instead.
 	var reqBody io.Reader
 	if payload != nil {
-		reqBody = bytes.NewReader(payload)
+		reqBody = struct{ io.Reader }{bytes.NewReader(payload)}
 	}
 
 	url := fmt.Sprintf("%s%s", c.baseURL, endpoint)
 	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	if payload != nil {
+		req.ContentLength = int64(len(payload))
 	}
 
 	// Set headers
