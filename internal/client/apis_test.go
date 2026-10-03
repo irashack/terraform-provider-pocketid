@@ -259,14 +259,18 @@ func TestClient_APIDecodeErrorsCarryNoValue(t *testing.T) {
 		assert.ErrorIs(t, err, client.ErrResultUnread, label)
 	}
 
-	// The list: an overflowing pagination count, and a mistyped entry.
+	// The list: an overflowing pagination count, and a mistyped entry. The
+	// pagination walk reports both with the foundation's fixed sentinel.
 	for label, body := range map[string]string{
 		"overflowing page":  fmt.Sprintf(`{"data":[],"pagination":{"totalPages":1,"totalItems":0,"currentPage":%s,"itemsPerPage":100}}`, overflow),
 		"overflowing total": fmt.Sprintf(`{"data":[],"pagination":{"totalPages":%s,"totalItems":0,"currentPage":1,"itemsPerPage":100}}`, overflow),
 		"mistyped entry":    fmt.Sprintf(`{"data":[{"id":%s}],"pagination":{"totalPages":1,"totalItems":1,"currentPage":1,"itemsPerPage":100}}`, numericKey),
 	} {
 		_, err := server(body).ListAPIs(ctx)
-		check("list "+label, err)
+		require.Error(t, err, label)
+		assert.ErrorIs(t, err, client.ErrUndecodableResponse, label)
+		assert.NotContains(t, err.Error(), numericKey, label)
+		assert.NotContains(t, err.Error(), overflow, label)
 	}
 }
 
