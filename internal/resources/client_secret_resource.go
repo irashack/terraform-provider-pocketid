@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
@@ -55,31 +54,6 @@ type clientSecretResourceModel struct {
 	Prefix          types.String `tfsdk:"prefix"`
 	CreatedAt       types.String `tfsdk:"created_at"`
 	IsActive        types.Bool   `tfsdk:"is_active"`
-}
-
-// clientSecretLocks serializes the secret mutations (create and revoke) this
-// provider process makes on one client. Pocket ID stores a client's secrets
-// in one document on the client and rewrites it for every change, so
-// concurrent changes to the same client contend for it; and a create whose
-// outcome is uncertain is reported by comparing the client's secrets before
-// and after it, which only names the right secret when no other create of
-// this process runs on that client at the same time. Entries are never
-// removed; a provider process lives for one plan or apply.
-var (
-	clientSecretLocksMu sync.Mutex
-	clientSecretLocks   = map[string]*sync.Mutex{}
-)
-
-func lockClientSecrets(clientID string) func() {
-	clientSecretLocksMu.Lock()
-	lock, ok := clientSecretLocks[clientID]
-	if !ok {
-		lock = &sync.Mutex{}
-		clientSecretLocks[clientID] = lock
-	}
-	clientSecretLocksMu.Unlock()
-	lock.Lock()
-	return lock.Unlock
 }
 
 func (r *clientSecretResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -267,6 +241,9 @@ func (r *clientSecretResource) Create(ctx context.Context, req resource.CreateRe
 		opts.ExpiresAt = &expires
 	}
 
+	// From the list before the POST to the list after an uncertain result,
+	// no other secret change of this process may touch the client
+	// (client_secret_lock.go).
 	unlock := lockClientSecrets(clientID)
 	defer unlock()
 
