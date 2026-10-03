@@ -61,11 +61,13 @@ func usersGroupsLDAPServer(t *testing.T, ldapEnabled bool) (*client.Client, map[
 		case "PUT /api/custom-claims/user/" + ldapFixtureUserID:
 			var claims []client.CustomClaim
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&claims))
+			lastLDAPClaimsPut = claims
 			user["customClaims"] = claims
 			_ = json.NewEncoder(w).Encode(claims)
 		case "PUT /api/users/" + ldapFixtureUserID + "/user-groups":
 			var req client.UpdateUserGroupsRequest
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+			lastLDAPGroupsPut = req.UserGroupIDs
 			groups := []map[string]string{}
 			for _, id := range req.UserGroupIDs {
 				groups = append(groups, map[string]string{"id": id})
@@ -91,9 +93,13 @@ func usersGroupsLDAPServer(t *testing.T, ldapEnabled bool) (*client.Client, map[
 	return c, calls
 }
 
-// lastLDAPUserPut is the body of the last user PUT usersGroupsLDAPServer
-// received.
-var lastLDAPUserPut map[string]any
+// The bodies of the last user, claims and groups PUTs usersGroupsLDAPServer
+// received; tests reset them before the call they examine.
+var (
+	lastLDAPUserPut   map[string]any
+	lastLDAPClaimsPut []client.CustomClaim
+	lastLDAPGroupsPut []string
+)
 
 func ldapUserModel() userResourceModel {
 	return userResourceModel{
@@ -139,21 +145,53 @@ func TestUserUpdateLDAPManaged(t *testing.T) {
 	})
 	// On any update Terraform plans the unconfigured, Computed display_name
 	// as unknown. That is no requested change: the directory's display name
-	// is kept, not replaced by first and last name.
-	for name, change := range map[string]func(*userResourceModel){
-		"locale": func(m *userResourceModel) { m.Locale = types.StringValue("fr") },
-		"claims": func(m *userResourceModel) {
-			m.CustomClaims = types.MapValueMust(types.StringType, map[string]attr.Value{"team": types.StringValue("a")})
+	// is kept, not replaced by first and last name. Each of the changes
+	// Pocket ID does apply to an LDAP user is made, and only that one.
+	for name, tc := range map[string]struct {
+		change func(*userResourceModel)
+		// want checks what was sent and what state records.
+		want func(t *testing.T, calls map[string]int, state userResourceModel)
+	}{
+		"locale": {
+			change: func(m *userResourceModel) { m.Locale = types.StringValue("fr") },
+			want: func(t *testing.T, calls map[string]int, state userResourceModel) {
+				require.Equal(t, "fr", lastLDAPUserPut["locale"], "the changed locale is sent")
+				require.Equal(t, "fr", state.Locale.ValueString(), "and recorded")
+				require.Zero(t, calls["PUT /api/custom-claims/user/"+ldapFixtureUserID], "no claims are written")
+				require.Zero(t, calls["PUT /api/users/"+ldapFixtureUserID+"/user-groups"], "no groups are written")
+				require.True(t, state.CustomClaims.IsNull())
+				require.True(t, state.Groups.IsNull())
+			},
 		},
-		"groups": func(m *userResourceModel) {
-			m.Groups = types.SetValueMust(types.StringType, []attr.Value{})
+		"claims": {
+			change: func(m *userResourceModel) {
+				m.CustomClaims = types.MapValueMust(types.StringType, map[string]attr.Value{"team": types.StringValue("a")})
+			},
+			want: func(t *testing.T, calls map[string]int, state userResourceModel) {
+				require.Equal(t, []client.CustomClaim{{Key: "team", Value: "a"}}, lastLDAPClaimsPut, "the changed claims are sent")
+				require.Equal(t, types.MapValueMust(types.StringType, map[string]attr.Value{"team": types.StringValue("a")}), state.CustomClaims, "and recorded")
+				require.Zero(t, calls["PUT /api/users/"+ldapFixtureUserID+"/user-groups"], "no groups are written")
+				require.True(t, state.Locale.IsNull())
+			},
+		},
+		"groups": {
+			change: func(m *userResourceModel) {
+				m.Groups = types.SetValueMust(types.StringType, []attr.Value{types.StringValue(ldapFixtureGroupID)})
+			},
+			want: func(t *testing.T, calls map[string]int, state userResourceModel) {
+				require.Equal(t, 1, calls["PUT /api/users/"+ldapFixtureUserID+"/user-groups"])
+				require.Equal(t, []string{ldapFixtureGroupID}, lastLDAPGroupsPut, "the added group is sent")
+				require.Equal(t, types.SetValueMust(types.StringType, []attr.Value{types.StringValue(ldapFixtureGroupID)}), state.Groups, "and recorded")
+				require.Zero(t, calls["PUT /api/custom-claims/user/"+ldapFixtureUserID], "no claims are written")
+				require.True(t, state.Locale.IsNull())
+			},
 		},
 	} {
 		t.Run(name+"_allowed_with_unknown_display_name", func(t *testing.T) {
 			c, calls := usersGroupsLDAPServer(t, true)
-			lastLDAPUserPut = nil
+			lastLDAPUserPut, lastLDAPClaimsPut, lastLDAPGroupsPut = nil, nil, nil
 			resp := runLDAPUserUpdate(t, c, func(m *userResourceModel) {
-				change(m)
+				tc.change(m)
 				m.DisplayName = types.StringUnknown()
 			})
 			require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
@@ -162,8 +200,19 @@ func TestUserUpdateLDAPManaged(t *testing.T) {
 			var state userResourceModel
 			require.False(t, resp.State.Get(context.Background(), &state).HasError())
 			require.Equal(t, "Directory Name", state.DisplayName.ValueString())
+			tc.want(t, calls, state)
 		})
 	}
+	// Null and an empty set are no change of groups: nothing is written.
+	t.Run("groups_null_to_empty_writes_nothing", func(t *testing.T) {
+		c, calls := usersGroupsLDAPServer(t, true)
+		resp := runLDAPUserUpdate(t, c, func(m *userResourceModel) {
+			m.Groups = types.SetValueMust(types.StringType, []attr.Value{})
+			m.DisplayName = types.StringUnknown()
+		})
+		require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
+		require.Zero(t, calls["PUT /api/users/"+ldapFixtureUserID+"/user-groups"])
+	})
 	t.Run("explicit_display_name_refused", func(t *testing.T) {
 		c, calls := usersGroupsLDAPServer(t, true)
 		resp := runLDAPUserUpdate(t, c, func(m *userResourceModel) { m.DisplayName = types.StringValue("Renamed") })
