@@ -2,6 +2,7 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -187,15 +188,29 @@ func (r *groupMembershipResource) Create(ctx context.Context, req resource.Creat
 	lock.Lock()
 	defer lock.Unlock()
 
+	plan.ID = types.StringValue(groupMembershipID(groupID, userID))
 	if err := r.client.AddUserToGroup(ctx, userID, groupID); err != nil {
-		resp.Diagnostics.AddError(
-			"Error adding user to group",
-			fmt.Sprintf("Could not add user %s to group %s: %s", userID, groupID, err),
-		)
+		var mismatch *client.UserGroupsMismatchError
+		switch {
+		case errors.Is(err, client.ErrResultUnread), !errors.As(err, &mismatch) && !client.IsDefiniteRejection(err):
+			// The addition was accepted, or may have been, but could not be
+			// verified. The pair is kept in state (marked for replacement) so
+			// that removing it from the configuration still revokes it; the
+			// next refresh drops it if the user is not in the group.
+			resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+			resp.Diagnostics.AddError("Group membership result uncertain",
+				fmt.Sprintf("Adding user %s to group %s may have succeeded, but the result could not be confirmed: %s. "+
+					"The membership is kept in state so that Terraform still tracks it; the next refresh checks it.", userID, groupID, err))
+		default:
+			// A definite rejection, or a group the user is confirmed not to
+			// be in (it does not exist): nothing to track.
+			resp.Diagnostics.AddError(
+				"Error adding user to group",
+				fmt.Sprintf("Could not add user %s to group %s: %s", userID, groupID, err),
+			)
+		}
 		return
 	}
-
-	plan.ID = types.StringValue(groupMembershipID(groupID, userID))
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }

@@ -123,3 +123,77 @@ func TestUserUpdateMissingGroup(t *testing.T) {
 	require.False(t, state.Groups.ElementsAs(ctx, &held, false).HasError())
 	require.Equal(t, []string{membershipVerifyGroupID}, held, "state records the groups the server holds")
 }
+
+// usersGroupsUnverifiableServer accepts every user-groups PUT but answers it
+// with an unreadable body, and fails every GET of the user after the first,
+// so an addition is made but cannot be confirmed. putStatus, when set,
+// answers the PUT instead.
+func usersGroupsUnverifiableServer(t *testing.T, putStatus int) (*client.Client, *int) {
+	t.Helper()
+	gets, puts := 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method + " " + r.URL.Path {
+		case "GET /api/users/" + membershipVerifyUserID:
+			gets++
+			if gets > 1 {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			_, _ = w.Write([]byte(`{"id":"` + membershipVerifyUserID + `","userGroups":[]}`))
+		case "PUT /api/users/" + membershipVerifyUserID + "/user-groups":
+			puts++
+			if putStatus != 0 {
+				w.WriteHeader(putStatus)
+				return
+			}
+			_, _ = w.Write([]byte(`<html>ok</html>`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	t.Cleanup(server.Close)
+	c, err := client.NewClient(server.URL, "synthetic-token", false, 5)
+	require.NoError(t, err)
+	return c, &puts
+}
+
+// An addition that was accepted (or may have been) but cannot be verified is
+// kept in state, so removing it from the configuration still revokes it; a
+// definite rejection records nothing.
+func TestGroupMembershipCreateUnverifiable(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name      string
+		putStatus int
+		retained  bool
+	}{
+		{"accepted_unreadable", 0, true},
+		{"server_error", http.StatusBadGateway, true},
+		{"rejected", http.StatusBadRequest, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, puts := usersGroupsUnverifiableServer(t, tc.putStatus)
+			r := &groupMembershipResource{client: c}
+			sr := resource.SchemaResponse{}
+			r.Schema(ctx, resource.SchemaRequest{}, &sr)
+			plan := tfsdk.Plan{Schema: sr.Schema}
+			require.False(t, plan.Set(ctx, &groupMembershipResourceModel{
+				ID: types.StringUnknown(), GroupID: types.StringValue(membershipVerifyGroupID), UserID: types.StringValue(membershipVerifyUserID),
+			}).HasError())
+			resp := resource.CreateResponse{State: tfsdk.State{Schema: sr.Schema}}
+			r.Create(ctx, resource.CreateRequest{Plan: plan}, &resp)
+			require.True(t, resp.Diagnostics.HasError())
+			require.Equal(t, 1, *puts, "the PUT is sent once")
+			if !tc.retained {
+				require.True(t, resp.State.Raw.IsNull())
+				return
+			}
+			require.Equal(t, "Group membership result uncertain", resp.Diagnostics.Errors()[0].Summary())
+			var state groupMembershipResourceModel
+			require.False(t, resp.State.Get(ctx, &state).HasError())
+			require.Equal(t, membershipVerifyGroupID+"/"+membershipVerifyUserID, state.ID.ValueString())
+		})
+	}
+}

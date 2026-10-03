@@ -150,7 +150,9 @@ func TestClient_GroupMembershipChangesAreVerified(t *testing.T) {
 	})
 	t.Run("add_unconfirmed", func(t *testing.T) {
 		// The PUT's body is unreadable and so is the read-back: the change
-		// was made, but whether it took cannot be confirmed.
+		// was made, but whether it took cannot be confirmed. The resource
+		// keeps the membership in state then
+		// (resources.TestGroupMembershipCreateUnverifiable).
 		s := &usersGroupsVerifyServer{existing: []string{"g1", "g2"}, current: []string{"g1"}, unreadablePut: true, failGetsFrom: 2}
 		err := s.start(t).AddUserToGroup(ctx, verifyUserID, "g2")
 		require.ErrorIs(t, err, client.ErrResultUnread)

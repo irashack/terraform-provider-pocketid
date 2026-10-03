@@ -79,3 +79,9 @@
   replace that user, at plan time and at apply time. Check the user, then run
   `terraform state rm` on the resource and either `terraform import` it with
   that ID (if it is the intended user) or choose another `id`.
+- `pocketid_group_membership`: when adding the user was accepted, or may have
+  been, but the result cannot be confirmed (an unreadable response and a
+  failed check, a server error or a lost connection), the membership is now
+  kept in state (marked for replacement) with an error saying so, so that
+  removing it from the configuration still revokes it. Before, nothing was
+  recorded and such a membership could stay active unnoticed.
