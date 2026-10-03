@@ -66,3 +66,9 @@
   `generate_secret = true`), and one that becomes public has the secret this
   resource generated revoked. Before, a client made confidential had no
   usable secret.
+- `pocketid_client` refuses to import or manage a client registered from a
+  Client ID Metadata Document (`client_type = "cimd"`, whose ID is the
+  document's URL): that document owns its registration. The
+  `pocketid_clients` data source lists such clients. Importing any other ID
+  Pocket ID cannot have now fails with a clear message before a request is
+  sent.

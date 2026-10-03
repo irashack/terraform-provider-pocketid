@@ -108,3 +108,21 @@ func TestAccResourceClient_clientIDValidation(t *testing.T) {
 		},
 	})
 }
+
+// A Client ID Metadata Document client (its ID is the document's URL) is
+// refused at import with a diagnostic that says why.
+func TestAccResourceClient_importCIMDRefused(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:        testAccClientIDConfig("cimd-import", ""),
+				ResourceName:  "pocketid_client.test",
+				ImportState:   true,
+				ImportStateId: "https://app.example.invalid/oauth/client-metadata.json",
+				ExpectError:   regexp.MustCompile("Client ID Metadata Document"),
+			},
+		},
+	})
+}

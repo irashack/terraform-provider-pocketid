@@ -27,6 +27,9 @@ type OIDCClient struct {
 	Credentials                         OIDCClientCredentials `json:"credentials"`
 	AllowedUserGroups                   []UserGroup           `json:"allowedUserGroups,omitempty"`
 	AllowedUserGroupsCount              int64                 `json:"allowedUserGroupsCount,omitempty"`
+	// ClientType is "standard", or "cimd" for a client created from a Client
+	// ID Metadata Document (Pocket ID 2.14.0+); empty on older servers.
+	ClientType string `json:"clientType,omitempty"`
 
 	// Settings the provider does not expose as attributes. They are read so
 	// that an update can send them back unchanged; the update endpoint
@@ -44,6 +47,10 @@ type OIDCClient struct {
 	// client (autoCreateOidcClientSecret, enabled by default).
 	CreatedSecret *CreatedClientSecret `json:"createdSecret,omitempty"`
 }
+
+// ClientTypeCIMD is the client_type of a client registered from a Client ID
+// Metadata Document. Its registration settings are owned by that document.
+const ClientTypeCIMD = "cimd"
 
 // CreatedClientSecret identifies a secret the server generated while creating
 // a client. Only the ID is decoded: the provider revokes that secret. The value

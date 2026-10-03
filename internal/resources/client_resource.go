@@ -549,6 +549,11 @@ func (r *clientResource) Read(ctx context.Context, req resource.ReadRequest, res
 		return
 	}
 
+	if clientResp.ClientType == client.ClientTypeCIMD {
+		resp.Diagnostics.AddError("Cannot manage a Client ID Metadata Document client", errCIMDClient.Error()+". Remove it from state with `terraform state rm`.")
+		return
+	}
+
 	// Update state from API response
 	state.ClientID = types.StringValue(clientResp.ID)
 	state.Name = types.StringValue(clientResp.Name)
@@ -655,6 +660,10 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 			"Error reading OIDC client",
 			"Could not read the current OIDC client before updating; no mutation was attempted: "+err.Error(),
 		)
+		return
+	}
+	if current.ClientType == client.ClientTypeCIMD {
+		resp.Diagnostics.AddError("Cannot manage a Client ID Metadata Document client", errCIMDClient.Error()+". No change was made.")
 		return
 	}
 	var currentIdentities []client.OIDCClientFederatedIdentity
@@ -846,9 +855,22 @@ func (r *clientResource) Delete(ctx context.Context, req resource.DeleteRequest,
 
 // ImportState imports an existing resource into Terraform.
 func (r *clientResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	// Retrieve import ID and set it as the resource ID
+	if strings.Contains(req.ID, "://") {
+		resp.Diagnostics.AddError("Cannot import a Client ID Metadata Document client", errCIMDClient.Error()+". Its ID is the URL of that document.")
+		return
+	}
+	if err := client.ValidateClientID(req.ID); err != nil {
+		resp.Diagnostics.AddError("Invalid import ID", "Import a pocketid_client by its client ID. "+err.Error())
+		return
+	}
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
+
+// errCIMDClient refuses a client registered from a Client ID Metadata
+// Document: Pocket ID refreshes its registration from that document, and an
+// admin update writes only a few local settings of it, so this resource
+// cannot converge on such a client.
+var errCIMDClient = errors.New("this client was registered from a Client ID Metadata Document (client_type \"cimd\"), which owns its registration; pocketid_client does not manage such clients; the pocketid_clients data source lists them")
 
 // urlValidator validates that a string is a valid URL
 type urlValidator struct{}
