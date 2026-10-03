@@ -14,13 +14,13 @@ build: ## Build a development binary in bin/ (does not install it)
 	$(GO) build -o bin/$(BINARY_NAME) .
 
 test: ## Run unit tests with the race detector
-	$(GO) test -race ./internal/...
+	$(GO) test -race . ./internal/...
 
 test-scripts: ## Run the fixture script's unit tests (no container)
 	python3 -m unittest discover -s scripts -p 'test_*.py'
 
 test-coverage: ## Write a local unit-coverage report
-	$(GO) test -race -coverprofile=coverage.out ./internal/...
+	$(GO) test -race -coverprofile=coverage.out . ./internal/...
 
 fmt: ## Format Go source
 	gofmt -w internal main.go

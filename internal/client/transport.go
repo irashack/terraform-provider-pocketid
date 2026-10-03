@@ -36,22 +36,12 @@ func NewClient(baseURL, apiToken string, skipTLSVerify bool, timeout int64) (*Cl
 		return nil, fmt.Errorf("API token is required")
 	}
 
-	// Configure HTTP client with TLS settings
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{
-			// Allow users to skip TLS verification for development environments
-			// This is controlled by provider configuration and defaults to false
-			InsecureSkipVerify: skipTLSVerify, // #nosec G402 - Legitimate use case for development
-		},
-		// One connection per request. On a kept-alive connection Go's
-		// transport reads whatever the server sends while the connection is
-		// idle and writes it to the standard logger ("Unsolicited response
-		// received on idle HTTP channel ..."), outside every redaction here,
-		// so a server could append the key it received after a response. A
-		// connection that is never reused also cannot be the stale one Go
-		// replays a request on, so each attempt is exactly one send.
-		DisableKeepAlives: true,
-	}
+	// See newTransport for how connections are handled.
+	transport := newTransport(&tls.Config{
+		// Allow users to skip TLS verification for development environments
+		// This is controlled by provider configuration and defaults to false
+		InsecureSkipVerify: skipTLSVerify, // #nosec G402 - Legitimate use case for development
+	})
 
 	// A read, retries included, may always use one full configured timeout.
 	retry := defaultRetryPolicy
@@ -232,7 +222,7 @@ func (c *Client) send(ctx context.Context, method, endpoint, contentType string,
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-API-KEY", c.apiToken) // Note: Using X-API-KEY header, not Authorization Bearer
-	// Ask the server to close the connection too (see DisableKeepAlives).
+	// Ask the server to close the connection too (see newTransport).
 	req.Close = true
 
 	// Log request details (excluding sensitive headers)
