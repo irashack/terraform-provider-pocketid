@@ -7,8 +7,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"image/png"
@@ -41,7 +43,20 @@ func testAccAppImagePNG(t *testing.T, shade uint8) []byte {
 	if err := png.Encode(&buf, img); err != nil {
 		t.Fatal(err)
 	}
-	return buf.Bytes()
+	// An eXIf chunk after IHDR (8-byte signature, 25-byte IHDR chunk): a
+	// big-endian TIFF header and one IFD entry, Orientation = 1. Pocket ID
+	// zeroes EXIF data on upload, so it serves different bytes.
+	exif := []byte{'M', 'M', 0, 0x2a, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0}
+	chunk := binary.BigEndian.AppendUint32(nil, uint32(len(exif)))
+	body := append([]byte("eXIf"), exif...)
+	chunk = append(chunk, body...)
+	chunk = binary.BigEndian.AppendUint32(chunk, crc32.ChecksumIEEE(body))
+	encoded := buf.Bytes()
+	withExif := append(append(append([]byte{}, encoded[:33]...), chunk...), encoded[33:]...)
+	if _, err := png.Decode(bytes.NewReader(withExif)); err != nil {
+		t.Fatal(err)
+	}
+	return withExif
 }
 
 func testAccAppImageWriteFile(t *testing.T, path string, content []byte) {
@@ -246,7 +261,23 @@ resource "pocketid_application_image" "email" {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet("pocketid_application_image.favicon", "sha256"),
 					record,
+					func(*terraform.State) error {
+						content, err := os.ReadFile(email)
+						if err != nil {
+							return err
+						}
+						if testAccAppImageHash(emailServed) == testAccAppImageHash(content) {
+							return fmt.Errorf("the e-mail logo was served unchanged: the fixture's metadata was not stripped")
+						}
+						return nil
+					},
 				),
+			},
+			{
+				// Served bytes differ from the file, yet a refresh plans
+				// nothing.
+				Config:   config,
+				PlanOnly: true,
 			},
 		},
 	})
@@ -305,4 +336,60 @@ func TestAccAPI_applicationImageDefaults(t *testing.T) {
 			t.Fatalf("%s with default=false: %v", kind, err)
 		}
 	}
+}
+
+// Pocket ID strips the EXIF data of a PNG it receives, so it serves other
+// bytes than the file's. The plan stays empty across refreshes, and the
+// baseline recorded after the upload (in private state) survives them: an
+// image replaced outside Terraform afterwards is still found and uploaded
+// again.
+func TestAccResourceApplicationImage_metadataStripped(t *testing.T) {
+	resourceName := "pocketid_application_image.test"
+	source := filepath.Join(t.TempDir(), "avatar.png")
+	content := testAccAppImagePNG(t, byte(acctest.RandIntRange(0, 255)))
+	testAccAppImageWriteFile(t, source, content)
+	c, err := testClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var served []byte
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccAppImageServed(client.ApplicationImageDefaultProfilePicture, nil),
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAppImageConfig("default_profile_picture", source),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceName, "sha256", testAccAppImageHash(content)),
+					func(*terraform.State) error {
+						var err error
+						if served, err = c.GetApplicationImage(context.Background(), client.ApplicationImageDefaultProfilePicture); err != nil {
+							return err
+						}
+						if testAccAppImageHash(served) == testAccAppImageHash(content) {
+							return fmt.Errorf("the uploaded PNG was served unchanged: the fixture's metadata was not stripped")
+						}
+						return nil
+					},
+				),
+			},
+			{Config: testAccAppImageConfig("default_profile_picture", source), PlanOnly: true},
+			{Config: testAccAppImageConfig("default_profile_picture", source), PlanOnly: true},
+			{
+				// Replaced outside Terraform: found against the recorded
+				// baseline, and uploaded again.
+				PreConfig: func() {
+					if err := c.UploadApplicationImage(context.Background(), client.ApplicationImageDefaultProfilePicture, "svg", testAccAppImageSVG("outside")); err != nil {
+						t.Fatal(err)
+					}
+				},
+				Config: testAccAppImageConfig("default_profile_picture", source),
+				Check: func(s *terraform.State) error {
+					return testAccAppImageServed(client.ApplicationImageDefaultProfilePicture, served)(s)
+				},
+			},
+			{Config: testAccAppImageConfig("default_profile_picture", source), PlanOnly: true},
+		},
+	})
 }

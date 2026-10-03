@@ -149,11 +149,18 @@ data "pocketid_application_config" "test" {
             for path in root.glob("terraform.tfstate*"):
                 body = json.loads(path.read_bytes())
                 assert "encrypted_data" in body and "resources" not in body, "plaintext state/backup"
+    # The shape of the homelab's configuration: SMTP with the plain password,
+    # plus the two account settings it manages.
     smtp = {"smtp_host": "smtp.fastmail.com", "smtp_port": "587", "smtp_tls": "starttls",
             "smtp_skip_cert_verify": "false", "smtp_from": "fixture@example.invalid",
-            "smtp_user": "fixture@example.invalid", "smtp_password": secrets.token_urlsafe(24)}
+            "smtp_user": "fixture@example.invalid", "smtp_password": secrets.token_urlsafe(24),
+            "allow_own_account_edit": "false", "email_login_notification_enabled": "true"}
+    keys = {"smtp_host": "smtpHost", "smtp_port": "smtpPort", "smtp_tls": "smtpTls",
+            "smtp_skip_cert_verify": "smtpSkipCertVerify", "smtp_from": "smtpFrom", "smtp_user": "smtpUser",
+            "smtp_password": "smtpPassword", "allow_own_account_edit": "allowOwnAccountEdit",
+            "email_login_notification_enabled": "emailLoginNotificationEnabled"}
     expected = dict(original)
-    expected.update(dict(zip(("smtpHost", "smtpPort", "smtpTls", "smtpSkipCertVerify", "smtpFrom", "smtpUser", "smtpPassword"), smtp.values())))
+    expected.update({keys[attr]: value for attr, value in smtp.items()})
     config({})
     run("init", "-input=false")
     run("import", "-input=false", "pocketid_application_config.test", "application-configuration")
