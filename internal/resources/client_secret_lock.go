@@ -31,10 +31,13 @@ var (
 //   - pocketid_client_secret: Create (the list before, the POST, the list
 //     after an uncertain result) and Delete (the DELETE and its confirming
 //     list);
-//   - pocketid_client: generating its own secret on create, and revoking the
-//     secret Pocket ID 2.17 creates with a client (the auto-created-secret
-//     cleanup, with its confirming list), and any later change it makes to
-//     the client's secrets.
+//   - pocketid_client: on create, from revoking the secret Pocket ID 2.17
+//     creates with a client (with its confirming list) to generating its own;
+//     on update, the reads that decide a secret change (a pending
+//     revocation's check, an unresolved generation's check, identifying the
+//     secret to revoke) and, separately, the generation or revocation itself.
+//     The client's own PUT and its group write run between those two and
+//     hold no lock.
 //
 // The lock is per client ID and never held across clients, so it cannot
 // deadlock between resources; callers must not take it twice for the same

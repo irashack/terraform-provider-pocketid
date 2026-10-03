@@ -540,10 +540,18 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 	// without Terraform knowing it exists. Revoking before generating means
 	// the client never holds two valid secrets, and a failure here leaves the
 	// same outcome as a failed secret generation.
+	//
+	// From that revocation (with its confirming list) to the generation of
+	// this resource's own secret, no other secret change of this process may
+	// touch the client (client_secret_lock.go): the lock is taken as soon as
+	// the client's ID exists, and released before the group update and any
+	// cleanup, which touch no secret.
+	unlock := lockClientSecrets(clientResp.ID)
 	plan.ClientSecret = types.StringNull()
 	plan.ClientSecretID = types.StringNull()
 	if clientResp.CreatedSecret != nil {
 		if err := r.revokeServerCreatedSecret(ctx, clientResp.ID, clientResp.CreatedSecret.ID); err != nil {
+			unlock()
 			r.failedCreate(ctx, &plan, err, resp)
 
 			return
@@ -556,6 +564,7 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 		tflog.Debug(ctx, "Generating client secret for non-public client")
 		secret, err := r.client.GenerateClientSecret(ctx, clientResp.ID, nil)
 		if err != nil {
+			unlock()
 			r.failedCreate(ctx, &plan, err, resp)
 
 			return
@@ -563,6 +572,7 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 		plan.ClientSecret = types.StringValue(secret.Value)
 		plan.ClientSecretID = optionalString(secret.ID)
 	}
+	unlock()
 
 	// The client was created with its restriction already in place, so it
 	// never admits more users than planned; its groups follow. A new client
@@ -799,37 +809,16 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 			resp.Diagnostics.Append(setPrivateFlag(ctx, resp.Private, pendingRevocationKey, pending)...)
 		}
 	}
-	// A pending revocation that this plan cancels (the configuration asks for
-	// the secret again) keeps the secret only if it still exists: the
-	// revocation may have gone through although its answer was lost.
-	if pendingRevocation && secretAction == secretKeep && holdsSecret(state) {
-		if present, err := r.heldSecretPresent(ctx, state); err != nil || !present {
-			detail := "it has been revoked"
-			if err != nil {
-				detail = "whether it still exists could not be established (" + err.Error() + ")"
-			}
-			resp.Diagnostics.AddError("Client secret in state may no longer exist",
-				"An earlier apply could not confirm the revocation of the secret in state, and "+detail+". No change was made. "+
-					"Plan again with a refresh (without -refresh=false): a refresh that finds the secret gone removes it from state, and the plan then generates a new one.")
-			return
-		}
-	}
-	// A generation after one whose result was lost goes ahead only when the
-	// client has no secret this resource cannot account for.
-	if marker, uncertain := readUncertainGeneration(ctx, req.Private); uncertain && secretAction == secretGenerate {
-		if err := r.checkUncertainGeneration(ctx, plan.ID.ValueString(), marker); err != nil {
-			resp.Diagnostics.AddError("Cannot create the client secret yet", err.Error()+". No change was made.")
-			return
-		}
-	}
-	var revokeID string
-	revokeGone := false
-	if secretAction == secretRevoke {
-		revokeID, revokeGone, err = r.heldSecretID(ctx, plan.ID.ValueString(), state)
-		if err != nil {
-			resp.Diagnostics.AddError("Cannot revoke the client secret", err.Error()+". No change was made.")
-			return
-		}
+	// The checks below read the client's secrets and interpret them, so no
+	// other secret change of this process may touch the client meanwhile
+	// (client_secret_lock.go). The lock is released before the group and
+	// client updates, which touch no secret, and taken again for the secret
+	// change itself; neither holder takes it again.
+	unlockChecks := lockClientSecrets(plan.ID.ValueString())
+	revokeID, revokeGone, checksOK := r.updateSecretChecks(ctx, state, plan, pendingRevocation, secretAction, req.Private, resp)
+	unlockChecks()
+	if !checksOK {
+		return
 	}
 
 	preserveUnmanagedClientFields(updateReq, current)
@@ -918,7 +907,9 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
+	unlockAction := lockClientSecrets(plan.ID.ValueString())
 	outcome, err := r.applySecretAction(ctx, secretAction, revokeID, revokeGone, state, &plan)
+	unlockAction()
 	if err != nil {
 		resp.Diagnostics.AddError("Error updating the client secret", "The client itself was updated. "+err.Error())
 	}
@@ -930,6 +921,45 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 	// Set the state
 	diags = resp.State.Set(ctx, &plan)
 	resp.Diagnostics.Append(diags...)
+}
+
+// updateSecretChecks runs Update's checks of the client's secrets before
+// anything changes, with the caller holding lockClientSecrets: a pending
+// revocation that this plan cancels keeps the secret only if it still
+// exists (the revocation may have gone through although its answer was
+// lost); a generation after one whose result was lost goes ahead only when
+// the client has no secret this resource cannot account for; and a secret to
+// revoke is identified, so that it can be told apart from the client's other
+// secrets. It reports false, with an error diagnostic, when Update must stop
+// before any change.
+func (r *clientResource) updateSecretChecks(ctx context.Context, state, plan clientResourceModel, pendingRevocation bool, action secretAction, private privateGetter, resp *resource.UpdateResponse) (revokeID string, revokeGone, ok bool) {
+	if pendingRevocation && action == secretKeep && holdsSecret(state) {
+		if present, err := r.heldSecretPresent(ctx, state); err != nil || !present {
+			detail := "it has been revoked"
+			if err != nil {
+				detail = "whether it still exists could not be established (" + err.Error() + ")"
+			}
+			resp.Diagnostics.AddError("Client secret in state may no longer exist",
+				"An earlier apply could not confirm the revocation of the secret in state, and "+detail+". No change was made. "+
+					"Plan again with a refresh (without -refresh=false): a refresh that finds the secret gone removes it from state, and the plan then generates a new one.")
+			return "", false, false
+		}
+	}
+	if marker, uncertain := readUncertainGeneration(ctx, private); uncertain && action == secretGenerate {
+		if err := r.checkUncertainGeneration(ctx, plan.ID.ValueString(), marker); err != nil {
+			resp.Diagnostics.AddError("Cannot create the client secret yet", err.Error()+". No change was made.")
+			return "", false, false
+		}
+	}
+	if action == secretRevoke {
+		id, gone, err := r.heldSecretID(ctx, plan.ID.ValueString(), state)
+		if err != nil {
+			resp.Diagnostics.AddError("Cannot revoke the client secret", err.Error()+". No change was made.")
+			return "", false, false
+		}
+		return id, gone, true
+	}
+	return "", false, true
 }
 
 // ModifyPlan plans the attributes that depend on several others.

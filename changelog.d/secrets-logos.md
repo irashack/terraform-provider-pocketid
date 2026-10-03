@@ -17,6 +17,10 @@
   `pocketid_client` reads when it revokes the secret Pocket ID 2.17 creates
   with a client: if revoking that secret cannot be confirmed because the list
   is unusable, the client's own secret is not generated beside it.
+  Within one apply, `pocketid_client_secret` and `pocketid_client` take turns
+  on a client's secrets, so an uncertain create never names the other
+  resource's secret as its own; another apply or a change in Pocket ID's
+  interface at the same moment is not covered.
 - New resource `pocketid_client_logo`: the light or dark logo of an OIDC
   client (`variant = "light"` or `"dark"`), uploaded from a local file
   (`source`, with a computed `sha256`). The file is uploaded again when its
