@@ -35,7 +35,7 @@ func (c *Client) CreateUserGroup(ctx context.Context, group *UserGroupCreateRequ
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("error unmarshaling response: %w", err)
 	}
-	if err := ValidateUUID("user group", result.ID); err != nil {
+	if err := checkCreatedID("user group", "", result.ID); err != nil {
 		return nil, fmt.Errorf("user group creation returned no usable ID, so no follow-up request uses it; the user group may exist: inspect before recovery: %w", err)
 	}
 

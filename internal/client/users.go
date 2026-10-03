@@ -54,7 +54,8 @@ func (c *Client) CreateUser(ctx context.Context, user *UserCreateRequest) (*User
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("error unmarshaling response: %w", err)
 	}
-	if err := ValidateUUID("user", result.ID); err != nil {
+	// The request carries no ID yet, so the server chose it.
+	if err := checkCreatedID("user", "", result.ID); err != nil {
 		return nil, fmt.Errorf("user creation returned no usable ID, so no follow-up request uses it; the user may exist: inspect before recovery: %w", err)
 	}
 

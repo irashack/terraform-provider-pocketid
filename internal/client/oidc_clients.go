@@ -123,7 +123,11 @@ func (c *Client) CreateClient(ctx context.Context, createReq *OIDCClientCreateRe
 	if result.ID == "" {
 		return nil, fmt.Errorf("client creation returned no ID; inspect clients before recovery")
 	}
-	if err := ValidateClientID(result.ID); err != nil {
+	requested := ""
+	if createReq.ClientID != nil {
+		requested = *createReq.ClientID
+	}
+	if err := checkCreatedID("OIDC client", requested, result.ID); err != nil {
 		return nil, fmt.Errorf("client creation returned an unusable client ID, so no follow-up request uses it; the client may exist: inspect clients before recovery: %w", err)
 	}
 	// A secret ID that is not a UUID cannot be addressed for revocation, so

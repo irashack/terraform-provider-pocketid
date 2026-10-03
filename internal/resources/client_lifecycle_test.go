@@ -22,7 +22,7 @@ import (
 const clientNotFoundBody = `{"error":"OIDC client not found","code":"not_found","details":{"resource":"OIDC client"},"request_id":"r"}`
 
 func TestClientPartialCreation(t *testing.T) {
-	const existing = `{"id":"new-fixture"}`
+	const existing = `{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc"}`
 	for _, tc := range []struct {
 		name                                   string
 		secretStatus, deleteStatus, readStatus int
@@ -51,15 +51,15 @@ func TestClientPartialCreation(t *testing.T) {
 				case "GET /api/version/current":
 					_, _ = fmt.Fprint(w, `{"currentVersion":"2.14.0"}`)
 				case "POST /api/oidc/clients":
-					_, _ = fmt.Fprint(w, `{"id":"new-fixture","name":"fixture","callbackURLs":["https://example.invalid/callback"],"pkceEnabled":true}`)
-				case "POST /api/oidc/clients/new-fixture/secrets":
+					_, _ = fmt.Fprint(w, `{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","name":"fixture","callbackURLs":["https://example.invalid/callback"],"pkceEnabled":true}`)
+				case "POST /api/oidc/clients/cccccccc-cccc-4ccc-8ccc-cccccccccccc/secrets":
 					posts++
 					w.WriteHeader(tc.secretStatus)
 					_, _ = fmt.Fprint(w, `{"error":"synthetic-secret"}`)
-				case "DELETE /api/oidc/clients/new-fixture":
+				case "DELETE /api/oidc/clients/cccccccc-cccc-4ccc-8ccc-cccccccccccc":
 					deletes++
 					w.WriteHeader(tc.deleteStatus)
-				case "GET /api/oidc/clients/new-fixture":
+				case "GET /api/oidc/clients/cccccccc-cccc-4ccc-8ccc-cccccccccccc":
 					reads++
 					w.WriteHeader(tc.readStatus)
 					_, _ = fmt.Fprint(w, tc.readBody)
@@ -91,7 +91,7 @@ func TestClientPartialCreation(t *testing.T) {
 			if tc.retained {
 				var state clientResourceModel
 				require.False(t, response.State.Get(ctx, &state).HasError())
-				require.Equal(t, "new-fixture", state.ID.ValueString())
+				require.Equal(t, "cccccccc-cccc-4ccc-8ccc-cccccccccccc", state.ID.ValueString())
 				require.True(t, state.ClientSecret.IsNull())
 				require.Greater(t, reads, 0)
 			} else {
@@ -139,7 +139,7 @@ func TestClientCreateGuards(t *testing.T) {
 						w.WriteHeader(503)
 						return
 					}
-					_, _ = fmt.Fprint(w, `{"id":"new-fixture","name":"fixture","isPublic":true,"callbackURLs":["https://example.invalid/callback"],"pkceEnabled":true}`)
+					_, _ = fmt.Fprint(w, `{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","name":"fixture","isPublic":true,"callbackURLs":["https://example.invalid/callback"],"pkceEnabled":true}`)
 				case req.Method == "POST":
 					secrets++
 					w.WriteHeader(400)
@@ -191,7 +191,7 @@ func TestClientCreateGuards(t *testing.T) {
 // provider revokes it before generating its own, so the client ends with one
 // secret, and a failed revoke is handled like a failed secret generation.
 func TestClientCreateRevokesServerCreatedSecret(t *testing.T) {
-	const created = `{"id":"new-fixture","name":"fixture","callbackURLs":["https://example.invalid/callback"],"pkceEnabled":true%s,"createdSecret":{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","prefix":"synt","secret":"synthetic-auto-secret"}}`
+	const created = `{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","name":"fixture","callbackURLs":["https://example.invalid/callback"],"pkceEnabled":true%s,"createdSecret":{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","prefix":"synt","secret":"synthetic-auto-secret"}}`
 	for _, tc := range []struct {
 		name           string
 		public         bool
@@ -243,32 +243,32 @@ func TestClientCreateRevokesServerCreatedSecret(t *testing.T) {
 					}
 					w.WriteHeader(http.StatusCreated)
 					_, _ = fmt.Fprint(w, body)
-				case "DELETE /api/oidc/clients/new-fixture/secrets/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa":
+				case "DELETE /api/oidc/clients/cccccccc-cccc-4ccc-8ccc-cccccccccccc/secrets/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa":
 					revokes++
 					order = append(order, "revoke")
 					w.WriteHeader(tc.revokeStatus)
-				case "GET /api/oidc/clients/new-fixture/secrets":
+				case "GET /api/oidc/clients/cccccccc-cccc-4ccc-8ccc-cccccccccccc/secrets":
 					w.WriteHeader(tc.listStatus)
 					_, _ = fmt.Fprint(w, tc.listBody)
-				case "POST /api/oidc/clients/new-fixture/secrets":
+				case "POST /api/oidc/clients/cccccccc-cccc-4ccc-8ccc-cccccccccccc/secrets":
 					secretPosts++
 					order = append(order, "generate")
 					w.WriteHeader(http.StatusCreated)
 					_, _ = fmt.Fprint(w, `{"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","secret":"synthetic-managed-secret"}`)
-				case "DELETE /api/oidc/clients/new-fixture":
+				case "DELETE /api/oidc/clients/cccccccc-cccc-4ccc-8ccc-cccccccccccc":
 					deletes++
 					if tc.cleanupStatus != 0 {
 						w.WriteHeader(tc.cleanupStatus)
 						return
 					}
 					w.WriteHeader(http.StatusNoContent)
-				case "GET /api/oidc/clients/new-fixture":
+				case "GET /api/oidc/clients/cccccccc-cccc-4ccc-8ccc-cccccccccccc":
 					if tc.readStatus != 0 {
 						w.WriteHeader(tc.readStatus)
 						_, _ = fmt.Fprint(w, tc.readBody)
 						return
 					}
-					_, _ = fmt.Fprint(w, `{"id":"new-fixture"}`)
+					_, _ = fmt.Fprint(w, `{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc"}`)
 				default:
 					t.Errorf("unexpected method/path %s %s", r.Method, r.URL.Path)
 					w.WriteHeader(400)
@@ -314,7 +314,7 @@ func TestClientCreateRevokesServerCreatedSecret(t *testing.T) {
 			case !tc.wantError:
 				var state clientResourceModel
 				require.False(t, response.State.Get(ctx, &state).HasError())
-				require.Equal(t, "new-fixture", state.ID.ValueString())
+				require.Equal(t, "cccccccc-cccc-4ccc-8ccc-cccccccccccc", state.ID.ValueString())
 				if tc.public {
 					require.True(t, state.ClientSecret.IsNull())
 				} else {
@@ -323,7 +323,7 @@ func TestClientCreateRevokesServerCreatedSecret(t *testing.T) {
 			case tc.retained:
 				var state clientResourceModel
 				require.False(t, response.State.Get(ctx, &state).HasError())
-				require.Equal(t, "new-fixture", state.ID.ValueString())
+				require.Equal(t, "cccccccc-cccc-4ccc-8ccc-cccccccccccc", state.ID.ValueString())
 				require.True(t, state.ClientSecret.IsNull())
 			default:
 				require.True(t, response.State.Raw.IsNull())
@@ -356,16 +356,16 @@ func TestClientCreateGroupFailureCleanupUnconfirmed(t *testing.T) {
 					_, _ = fmt.Fprint(w, `{"currentVersion":"2.16.0"}`)
 				case "POST /api/oidc/clients":
 					w.WriteHeader(http.StatusCreated)
-					_, _ = fmt.Fprint(w, `{"id":"new-fixture","name":"fixture","callbackURLs":["https://example.invalid/callback"],"pkceEnabled":true}`)
-				case "POST /api/oidc/clients/new-fixture/secrets":
+					_, _ = fmt.Fprint(w, `{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","name":"fixture","callbackURLs":["https://example.invalid/callback"],"pkceEnabled":true}`)
+				case "POST /api/oidc/clients/cccccccc-cccc-4ccc-8ccc-cccccccccccc/secrets":
 					w.WriteHeader(http.StatusCreated)
 					_, _ = fmt.Fprint(w, `{"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","secret":"synthetic-managed-secret"}`)
-				case "PUT /api/oidc/clients/new-fixture/allowed-user-groups":
+				case "PUT /api/oidc/clients/cccccccc-cccc-4ccc-8ccc-cccccccccccc/allowed-user-groups":
 					w.WriteHeader(http.StatusBadRequest)
-				case "DELETE /api/oidc/clients/new-fixture":
+				case "DELETE /api/oidc/clients/cccccccc-cccc-4ccc-8ccc-cccccccccccc":
 					deletes++
 					w.WriteHeader(http.StatusServiceUnavailable)
-				case "GET /api/oidc/clients/new-fixture":
+				case "GET /api/oidc/clients/cccccccc-cccc-4ccc-8ccc-cccccccccccc":
 					w.WriteHeader(http.StatusNotFound)
 					_, _ = fmt.Fprint(w, tc.readBody)
 				default:
@@ -398,7 +398,7 @@ func TestClientCreateGroupFailureCleanupUnconfirmed(t *testing.T) {
 			require.Contains(t, last.Detail(), "could not be confirmed")
 			var state clientResourceModel
 			require.False(t, response.State.Get(ctx, &state).HasError())
-			require.Equal(t, "new-fixture", state.ID.ValueString())
+			require.Equal(t, "cccccccc-cccc-4ccc-8ccc-cccccccccccc", state.ID.ValueString())
 			require.Equal(t, "synthetic-managed-secret", state.ClientSecret.ValueString(), "the generated secret is kept, not orphaned")
 		})
 	}

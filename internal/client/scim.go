@@ -44,7 +44,7 @@ func (c *Client) CreateScimServiceProvider(ctx context.Context, req *ScimService
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("error unmarshaling response: %w", err)
 	}
-	if err := ValidateUUID("SCIM service provider", result.ID); err != nil {
+	if err := checkCreatedID("SCIM service provider", "", result.ID); err != nil {
 		return nil, fmt.Errorf("SCIM service provider creation returned no usable ID, so no follow-up request uses it; the SCIM service provider may exist: inspect before recovery: %w", err)
 	}
 

@@ -116,7 +116,7 @@ func (s *backchannelServer) start(t *testing.T) *client.Client {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		respond := func(url string) {
-			body := map[string]any{"id": "c1", "name": "fixture", "callbackURLs": []string{"https://example.invalid/callback"}, "pkceEnabled": true}
+			body := map[string]any{"id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd", "name": "fixture", "callbackURLs": []string{"https://example.invalid/callback"}, "pkceEnabled": true}
 			if url != "" {
 				body["backchannelLogoutURL"] = url
 			}
@@ -126,9 +126,9 @@ func (s *backchannelServer) start(t *testing.T) *client.Client {
 		case "GET /api/version/current":
 			s.versions++
 			_, _ = fmt.Fprintf(w, `{"currentVersion":%q}`, s.version)
-		case "GET /api/oidc/clients/c1":
+		case "GET /api/oidc/clients/dddddddd-dddd-4ddd-8ddd-dddddddddddd":
 			respond(s.current)
-		case "POST /api/oidc/clients", "PUT /api/oidc/clients/c1":
+		case "POST /api/oidc/clients", "PUT /api/oidc/clients/dddddddd-dddd-4ddd-8ddd-dddddddddddd":
 			var payload map[string]any
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
 			s.writes = append(s.writes, payload)
@@ -231,7 +231,7 @@ func TestClientUpdateBackchannelLogoutURL(t *testing.T) {
 			r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
 
 			prior := publicClientModel()
-			prior.ID = types.StringValue("c1")
+			prior.ID = types.StringValue("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
 			prior.HasLogo = types.BoolValue(false)
 			prior.BackchannelLogoutURL = tc.prior
 			planned := prior
@@ -282,7 +282,7 @@ func TestClientReadBackchannelLogoutURL(t *testing.T) {
 			schemaResp := resource.SchemaResponse{}
 			r.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
 			prior := publicClientModel()
-			prior.ID = types.StringValue("c1")
+			prior.ID = types.StringValue("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
 			prior.HasLogo = types.BoolValue(false)
 			// A stale value that Read must replace in both cases.
 			prior.BackchannelLogoutURL = types.StringValue("https://stale.example/logout")

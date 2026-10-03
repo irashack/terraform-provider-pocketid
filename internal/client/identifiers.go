@@ -65,3 +65,24 @@ func clientIDSegment(id string) (string, error) {
 	}
 	return url.PathEscape(id), nil
 }
+
+// checkCreatedID decides whether the ID a create response returned may be
+// used. requested is the ID the request supplied, empty when the server
+// chooses it. An ID the server chose must be a UUID: Pocket ID generates one
+// for every object it creates (model.Base.BeforeCreate), OIDC clients
+// included. An ID the caller supplied must come back exactly. Anything else
+// is refused, with an error that never includes the returned value: a server
+// could put text it received (the API key) there, and an accepted ID is
+// logged and put into URLs.
+func checkCreatedID(kind, requested, returned string) error {
+	if requested != "" {
+		if returned != requested {
+			return fmt.Errorf("%w: the %s ID in the create response is not the one requested", ErrInvalidIdentifier, kind)
+		}
+		return nil
+	}
+	if !uuidPattern.MatchString(returned) {
+		return fmt.Errorf("%w: the %s ID in the create response is not a UUID", ErrInvalidIdentifier, kind)
+	}
+	return nil
+}

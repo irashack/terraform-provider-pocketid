@@ -141,3 +141,70 @@ func TestClient_CreateRefusesUnusableReturnedID(t *testing.T) {
 		server.Close()
 	}
 }
+
+// A create response's ID is used only if it is what the server could
+// legitimately have returned: a UUID when the server chose it, exactly the
+// requested ID when the caller chose it. A key-shaped value (Pocket ID API
+// keys are 32 alphanumerics, which would pass the client-ID rule) is refused
+// without being echoed.
+func TestClient_CreateChecksReturnedID(t *testing.T) {
+	const reflected = "Zq3vR8kLm2Np7Xw4Ys9Tb6Hc1Jd5Fg0A"
+	respond := func(id string) (*client.Client, func()) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"` + id + `","name":"n","username":"u","friendlyName":"f","endpoint":"https://scim.example.com"}`))
+		}))
+		c, err := client.NewClient(server.URL, "test-token", false, 30)
+		require.NoError(t, err)
+		return c, server.Close
+	}
+	ctx := context.Background()
+	creates := map[string]func(c *client.Client) error{
+		"client": func(c *client.Client) error {
+			_, err := c.CreateClient(ctx, &client.OIDCClientCreateRequest{Name: "n"})
+			return err
+		},
+		"user": func(c *client.Client) error {
+			_, err := c.CreateUser(ctx, &client.UserCreateRequest{Username: "u"})
+			return err
+		},
+		"group": func(c *client.Client) error {
+			_, err := c.CreateUserGroup(ctx, &client.UserGroupCreateRequest{Name: "g"})
+			return err
+		},
+		"SCIM": func(c *client.Client) error {
+			_, err := c.CreateScimServiceProvider(ctx, &client.ScimServiceProviderCreateRequest{})
+			return err
+		},
+	}
+
+	t.Run("server-chosen ID", func(t *testing.T) {
+		for name, create := range creates {
+			c, done := respond(reflected)
+			err := create(c)
+			done()
+			require.ErrorIs(t, err, client.ErrInvalidIdentifier, name)
+			assert.NotContains(t, err.Error(), reflected, name)
+
+			c, done = respond(validUUID)
+			assert.NoError(t, create(c), name)
+			done()
+		}
+	})
+	t.Run("caller-chosen client ID", func(t *testing.T) {
+		requested := "my-app"
+		for returned, ok := range map[string]bool{"my-app": true, "other-app": false, reflected: false, validUUID: false, "MY-APP": false} {
+			c, done := respond(returned)
+			created, err := c.CreateClient(ctx, &client.OIDCClientCreateRequest{Name: "n", ClientID: &requested})
+			done()
+			if ok {
+				require.NoError(t, err)
+				assert.Equal(t, requested, created.ID)
+				continue
+			}
+			require.ErrorIs(t, err, client.ErrInvalidIdentifier, returned)
+			assert.NotContains(t, err.Error(), returned)
+		}
+	})
+}

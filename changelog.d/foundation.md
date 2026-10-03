@@ -23,7 +23,9 @@
   (2 to 128 letters, digits, `.`, `_` or `-`). Any other value, for example a
   mistyped import ID, is refused with an error before a request is sent.
   Clients created from a Client ID Metadata Document (whose ID is a URL)
-  cannot be looked up by ID.
+  cannot be looked up by ID. The ID Pocket ID returns when it creates an
+  object must be a UUID, or exactly the `client_id` you set; any other value
+  is reported as an error (the object may exist) and never used or logged.
 - Lists of users, groups and clients are read in creation order. If the pages
   do not add up because the list changed while it was being read (an object
   appears twice, or the count differs from Pocket ID's total), it is read once
