@@ -9,11 +9,22 @@ description: |-
 
 {{ .Description | plainmarkdown | trimspace }}
 
-This provider is maintained independently of its upstream origin (see
-[UPSTREAM.md](https://github.com/irashack/terraform-provider-pocketid/blob/main-maintenance/UPSTREAM.md))
-and is not published to a provider registry; follow the
-[filesystem mirror installation guide](https://github.com/irashack/terraform-provider-pocketid/blob/main-maintenance/INSTALL.md)
-before initializing the example.
+This provider is an independent project: it began as a fork of
+[Trozz/terraform-provider-pocketid](https://github.com/Trozz/terraform-provider-pocketid)
+and is maintained on its own, with its own version numbers (see
+[UPSTREAM.md](https://github.com/irashack/terraform-provider-pocketid/blob/main-maintenance/UPSTREAM.md)).
+Release 3.0.0 supports Pocket ID 2.14.0 through 2.17.0. It is not published to a
+provider registry: install a verified archive from its
+[GitHub releases](https://github.com/irashack/terraform-provider-pocketid/releases)
+through a native filesystem mirror under the source address
+`registry.terraform.io/irashack/pocketid`, as the
+[installation guide](https://github.com/irashack/terraform-provider-pocketid/blob/main-maintenance/INSTALL.md)
+describes, before initializing the example.
+
+3.0.0 has deliberate breaking changes from 2.4.x, each marked **Breaking** in the
+[changelog](https://github.com/irashack/terraform-provider-pocketid/blob/main-maintenance/CHANGELOG.md).
+The [README](https://github.com/irashack/terraform-provider-pocketid/blob/main-maintenance/README.md)
+lists every resource and data source and how this provider differs from upstream.
 
 ## Example Usage
 
