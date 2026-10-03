@@ -11,8 +11,10 @@ description: |-
 Interact with Pocket-ID OIDC provider. Pocket-ID is a simple and easy-to-use OIDC provider
 that allows users to authenticate with their passkeys to your services.
 
-This is the independent maintenance fork. Registry publication is pending; follow
-the [filesystem mirror installation guide](https://github.com/irashack/terraform-provider-pocketid/blob/main-maintenance/INSTALL.md)
+This provider is maintained independently of its upstream origin (see
+[UPSTREAM.md](https://github.com/irashack/terraform-provider-pocketid/blob/main-maintenance/UPSTREAM.md))
+and is not published to a provider registry; follow the
+[filesystem mirror installation guide](https://github.com/irashack/terraform-provider-pocketid/blob/main-maintenance/INSTALL.md)
 before initializing the example.
 
 ## Example Usage
@@ -22,7 +24,7 @@ terraform {
   required_providers {
     pocketid = {
       source  = "registry.terraform.io/irashack/pocketid"
-      version = "2.3.1"
+      version = "3.0.0"
     }
   }
 }
