@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -88,11 +89,27 @@ func testAccClientLogoServer(clientID *string, wantLight, wantDark bool, darkCon
 	}
 }
 
+// testAccClientLogoServedType checks the media type Pocket ID serves a logo
+// with (the logo endpoint is public; the body is not read).
+func testAccClientLogoServedType(clientID *string, light bool, want string) resource.TestCheckFunc {
+	return func(*terraform.State) error {
+		response, err := http.Get(fmt.Sprintf("%s/api/oidc/clients/%s/logo?light=%t&nocache=%s", os.Getenv("POCKETID_BASE_URL"), *clientID, light, acctest.RandString(12)))
+		if err != nil {
+			return fmt.Errorf("reading the logo failed")
+		}
+		_ = response.Body.Close()
+		if got := response.Header.Get("Content-Type"); response.StatusCode != http.StatusOK || got != want {
+			return fmt.Errorf("logo served with HTTP %d and type %q, want %q", response.StatusCode, got, want)
+		}
+		return nil
+	}
+}
+
 // Upload, change the file, detect a logo replaced and one removed outside
 // Terraform, import, and remove.
 func TestAccResourceClientLogo_lifecycle(t *testing.T) {
 	dir := t.TempDir()
-	lightFile, darkFile := filepath.Join(dir, "light.png"), filepath.Join(dir, "dark.svg")
+	lightFile, darkFile, darkPNG := filepath.Join(dir, "light.png"), filepath.Join(dir, "dark.svg"), filepath.Join(dir, "dark.png")
 	lightV1, lightV2 := testAccClientLogoPNG(t, 20), testAccClientLogoPNG(t, 200)
 	dark := testAccClientLogoSVG("dark v1")
 	testAccClientLogoWrite(t, lightFile, lightV1)
@@ -169,6 +186,23 @@ func TestAccResourceClientLogo_lifecycle(t *testing.T) {
 					},
 				},
 				Check: testAccClientLogoServer(&clientID, true, true, darkNow),
+			},
+			{
+				// The same bytes under another extension are uploaded again:
+				// Pocket ID serves a logo with the type of the uploaded name.
+				PreConfig: func() { testAccClientLogoWrite(t, darkPNG, dark) },
+				Config:    testAccClientLogoConfig(name, lightFile, darkPNG),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("pocketid_client_logo.dark", plancheck.ResourceActionUpdate),
+						plancheck.ExpectResourceAction("pocketid_client_logo.light", plancheck.ResourceActionNoop),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("pocketid_client_logo.dark", "sha256", testAccClientLogoHash(dark)),
+					testAccClientLogoServer(&clientID, true, true, darkNow),
+					testAccClientLogoServedType(&clientID, false, "image/png"),
+				),
 			},
 			{
 				ResourceName:            "pocketid_client_logo.light",

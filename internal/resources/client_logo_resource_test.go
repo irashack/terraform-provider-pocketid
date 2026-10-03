@@ -419,3 +419,33 @@ func TestClientLogoResource_ReadsBypassCaches(t *testing.T) {
 		})
 	}
 }
+
+// The same bytes under another file type are another logo for Pocket ID,
+// which stores and serves it with the type of the uploaded file name.
+func TestClientLogoNeedsUpload(t *testing.T) {
+	model := func(source, sum string) *clientLogoResourceModel {
+		m := &clientLogoResourceModel{Source: types.StringValue(source), SHA256: types.StringValue(sum)}
+		if source == "" {
+			m.Source = types.StringNull()
+		}
+		if sum == "" {
+			m.SHA256 = types.StringUnknown()
+		}
+		return m
+	}
+	for name, tc := range map[string]struct {
+		state, plan *clientLogoResourceModel
+		upload      bool
+	}{
+		"nothing changed":               {model("logos/a.png", "h1"), model("logos/a.png", "h1"), false},
+		"content changed":               {model("logos/a.png", "h1"), model("logos/a.png", "h2"), true},
+		"content not known yet":         {model("logos/a.png", "h1"), model("logos/a.png", ""), true},
+		"same bytes, other extension":   {model("logos/a.png", "h1"), model("logos/a.jpg", "h1"), true},
+		"same bytes, jpg to jpeg":       {model("logos/a.jpg", "h1"), model("logos/a.jpeg", "h1"), true},
+		"same bytes, other path":        {model("logos/a.png", "h1"), model("other/b.png", "h1"), false},
+		"same bytes, other letter case": {model("logos/a.png", "h1"), model("logos/a.PNG", "h1"), false},
+		"after an import":               {model("", "h1"), model("logos/a.svg", "h1"), true},
+	} {
+		assert.Equal(t, tc.upload, clientLogoNeedsUpload(tc.plan, tc.state), name)
+	}
+}

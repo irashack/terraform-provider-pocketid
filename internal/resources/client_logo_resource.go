@@ -119,7 +119,8 @@ func (r *clientLogoResource) Schema(_ context.Context, _ resource.SchemaRequest,
 			},
 			"source": schema.StringAttribute{
 				Description: fmt.Sprintf("Path of the image file to upload. Pocket ID takes the image's type from the file "+
-					"name's extension (any case), which must be one of: %s. At most %d bytes (Pocket ID's 2 MiB upload limit, "+
+					"name's extension (any case), which must be one of: %s. The file is uploaded again when its content or its "+
+					"extension changes; another path to the same content with the same extension is not uploaded. At most %d bytes (Pocket ID's 2 MiB upload limit, "+
 					"less the request's own framing); a JPEG or PNG image may have at most %d pixels. The file is read while "+
 					"planning; one that does not exist yet (another resource writes it during the apply) is read when it is uploaded.",
 					extensions, client.ClientLogoMaxBytes, clientLogoMaxPixels),
@@ -196,6 +197,25 @@ func (r *clientLogoResource) Create(ctx context.Context, req resource.CreateRequ
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
+// clientLogoNeedsUpload reports whether an update must upload source: when
+// its content changed (or is not known yet), and when its file type did.
+// Pocket ID stores and serves a logo with the type of the uploaded file
+// name's extension, so the same bytes under another extension are a
+// different logo. Another path, or another letter case of the same
+// extension, with the same content needs no upload.
+func clientLogoNeedsUpload(plan, state *clientLogoResourceModel) bool {
+	if plan.SHA256.IsUnknown() || !plan.SHA256.Equal(state.SHA256) {
+		return true
+	}
+	return state.Source.IsNull() || clientLogoExtension(plan.Source.ValueString()) != clientLogoExtension(state.Source.ValueString())
+}
+
+// clientLogoExtension returns a file name's extension the way Pocket ID
+// reads it: lower case, without the dot.
+func clientLogoExtension(source string) string {
+	return strings.ToLower(strings.TrimPrefix(filepath.Ext(source), "."))
+}
+
 func (r *clientLogoResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var plan, state clientLogoResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -203,9 +223,7 @@ func (r *clientLogoResource) Update(ctx context.Context, req resource.UpdateRequ
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	// Only source and its content change in place; the same content under
-	// another path needs no upload.
-	if plan.SHA256.IsUnknown() || !plan.SHA256.Equal(state.SHA256) {
+	if clientLogoNeedsUpload(&plan, &state) {
 		uploaded, served := r.upload(ctx, &plan, &resp.Diagnostics)
 		if !uploaded {
 			return
@@ -427,7 +445,7 @@ func setClientLogoServedHash(ctx context.Context, private interface {
 // limits. It returns the content and its SHA-256 in hex. The error wraps
 // fs.ErrNotExist for a missing file.
 func readClientLogoSource(source string) ([]byte, string, error) {
-	extension := strings.ToLower(strings.TrimPrefix(filepath.Ext(source), "."))
+	extension := clientLogoExtension(source)
 	if _, ok := client.ClientLogoMediaType(extension); !ok {
 		return nil, "", fmt.Errorf("the file name %q has no extension Pocket ID accepts for a logo (it takes the image type from the extension: %s)",
 			filepath.Base(source), strings.Join(client.ClientLogoExtensions(), ", "))

@@ -12,11 +12,12 @@
   `<client_id>/<secret_id>`; the value of an imported secret is unknown.
 - New resource `pocketid_client_logo`: the light or dark logo of an OIDC
   client (`variant = "light"` or `"dark"`), uploaded from a local file
-  (`source`, with a computed `sha256`). A changed file is uploaded again, and
-  so is a logo that was removed or replaced outside Terraform (logo reads
-  bypass any cache in front of Pocket ID, so a cached copy neither hides a
-  change nor reports a false one). Files Pocket
-  ID would refuse (an unsupported extension, more than 2 MiB, a JPEG or PNG
-  with more than 16 million pixels) are refused at plan. Destroying the
-  resource removes that logo. Import with `<client_id>/light` or
-  `<client_id>/dark`.
+  (`source`, with a computed `sha256`). The file is uploaded again when its
+  content changes, when only its extension changes (Pocket ID takes the image
+  type from it), and when the logo was removed or replaced outside Terraform.
+  Logo reads bypass any cache in front of Pocket ID, so a cached copy neither
+  hides a change nor reports a false one. Files Pocket ID would refuse (an
+  unsupported extension, more than 2 MiB, a JPEG or PNG with more than 16
+  million pixels) are refused at plan. Destroying the resource removes that
+  logo. Import with `<client_id>/light` or `<client_id>/dark`; the first apply
+  after an import uploads the file once.

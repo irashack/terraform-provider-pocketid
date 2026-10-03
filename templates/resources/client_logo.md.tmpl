@@ -17,8 +17,10 @@ description: |-
 ## How changes are found
 
 - **The file changed.** The plan reads `source` and compares its SHA-256 with
-  `sha256`; a difference uploads the file again. Moving the same content to
-  another path uploads nothing.
+  `sha256`; a difference uploads the file again. So does another extension
+  with the same content (Pocket ID serves a logo with the type of the uploaded
+  file name). Moving the same content to another path with the same extension
+  uploads nothing.
 - **The logo was removed outside Terraform.** The client reports whether it
   has each logo; a missing one leaves state on refresh and the next apply
   uploads it again.
@@ -50,5 +52,4 @@ Import a logo as `<client_id>/light` or `<client_id>/dark`:
 {{ tffile "examples/resources/pocketid_client_logo/import.tf" }}
 
 The provider cannot compare the image Pocket ID holds with a local file it
-never uploaded, so after an import the first apply uploads `source` once,
-unless Pocket ID serves exactly the file's content (as it does for SVG files).
+never uploaded, so after an import the first apply uploads `source` once.

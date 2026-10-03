@@ -39,8 +39,10 @@ resource "pocketid_client_logo" "app_dark" {
 ## How changes are found
 
 - **The file changed.** The plan reads `source` and compares its SHA-256 with
-  `sha256`; a difference uploads the file again. Moving the same content to
-  another path uploads nothing.
+  `sha256`; a difference uploads the file again. So does another extension
+  with the same content (Pocket ID serves a logo with the type of the uploaded
+  file name). Moving the same content to another path with the same extension
+  uploads nothing.
 - **The logo was removed outside Terraform.** The client reports whether it
   has each logo; a missing one leaves state on refresh and the next apply
   uploads it again.
@@ -69,7 +71,7 @@ resource removes that logo from the client; the other one stays.
 ### Required
 
 - `client_id` (String) The ID of the OIDC client (`pocketid_client.<name>.id`). Changing it moves the logo to the other client.
-- `source` (String) Path of the image file to upload. Pocket ID takes the image's type from the file name's extension (any case), which must be one of: avif, gif, heic, ico, jpeg, jpg, png, svg, webp. At most 2096128 bytes (Pocket ID's 2 MiB upload limit, less the request's own framing); a JPEG or PNG image may have at most 16000000 pixels. The file is read while planning; one that does not exist yet (another resource writes it during the apply) is read when it is uploaded.
+- `source` (String) Path of the image file to upload. Pocket ID takes the image's type from the file name's extension (any case), which must be one of: avif, gif, heic, ico, jpeg, jpg, png, svg, webp. The file is uploaded again when its content or its extension changes; another path to the same content with the same extension is not uploaded. At most 2096128 bytes (Pocket ID's 2 MiB upload limit, less the request's own framing); a JPEG or PNG image may have at most 16000000 pixels. The file is read while planning; one that does not exist yet (another resource writes it during the apply) is read when it is uploaded.
 
 ### Optional
 
@@ -99,5 +101,4 @@ resource "pocketid_client_logo" "app_dark" {
 ```
 
 The provider cannot compare the image Pocket ID holds with a local file it
-never uploaded, so after an import the first apply uploads `source` once,
-unless Pocket ID serves exactly the file's content (as it does for SVG files).
+never uploaded, so after an import the first apply uploads `source` once.
