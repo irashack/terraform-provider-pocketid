@@ -24,10 +24,15 @@ func apiKeysCheckExample(t *testing.T, margin, timestampFunction string) string 
 	example := string(raw)
 	require.Contains(t, example, `"336h"`)
 	require.Contains(t, example, "plantimestamp()")
+	// Pocket ID's renewal refuses a key that is still valid, so the advice is
+	// to replace the key, never to renew it.
+	require.NotContains(t, strings.ToLower(example), "renew it")
+	require.Contains(t, example, "create a replacement key")
+	require.Contains(t, example, "revoke the old key")
 	example = strings.ReplaceAll(example, `"336h"`, fmt.Sprintf("%q", margin))
 	example = strings.ReplaceAll(example, "plantimestamp()", timestampFunction)
-	example = strings.ReplaceAll(example, `"terraform"`, `"provider-fixture"`)
-	example = strings.ReplaceAll(example, `\"terraform\"`, `\"provider-fixture\"`)
+	require.Contains(t, example, `management_key_name = "terraform"`)
+	example = strings.ReplaceAll(example, `management_key_name = "terraform"`, `management_key_name = "provider-fixture"`)
 	return "provider \"pocketid\" {}\n\n" + example
 }
 
@@ -117,7 +122,7 @@ func TestAccAPIKeysDataSource_checkWarnsAtPlanTime(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			step("12h", "plantimestamp()", expectCheck{name: checkName, status: "pass"}),
-			step("48h", "plantimestamp()", expectCheck{name: checkName, status: "fail", message: "expires within two weeks"}),
+			step("48h", "plantimestamp()", expectCheck{name: checkName, status: "fail", message: `named "provider-fixture" is missing or expires within two weeks`}),
 			step("48h", "timestamp()", expectCheck{name: checkName, status: "unknown"}),
 		},
 	})
