@@ -6,9 +6,10 @@ third-party projects below. Their licenses require the following notices to
 accompany the source code and every binary distribution, so this file is
 included in each release archive.
 
-This file covers the code copied from Pocket ID and the modules linked into the
-provider for checking URL patterns (`github.com/dunglas/go-urlpattern` and the
-modules it links). It does not yet list every other module the provider links.
+This file covers the code copied or adapted from Pocket ID and from
+go-playground/validator, and the modules linked into the provider for checking
+URL patterns (`github.com/dunglas/go-urlpattern` and the modules it links). It
+does not yet list every other module the provider links.
 
 ## Pocket ID
 
@@ -30,6 +31,15 @@ Copied, renamed and lightly reformatted in
 The checks in `appConfigCallbackURLPatternProblem` follow Pocket ID's
 `ValidateCallbackURLPattern` and `validateCallbackURLPatternURL` in the same
 file.
+
+Adapted (rewritten to Pocket ID's logic or data, same release):
+
+| Pocket ID source | In this repository |
+|---|---|
+| `backend/internal/dto/validations.go`: `validateBooleanString`, `validateIntegerString`, `validateJSONStringArray`, `validateJSONCustomClaims`, `validateCIMDURLAllowlist`, and wording from `ValidationErrorDetails` | `appConfigBoolean`, `appConfigSessionDuration`, `appConfigJSONStringArray`, `appConfigJSONCustomClaims`, `appConfigCIMDAllowlist` in `internal/resources/application_config_settings.go` |
+| `backend/internal/dto/app_config_dto.go` (`AppConfigUpdateDto` binding rules) and `backend/internal/appconfig/model.go` (`getDefaultConfig` defaults) | the `appConfigSettings` table in `internal/resources/application_config_settings.go` |
+| `backend/internal/utils/file_util.go`: `GetImageMimeType`; `backend/internal/controller/app_images_controller.go`: the accepted types per image | `applicationImageExtensions` and `applicationImageRoutes` in `internal/client/app_images.go` |
+| `backend/internal/utils/image/validation.go`: `maxImagePixels` | `applicationImageMaxPixels` in `internal/resources/application_image_resource.go` |
 
 ```text
 BSD 2-Clause License
@@ -57,6 +67,41 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+## github.com/go-playground/validator v10.30.5
+
+Source: https://github.com/go-playground/validator, release v10.30.5 (the
+version Pocket ID 2.17.0 uses). Not linked; code copied into
+`internal/resources/application_config_settings.go`:
+
+| go-playground/validator source | In this repository |
+|---|---|
+| `regexes.go`: the `emailRegexString` expression, verbatim | `appConfigEmailPattern` |
+| `baked_in.go`: `isEmail` (adapted: same two checks, returning a message) | `appConfigEmail` |
+
+```text
+The MIT License (MIT)
+
+Copyright (c) 2015 Dean Karn
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
 
 ## github.com/dunglas/go-urlpattern v1.0.0

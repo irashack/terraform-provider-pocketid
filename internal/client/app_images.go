@@ -26,9 +26,10 @@ const (
 	ApplicationImageDefaultProfilePicture ApplicationImage = "default_profile_picture"
 )
 
-// applicationImageExtensions is Pocket ID's utils.GetImageMimeType: the file
-// extensions it accepts for an image, and the type it serves each as. The
-// server takes an upload's type from its file name, not its content.
+// applicationImageExtensions is adapted from Pocket ID 2.17.0's
+// utils.GetImageMimeType (BSD 2-Clause License; see THIRD_PARTY_NOTICES.md):
+// the file extensions it accepts for an image, and the type it serves each
+// as. The server takes an upload's type from its file name, not its content.
 var applicationImageExtensions = map[string]string{
 	"jpg":  "image/jpeg",
 	"jpeg": "image/jpeg",

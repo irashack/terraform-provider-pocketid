@@ -18,6 +18,10 @@ import (
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
 )
 
+// The rules and defaults in this file are adapted from Pocket ID 2.17.0
+// (BSD 2-Clause License, Copyright (c) 2024, Elias Schneider);
+// THIRD_PARTY_NOTICES.md lists what came from where, with the full notice.
+
 // appConfigRule is the format Pocket ID requires of a setting's value (the
 // binding tags of dto.AppConfigUpdateDto, identical in 2.14.0 to 2.17.0). It
 // returns "" when value is acceptable, otherwise what is wrong with it. It is
@@ -306,13 +310,16 @@ func appConfigURLPatternExtractPath(url string) (base string, path string) {
 }
 
 // appConfigEmailPattern is the e-mail expression of go-playground/validator
-// v10.30.5 (the version Pocket ID 2.17.0 uses for its "email" binding), MIT
-// licensed, Copyright (c) 2015 Dean Karn.
+// v10.30.5 (emailRegexString in regexes.go; the version Pocket ID 2.17.0 uses
+// for its "email" binding), copied verbatim. Copyright (c) 2015 Dean Karn; MIT
+// License. THIRD_PARTY_NOTICES.md at the repository root holds the full
+// license text.
 var appConfigEmailPattern = regexp.MustCompile("^(?:(?:(?:(?:[a-zA-Z]|\\d|[!#\\$%&'\\*\\+\\-\\/=\\?\\^_`{\\|}~]|[\\x{00A0}-\\x{D7FF}\\x{F900}-\\x{FDCF}\\x{FDF0}-\\x{FFEF}])+(?:\\.([a-zA-Z]|\\d|[!#\\$%&'\\*\\+\\-\\/=\\?\\^_`{\\|}~]|[\\x{00A0}-\\x{D7FF}\\x{F900}-\\x{FDCF}\\x{FDF0}-\\x{FFEF}])+)*)|(?:(?:\\x22)(?:(?:(?:(?:\\x20|\\x09)*(?:\\x0d\\x0a))?(?:\\x20|\\x09)+)?(?:(?:[\\x01-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f]|\\x21|[\\x23-\\x5b]|[\\x5d-\\x7e]|[\\x{00A0}-\\x{D7FF}\\x{F900}-\\x{FDCF}\\x{FDF0}-\\x{FFEF}])|(?:(?:[\\x01-\\x09\\x0b\\x0c\\x0d-\\x7f]|[\\x{00A0}-\\x{D7FF}\\x{F900}-\\x{FDCF}\\x{FDF0}-\\x{FFEF}]))))*(?:(?:(?:\\x20|\\x09)*(?:\\x0d\\x0a))?(\\x20|\\x09)+)?(?:\\x22))))@(?:(?:(?:[a-zA-Z]|\\d|[\\x{00A0}-\\x{D7FF}\\x{F900}-\\x{FDCF}\\x{FDF0}-\\x{FFEF}])|(?:(?:[a-zA-Z]|\\d|[\\x{00A0}-\\x{D7FF}\\x{F900}-\\x{FDCF}\\x{FDF0}-\\x{FFEF}])(?:[a-zA-Z]|\\d|-|\\.|~|[\\x{00A0}-\\x{D7FF}\\x{F900}-\\x{FDCF}\\x{FDF0}-\\x{FFEF}])*(?:[a-zA-Z]|\\d|[\\x{00A0}-\\x{D7FF}\\x{F900}-\\x{FDCF}\\x{FDF0}-\\x{FFEF}])))\\.)+(?:(?:[a-zA-Z]|[\\x{00A0}-\\x{D7FF}\\x{F900}-\\x{FDCF}\\x{FDF0}-\\x{FFEF}])|(?:(?:[a-zA-Z]|[\\x{00A0}-\\x{D7FF}\\x{F900}-\\x{FDCF}\\x{FDF0}-\\x{FFEF}])(?:[a-zA-Z]|\\d|-|\\.|~|[\\x{00A0}-\\x{D7FF}\\x{F900}-\\x{FDCF}\\x{FDF0}-\\x{FFEF}])*(?:[a-zA-Z]|[\\x{00A0}-\\x{D7FF}\\x{F900}-\\x{FDCF}\\x{FDF0}-\\x{FFEF}])))\\.?$")
 
-// appConfigEmail is go-playground/validator's isEmail: net/mail must parse
-// the value and the expression above must match all of it, so a display name
-// ("Name <a@example.com>") is refused.
+// appConfigEmail is adapted from go-playground/validator's isEmail (see
+// THIRD_PARTY_NOTICES.md): net/mail must parse the value and the expression
+// above must match all of it, so a display name ("Name <a@example.com>") is
+// refused.
 func appConfigEmail(value string) string {
 	if _, err := mail.ParseAddress(value); err != nil || !appConfigEmailPattern.MatchString(value) {
 		return "must be a plain e-mail address such as no-reply@example.com (no display name)"
