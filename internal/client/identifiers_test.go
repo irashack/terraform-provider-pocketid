@@ -214,50 +214,82 @@ func TestClient_CreateChecksReturnedID(t *testing.T) {
 // returns the key it received as a created object's ID (client, user,
 // group, SCIM provider, generated secret, or the secret 2.17 creates with a
 // client) gets nothing: the ID is refused or dropped, never echoed.
+//
+// The key is checked in the form the server received it. Go sends a header
+// value without surrounding spaces and tabs, so a key configured with them
+// arrives bare; the server reflecting that bare key is refused just the same.
 func TestClient_CreateRefusesTheReflectedKey(t *testing.T) {
 	const key = "7d3f9a12-4c8e-4b6a-9f21-0e5d8c7b6a43" // a UUID-shaped static key
 	require.NoError(t, client.ValidateUUID("synthetic key", key), "the key passes the UUID check on its own")
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		received := r.Header.Get("X-API-KEY")
-		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodGet { // the version check before a secret
-			_, _ = w.Write([]byte(`{"currentVersion":"2.17.0"}`))
-			return
-		}
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"id":"` + received + `","name":"n","secret":"generated-secret-value-0123456789",` +
-			`"createdSecret":{"id":"` + received + `"}}`))
-	}))
-	defer server.Close()
-	c, err := client.NewClient(server.URL, key, false, 30)
-	require.NoError(t, err)
-	ctx := context.Background()
-
-	refused := map[string]error{}
-	_, refused["client"] = c.CreateClient(ctx, &client.OIDCClientCreateRequest{Name: "n"})
-	_, refused["user"] = c.CreateUser(ctx, &client.UserCreateRequest{Username: "u"})
-	_, refused["group"] = c.CreateUserGroup(ctx, &client.UserGroupCreateRequest{Name: "g"})
-	_, refused["SCIM"] = c.CreateScimServiceProvider(ctx, &client.ScimServiceProviderCreateRequest{})
-	_, refused["secret"] = c.GenerateClientSecret(ctx, "c1", nil)
-	for name, err := range refused {
-		require.ErrorIs(t, err, client.ErrInvalidIdentifier, name)
-		assert.NotContains(t, err.Error(), key, name)
-		assert.Contains(t, err.Error(), "contains the API key", name)
+	configured := map[string]string{
+		"bare":            key,
+		"spaces":          "  " + key + " ",
+		"tabs":            "\t" + key + "\t\t",
+		"spaces and tabs": " \t " + key + "\t \t",
+		"leading only":    "\t " + key,
+		"trailing only":   key + " \t",
 	}
+	for name, token := range configured {
+		t.Run(name, func(t *testing.T) {
+			var wrongKey atomic.Bool
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				received := r.Header.Get("X-API-KEY")
+				if received != key {
+					wrongKey.Store(true)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method == http.MethodGet { // the version check before a secret
+					_, _ = w.Write([]byte(`{"currentVersion":"2.17.0"}`))
+					return
+				}
+				w.WriteHeader(http.StatusCreated)
+				_, _ = w.Write([]byte(`{"id":"` + received + `","name":"n","secret":"generated-secret-value-0123456789",` +
+					`"createdSecret":{"id":"` + received + `"}}`))
+			}))
+			defer server.Close()
+			c, err := client.NewClient(server.URL, token, false, 30)
+			require.NoError(t, err)
+			ctx := context.Background()
 
-	// The secret Pocket ID creates with a client is dropped, not refused: the
-	// client resource then rolls the new client back as having an
-	// unidentified secret.
-	requested := "my-app"
-	keyed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"id":"my-app","name":"n","createdSecret":{"id":"` + r.Header.Get("X-API-KEY") + `"}}`))
-	}))
-	defer keyed.Close()
-	c, err = client.NewClient(keyed.URL, key, false, 30)
-	require.NoError(t, err)
-	created, err := c.CreateClient(ctx, &client.OIDCClientCreateRequest{Name: "n", ClientID: &requested})
-	require.NoError(t, err)
-	require.NotNil(t, created.CreatedSecret)
-	assert.Empty(t, created.CreatedSecret.ID)
+			refused := map[string]error{}
+			_, refused["client"] = c.CreateClient(ctx, &client.OIDCClientCreateRequest{Name: "n"})
+			_, refused["user"] = c.CreateUser(ctx, &client.UserCreateRequest{Username: "u"})
+			_, refused["group"] = c.CreateUserGroup(ctx, &client.UserGroupCreateRequest{Name: "g"})
+			_, refused["SCIM"] = c.CreateScimServiceProvider(ctx, &client.ScimServiceProviderCreateRequest{})
+			_, refused["secret"] = c.GenerateClientSecret(ctx, "c1", nil)
+			assert.False(t, wrongKey.Load(), "the server receives the key without surrounding whitespace")
+			for kind, err := range refused {
+				require.ErrorIs(t, err, client.ErrInvalidIdentifier, kind)
+				assert.NotContains(t, err.Error(), key, kind)
+				assert.Contains(t, err.Error(), "contains the API key", kind)
+			}
+
+			// The secret Pocket ID creates with a client is dropped, not
+			// refused: the client resource then rolls the new client back
+			// as having an unidentified secret.
+			requested := "my-app"
+			keyed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusCreated)
+				_, _ = w.Write([]byte(`{"id":"my-app","name":"n","createdSecret":{"id":"` + r.Header.Get("X-API-KEY") + `"}}`))
+			}))
+			defer keyed.Close()
+			c, err = client.NewClient(keyed.URL, token, false, 30)
+			require.NoError(t, err)
+			created, err := c.CreateClient(ctx, &client.OIDCClientCreateRequest{Name: "n", ClientID: &requested})
+			require.NoError(t, err)
+			require.NotNil(t, created.CreatedSecret)
+			assert.Empty(t, created.CreatedSecret.ID)
+		})
+	}
+}
+
+// A key that is nothing but the whitespace Go would strip is no key at all.
+// The error is fixed text.
+func TestNewClient_RefusesAWhitespaceOnlyKey(t *testing.T) {
+	for _, token := range []string{" ", "\t", " \t \t "} {
+		c, err := client.NewClient("https://pocket-id.example.com", token, false, 30)
+		require.Error(t, err)
+		assert.Nil(t, c)
+		assert.Equal(t, "API token is required: the configured value is only spaces and tabs", err.Error())
+	}
 }

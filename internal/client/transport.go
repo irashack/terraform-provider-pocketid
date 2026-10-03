@@ -21,19 +21,27 @@ import (
 
 // Client represents a Pocket-ID API client
 type Client struct {
-	baseURL    string
+	baseURL string
+	// apiToken is the API key exactly as the server receives it (see
+	// normalizeAPIKey). Everything that sends, guards or compares the key
+	// uses this value.
 	apiToken   string
 	httpClient *http.Client
 	retry      retryPolicy
 }
 
-// NewClient creates a new Pocket-ID API client
+// NewClient creates a new Pocket-ID API client. The API token is used in the
+// form the server receives it: without surrounding spaces and tabs.
 func NewClient(baseURL, apiToken string, skipTLSVerify bool, timeout int64) (*Client, error) {
 	if baseURL == "" {
 		return nil, fmt.Errorf("base URL is required")
 	}
 	if apiToken == "" {
 		return nil, fmt.Errorf("API token is required")
+	}
+	apiToken = normalizeAPIKey(apiToken)
+	if apiToken == "" {
+		return nil, fmt.Errorf("API token is required: the configured value is only spaces and tabs")
 	}
 
 	// See newTransport for how connections are handled.
@@ -59,6 +67,17 @@ func NewClient(baseURL, apiToken string, skipTLSVerify bool, timeout int64) (*Cl
 		},
 		retry: retry,
 	}, nil
+}
+
+// normalizeAPIKey returns the API key as it goes out on the wire. Go writes
+// a header value without the optional whitespace HTTP allows around it
+// (spaces and tabs; net/http's Header.Write trims them), and refuses to send
+// a value with a CR, LF or other control character at all, so the key the
+// server receives is the configured one with surrounding spaces and tabs
+// removed. Comparing a response with any other form would miss the key the
+// server actually got.
+func normalizeAPIKey(key string) string {
+	return strings.Trim(key, " \t")
 }
 
 // Retry limits for reads. Only GET is ever retried; a mutation is sent once.

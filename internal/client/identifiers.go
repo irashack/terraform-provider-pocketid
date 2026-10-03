@@ -93,7 +93,8 @@ func (c *Client) checkCreatedID(kind, requested, returned string) error {
 	return nil
 }
 
-// reflectsKey reports whether value contains the API key this client sends.
+// reflectsKey reports whether value contains the API key this client sends,
+// in the form the server receives it (see normalizeAPIKey).
 func (c *Client) reflectsKey(value string) bool {
 	return c.apiToken != "" && strings.Contains(value, c.apiToken)
 }

@@ -178,24 +178,34 @@ func TestGetBinaryUncached_NothingServerControlledLogged(t *testing.T) {
 		},
 		"malformed status line": func(k string) string { return "HTTP/1.1 " + k + " OK\r\n\r\n" },
 	}
+	// The guard compares the key the server received: configured with
+	// surrounding whitespace, it still arrives (and is reflected) bare.
+	configured := map[string]string{"bare": key, "padded": " \t" + key + "\t "}
 	for name, respond := range responses {
-		t.Run(name, func(t *testing.T) {
-			standard := captureStandardLog(t)
-			url, _ := rawServer(t, respond)
-			var logs bytes.Buffer
-			ctx := tflogtest.RootLogger(context.Background(), &logs)
-			c, err := NewClient(url, key, false, 5)
-			require.NoError(t, err)
-
-			_, mediaType, err := c.getBinaryUncached(ctx, "/api/x", nil, 0)
-			assert.NotContains(t, strings.ToLower(mediaType), strings.ToLower(key))
-			if err != nil {
-				walkErrorTree(err, func(e error) { assert.NotContains(t, e.Error(), key) })
-			}
-			assert.NotEmpty(t, logs.String())
-			assert.NotContains(t, logs.String(), key)
-			assert.NotContains(t, strings.ToLower(logs.String()), strings.ToLower(key))
-			assert.NotContains(t, standard.String(), key)
-		})
+		for form, token := range configured {
+			t.Run(name+"/"+form, func(t *testing.T) {
+				testNothingServerControlledLogged(t, key, token, respond)
+			})
+		}
 	}
+}
+
+func testNothingServerControlledLogged(t *testing.T, key, token string, respond func(string) string) {
+	t.Helper()
+	standard := captureStandardLog(t)
+	url, _ := rawServer(t, respond)
+	var logs bytes.Buffer
+	ctx := tflogtest.RootLogger(context.Background(), &logs)
+	c, err := NewClient(url, token, false, 5)
+	require.NoError(t, err)
+
+	_, mediaType, err := c.getBinaryUncached(ctx, "/api/x", nil, 0)
+	assert.NotContains(t, strings.ToLower(mediaType), strings.ToLower(key))
+	if err != nil {
+		walkErrorTree(err, func(e error) { assert.NotContains(t, e.Error(), key) })
+	}
+	assert.NotEmpty(t, logs.String())
+	assert.NotContains(t, logs.String(), key)
+	assert.NotContains(t, strings.ToLower(logs.String()), strings.ToLower(key))
+	assert.NotContains(t, standard.String(), key)
 }
