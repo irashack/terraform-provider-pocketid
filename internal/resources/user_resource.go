@@ -7,6 +7,7 @@ import (
 	"regexp"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -125,7 +126,7 @@ func (r *userResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 				Default:     booldefault.StaticBool(false),
 			},
 			"groups": schema.SetAttribute{
-				Description: "List of group IDs the user belongs to.",
+				Description: "IDs of the groups the user belongs to. Pocket ID ignores an ID that names no group, so the provider checks the user's groups after each change and fails, naming the group, if one was not applied.",
 				Optional:    true,
 				ElementType: types.StringType,
 			},
@@ -261,11 +262,7 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 		tflog.Debug(ctx, "Updating user groups", map[string]any{
 			"groups": groupIDs,
 		})
-		// TODO(association-check): the first result is the set of group IDs
-		// the server now holds; it drops IDs that name no group. Not
-		// compared yet, and an unreadable result is not an error here.
-		_, err = r.client.UpdateUserGroups(ctx, userResp.ID, groupIDs)
-		if err != nil && !errors.Is(err, client.ErrResultUnread) {
+		if _, err := r.setGroups(ctx, userResp.ID, groupIDs); err != nil {
 			r.failedCreate(ctx, &plan, "groups", err, resp)
 			return
 		}
@@ -486,11 +483,17 @@ func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, r
 			tflog.Debug(ctx, "Updating user groups", map[string]any{
 				"groups": plannedGroupIDs,
 			})
-			// TODO(association-check): the first result is the set of group IDs
-			// the server now holds; it drops IDs that name no group. Not
-			// compared yet, and an unreadable result is not an error here.
-			_, err = r.client.UpdateUserGroups(ctx, plan.ID.ValueString(), plannedGroupIDs)
-			if err != nil && !errors.Is(err, client.ErrResultUnread) {
+			held, err := r.setGroups(ctx, plan.ID.ValueString(), plannedGroupIDs)
+			if err != nil {
+				var mismatch *client.UserGroupsMismatchError
+				if errors.As(err, &mismatch) {
+					// The write was made: record the groups the user is in now,
+					// and the claims as they were, so the next plan shows what
+					// is still to do.
+					plan.Groups = groupIDsToState(ctx, held, plan.Groups)
+					plan.CustomClaims = state.CustomClaims
+					resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+				}
 				resp.Diagnostics.AddError(
 					"Error updating user groups",
 					"Could not update user groups: "+err.Error(),
@@ -568,6 +571,30 @@ func (r *userResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 	tflog.Debug(ctx, "Deleted user", map[string]any{
 		"id": state.ID.ValueString(),
 	})
+}
+
+// setGroups replaces the user's groups with exactly groupIDs and verifies the
+// result (see client.SetUserGroups). It holds the same per-user lock as
+// pocketid_group_membership, so the two never interleave their
+// read-modify-write cycles for one user within an apply.
+func (r *userResource) setGroups(ctx context.Context, userID string, groupIDs []string) ([]string, error) {
+	lock := lockForUser(userID)
+	lock.Lock()
+	defer lock.Unlock()
+	return r.client.SetUserGroups(ctx, userID, groupIDs)
+}
+
+// groupIDsToState converts group IDs to the groups attribute. No groups keep
+// the representation of like (null or an empty set).
+func groupIDsToState(ctx context.Context, ids []string, like types.Set) types.Set {
+	if len(ids) == 0 {
+		if like.IsNull() || like.IsUnknown() {
+			return types.SetNull(types.StringType)
+		}
+		return types.SetValueMust(types.StringType, []attr.Value{})
+	}
+	set, _ := types.SetValueFrom(ctx, types.StringType, ids)
+	return set
 }
 
 // failedCreate handles a step that failed after Pocket ID created the user

@@ -513,3 +513,28 @@ resource "pocketid_group" "g%[1]d" {
 	}
 	return b.String()
 }
+
+// Pocket ID ignores a group ID that names no group when it writes a user's
+// groups. Adding a membership for such a group must fail and name it, not be
+// recorded as done.
+func TestAccResourceGroupMembership_missingGroup(t *testing.T) {
+	testAccPreCheck(t)
+	const missingGroupID = "0b6f4f2e-7c1a-4d3e-9f10-2a3b4c5d6e7f"
+	userID := createTestUser(t, acctest.RandomWithPrefix("tf-acc-test")+"-missing-group")
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: fmt.Sprintf(`
+resource "pocketid_group_membership" "test" {
+  group_id = %[1]q
+  user_id  = %[2]q
+}
+`, missingGroupID, userID),
+				ExpectError: regexp.MustCompile(`(?s)not\s+in\s+group\(s\)\s+` + missingGroupID),
+			},
+		},
+	})
+}

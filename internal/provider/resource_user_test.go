@@ -544,3 +544,25 @@ func TestAccResourceUser_deletedOutsideTerraform(t *testing.T) {
 		},
 	})
 }
+
+// Pocket ID ignores a group ID that names no group. A user whose groups
+// include one must fail and name it, never be recorded with that group.
+func TestAccResourceUser_missingGroup(t *testing.T) {
+	const missingGroupID = "0b6f4f2e-7c1a-4d3e-9f10-2a3b4c5d6e7f"
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: fmt.Sprintf(`
+resource "pocketid_user" "test" {
+  username = "missing-group-user"
+  email    = "missing-group-user@example.com"
+  groups   = [%q]
+}
+`, missingGroupID),
+				ExpectError: regexp.MustCompile(`(?s)not\s+in\s+group\(s\)\s+` + missingGroupID),
+			},
+		},
+	})
+}

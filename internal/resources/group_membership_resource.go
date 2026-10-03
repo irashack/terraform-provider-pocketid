@@ -109,7 +109,9 @@ func (r *groupMembershipResource) Schema(_ context.Context, _ resource.SchemaReq
 			"attribute uses). A concurrent writer of the same user's groups — another Terraform apply, or an " +
 			"external process — that runs between the read and the write can have its change silently " +
 			"overwritten; there is no compare-and-swap primitive that would close this window. Avoid concurrent " +
-			"writers of one user's group memberships.\n\n" +
+			"writers of one user's group memberships. After the write the provider checks the user's groups: " +
+			"Pocket ID ignores a group ID that names no group, so a group that does not exist (or is deleted " +
+			"during the apply) is an error naming it, never a recorded membership.\n\n" +
 			"~> **Do not combine with the `groups` attribute of `pocketid_user` for the same user** That " +
 			"attribute is authoritative: every apply of a `pocketid_user` resource replaces the user's entire " +
 			"group list with exactly what `groups` contains, including an empty list when `groups` is left " +

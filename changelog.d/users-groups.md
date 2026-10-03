@@ -12,3 +12,9 @@
   replacement) and the error says the cleanup failed; before, the provider
   reported "the user was deleted" without checking and lost track of the
   object.
+- `pocketid_group_membership` and the `groups` attribute of `pocketid_user`
+  now check the user's groups after every change. Pocket ID silently ignores a
+  group ID that names no group (one that never existed, or was deleted during
+  the apply); before, the provider then recorded a membership that did not
+  exist. Now the apply fails with an error naming the group. For
+  `pocketid_user`, state records the groups the user is actually in.

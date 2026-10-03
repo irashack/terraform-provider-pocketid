@@ -117,7 +117,7 @@ resource "pocketid_user" "with_claims" {
 - `display_name` (String) The display name of the user. Computed from first and last name if not set.
 - `email_verified` (Boolean) Whether the user's email address is verified. Defaults to false.
 - `first_name` (String) The first name of the user.
-- `groups` (Set of String) List of group IDs the user belongs to.
+- `groups` (Set of String) IDs of the groups the user belongs to. Pocket ID ignores an ID that names no group, so the provider checks the user's groups after each change and fails, naming the group, if one was not applied.
 - `is_admin` (Boolean) Whether the user has administrator privileges. Defaults to false.
 - `last_name` (String) The last name of the user.
 - `locale` (String) The locale preference for the user (e.g., 'en', 'fr').

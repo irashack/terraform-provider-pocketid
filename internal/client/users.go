@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
+	"sort"
+	"strings"
 )
 
 // User represents a user in Pocket-ID
@@ -180,16 +183,103 @@ func (c *Client) UpdateUserGroups(ctx context.Context, userID string, groupIDs [
 	return userGroupIDs(groups), nil
 }
 
+// UserGroupsMismatchError reports that after a write of a user's groups the
+// server holds a different set from the one requested. Pocket ID drops a
+// requested ID that names no group (one that never existed or was deleted
+// meanwhile) without an error, so Missing usually names such IDs. The write
+// itself was made: the user's groups are now the held set.
+type UserGroupsMismatchError struct {
+	UserID string
+	// Missing were requested but are not held; Unexpected are held but
+	// were not requested. Both are sorted.
+	Missing, Unexpected []string
+}
+
+func (e *UserGroupsMismatchError) Error() string {
+	var parts []string
+	if len(e.Missing) > 0 {
+		parts = append(parts, "the user is not in group(s) "+strings.Join(e.Missing, ", ")+
+			" (Pocket ID ignores a group ID that names no group, for example one deleted during the apply)")
+	}
+	if len(e.Unexpected) > 0 {
+		parts = append(parts, "the user is also in group(s) "+strings.Join(e.Unexpected, ", ")+" that were not requested")
+	}
+	return "Pocket ID did not apply the requested groups of user " + e.UserID + ": " + strings.Join(parts, "; ")
+}
+
+// diffGroupIDs returns the IDs in want but not in held, and in held but not
+// in want, each sorted.
+func diffGroupIDs(want, held []string) (missing, unexpected []string) {
+	inHeld := make(map[string]bool, len(held))
+	for _, id := range held {
+		inHeld[id] = true
+	}
+	inWant := make(map[string]bool, len(want))
+	for _, id := range want {
+		inWant[id] = true
+		if !inHeld[id] {
+			missing = append(missing, id)
+		}
+	}
+	for id := range inHeld {
+		if !inWant[id] {
+			unexpected = append(unexpected, id)
+		}
+	}
+	sort.Strings(missing)
+	sort.Strings(unexpected)
+	return missing, unexpected
+}
+
+// writeUserGroups replaces the user's groups with groupIDs and returns the
+// groups the user is in afterwards. When the PUT's response does not list
+// them, they are read back with a GET; if that fails too, the error wraps
+// ErrResultUnread (the write was made, its result is unknown).
+func (c *Client) writeUserGroups(ctx context.Context, userID string, groupIDs []string) ([]string, error) {
+	held, err := c.UpdateUserGroups(ctx, userID, groupIDs)
+	if err == nil {
+		return held, nil
+	}
+	if !errors.Is(err, ErrResultUnread) {
+		return nil, err
+	}
+	user, readErr := c.GetUser(ctx, userID)
+	if readErr != nil {
+		return nil, fmt.Errorf("groups of user %s: %w; reading them back failed: %w", userID, ErrResultUnread, readErr)
+	}
+	return userGroupIDs(user.UserGroups), nil
+}
+
+// SetUserGroups replaces the groups a user belongs to with exactly groupIDs
+// and checks that the server holds that set afterwards. It returns the held
+// set; when it differs from groupIDs the error is a *UserGroupsMismatchError
+// (the write was made). An empty or nil groupIDs removes every group. The
+// PUT is never retried.
+func (c *Client) SetUserGroups(ctx context.Context, userID string, groupIDs []string) ([]string, error) {
+	held, err := c.writeUserGroups(ctx, userID, groupIDs)
+	if err != nil {
+		return nil, err
+	}
+	if missing, unexpected := diffGroupIDs(groupIDs, held); len(missing) > 0 || len(unexpected) > 0 {
+		return held, &UserGroupsMismatchError{UserID: userID, Missing: missing, Unexpected: unexpected}
+	}
+	return held, nil
+}
+
 // AddUserToGroup adds a user to a group without changing the user's other
-// group memberships. Pocket-ID exposes no endpoint to add a single member to
-// a group; the only mutating endpoint is PUT /api/users/{id}/user-groups,
-// which replaces a user's entire group list. This performs a read-modify-write:
-// it reads the user's current groups, adds groupID if it is not already
-// present, and writes the full list back. A concurrent writer of the same
-// user's groups (another apply of this provider, or an external process such
-// as an onboarding broker) that runs between the read and the write can have
-// its change silently overwritten; there is no compare-and-swap primitive
-// that would close this window.
+// group memberships, and checks that the user is in the group afterwards: a
+// group that does not exist, or was deleted meanwhile, gives a
+// *UserGroupsMismatchError naming it instead of a silent success.
+//
+// Pocket-ID exposes no endpoint to add a single member to a group; the only
+// mutating endpoint is PUT /api/users/{id}/user-groups, which replaces a
+// user's entire group list. This performs a read-modify-write: it reads the
+// user's current groups, adds groupID if it is not already present, and
+// writes the full list back. A concurrent writer of the same user's groups
+// (another apply of this provider, or an external process such as an
+// onboarding broker) that runs between the read and the write can have its
+// change silently overwritten; there is no compare-and-swap primitive that
+// would close this window.
 func (c *Client) AddUserToGroup(ctx context.Context, userID, groupID string) error {
 	user, err := c.GetUser(ctx, userID)
 	if err != nil {
@@ -206,25 +296,25 @@ func (c *Client) AddUserToGroup(ctx context.Context, userID, groupID string) err
 	}
 	groupIDs = append(groupIDs, groupID)
 
-	// TODO(association-check): result holds the groups the user is in now;
-	// a groupID missing from it was dropped by the server (no such group).
-	// Callers do not check it yet, and an unreadable result is not an error
-	// here, as before.
-	_, err = c.UpdateUserGroups(ctx, userID, groupIDs)
-	if errors.Is(err, ErrResultUnread) {
-		return nil
+	held, err := c.writeUserGroups(ctx, userID, groupIDs)
+	if err != nil {
+		return err
 	}
-	return err
+	if !slices.Contains(held, groupID) {
+		return &UserGroupsMismatchError{UserID: userID, Missing: []string{groupID}}
+	}
+	return nil
 }
 
 // RemoveUserFromGroup removes a user from a group without changing the
-// user's other group memberships. Removing membership of a user who no
-// longer exists is treated as already done, but only once that is positively
-// confirmed (see IsUserNotFound): a generic or malformed 404 - a wrong base
-// URL, a proxy's own not-found page, or an endpoint missing on an older
-// server - does not by itself prove the user is gone, and is returned as an
-// error instead. See AddUserToGroup for the read-modify-write mechanism this
-// relies on and the race window it leaves.
+// user's other group memberships, and checks that the user is no longer in
+// the group afterwards. Removing membership of a user who no longer exists is
+// treated as already done, but only once that is positively confirmed (see
+// IsUserNotFound): a generic or malformed 404 - a wrong base URL, a proxy's
+// own not-found page, or an endpoint missing on an older server - does not by
+// itself prove the user is gone, and is returned as an error instead. See
+// AddUserToGroup for the read-modify-write mechanism this relies on and the
+// race window it leaves.
 func (c *Client) RemoveUserFromGroup(ctx context.Context, userID, groupID string) error {
 	user, err := c.GetUser(ctx, userID)
 	if err != nil {
@@ -248,8 +338,8 @@ func (c *Client) RemoveUserFromGroup(ctx context.Context, userID, groupID string
 		return nil
 	}
 
-	// TODO(association-check): the result could confirm groupID is gone.
-	if _, err := c.UpdateUserGroups(ctx, userID, groupIDs); err != nil && !errors.Is(err, ErrResultUnread) {
+	held, err := c.writeUserGroups(ctx, userID, groupIDs)
+	if err != nil {
 		// A 404 from this PUT does not by itself prove the user is gone: it
 		// could be a wrong path or a proxy's generic not-found response.
 		// Re-check with a GET, which does positively identify a missing
@@ -261,6 +351,9 @@ func (c *Client) RemoveUserFromGroup(ctx context.Context, userID, groupID string
 			}
 		}
 		return err
+	}
+	if slices.Contains(held, groupID) {
+		return &UserGroupsMismatchError{UserID: userID, Unexpected: []string{groupID}}
 	}
 	return nil
 }
