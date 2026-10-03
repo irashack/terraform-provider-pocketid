@@ -196,6 +196,62 @@ func TestAPIDataSources_ReflectedKeyNeverReachesState(t *testing.T) {
 	assert.True(t, list.State.Raw.IsNull(), "nothing reaches state")
 }
 
+// Every string field of an API that reaches state, the creation time included,
+// is refused when it carries the API key, by both data sources.
+func TestAPIDataSources_ReflectedTextNeverReachesState(t *testing.T) {
+	const key = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	const permissionID = "00000000-0000-4000-8000-0000000000b1"
+	for name, fields := range map[string][5]string{
+		// name, resource, createdAt, permission key, permission name
+		"creation time":  {"Inventory", "https://inventory.example", "created " + key, "read", "Read"},
+		"name":           {"Inv " + key, "https://inventory.example", "2026-01-01T00:00:00Z", "read", "Read"},
+		"resource":       {"Inventory", "https://inventory.example/" + key, "2026-01-01T00:00:00Z", "read", "Read"},
+		"permission key": {"Inventory", "https://inventory.example", "2026-01-01T00:00:00Z", key, "Read"},
+		"permission":     {"Inventory", "https://inventory.example", "2026-01-01T00:00:00Z", "read", "Read " + key},
+	} {
+		t.Run(name, func(t *testing.T) {
+			api := fmt.Sprintf(`{"id":%q,"name":%q,"resource":%q,"createdAt":%q,"allowCimdClients":false,"permissions":[{"id":%q,"key":%q,"name":%q,"allowedForCimdClients":false}]}`,
+				apiDataSourceTestFirst, fields[0], fields[1], fields[2], permissionID, fields[3], fields[4])
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/apis" {
+					_, _ = fmt.Fprintf(w, `{"data":[%s],"pagination":{"totalPages":1,"totalItems":1,"currentPage":1,"itemsPerPage":100}}`, api)
+					return
+				}
+				_, _ = fmt.Fprint(w, api)
+			}))
+			t.Cleanup(server.Close)
+			c, err := client.NewClient(server.URL, key, false, 5)
+			require.NoError(t, err)
+			ctx := context.Background()
+			text := func(diags diag.Diagnostics) string {
+				var parts []string
+				for _, d := range diags.Errors() {
+					parts = append(parts, d.Summary()+": "+d.Detail())
+				}
+				return strings.Join(parts, "\n")
+			}
+
+			resp, _ := apiDataSourceTestRead(t, c, types.StringValue(apiDataSourceTestFirst), types.StringNull())
+			require.True(t, resp.Diagnostics.HasError(), "by ID")
+			assert.NotContains(t, text(resp.Diagnostics), key)
+			assert.True(t, resp.State.Raw.IsNull())
+
+			resp, _ = apiDataSourceTestRead(t, c, types.StringNull(), types.StringValue("https://inventory.example"))
+			require.True(t, resp.Diagnostics.HasError(), "by resource")
+			assert.NotContains(t, text(resp.Diagnostics), key)
+			assert.True(t, resp.State.Raw.IsNull())
+
+			var sr datasource.SchemaResponse
+			(&apisDataSource{}).Schema(ctx, datasource.SchemaRequest{}, &sr)
+			list := datasource.ReadResponse{State: tfsdk.State{Schema: sr.Schema, Raw: tftypes.NewValue(sr.Schema.Type().TerraformType(ctx), nil)}}
+			(&apisDataSource{client: c}).Read(ctx, datasource.ReadRequest{}, &list)
+			require.True(t, list.Diagnostics.HasError(), "list")
+			assert.NotContains(t, text(list.Diagnostics), key)
+			assert.True(t, list.State.Raw.IsNull())
+		})
+	}
+}
+
 func TestAPIDataSource_InputValidators(t *testing.T) {
 	ctx := context.Background()
 	check := func(v validator.String, value string) string {

@@ -146,16 +146,16 @@ func (c *Client) apiCheckReturnedID(kind, addressed, returned string) error {
 	return nil
 }
 
-// apiCheckResponse checks every identifier of an API the server returned (its
+// apiCheckResponse checks an API the server returned: every identifier (its
 // own ID, equal to addressed when the request addressed it, and its
-// permissions' IDs), and refuses text fields that carry the API key, since the
-// API's name, resource identifier and permission texts reach diagnostics and
-// non-sensitive state as well.
+// permissions' IDs) and every string field that reaches non-sensitive state or
+// a diagnostic (name, resource identifier, creation time, and each permission's
+// key, name and description) must not contain the API key.
 func (c *Client) apiCheckResponse(api *API, addressed string) error {
 	if err := c.apiCheckReturnedID(apiKind, addressed, api.ID); err != nil {
 		return err
 	}
-	texts := []string{api.Name, api.Resource}
+	texts := []string{api.Name, api.Resource, api.CreatedAt}
 	for i := range api.Permissions {
 		p := &api.Permissions[i]
 		if err := c.apiCheckReturnedID("API permission", "", p.ID); err != nil {

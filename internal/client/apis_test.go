@@ -126,6 +126,7 @@ func TestClient_APIResponses_ReflectedKeyRefused(t *testing.T) {
 		"resource carries the key":        apiReflectTestAPI(id, "Inventory", "urn:"+apiReflectTestKey, good, "read", ""),
 		"permission key carries the key":  apiReflectTestAPI(id, "Inventory", "urn:x", good, apiReflectTestKey, ""),
 		"permission text carries the key": apiReflectTestAPI(id, "Inventory", "urn:x", good, "read", "see "+apiReflectTestKey),
+		"creation time carries the key":   strings.Replace(apiReflectTestAPI(id, "Inventory", "urn:x", good, "read", ""), "2026-01-01T00:00:00Z", "at "+apiReflectTestKey, 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			get := apiReflectTestServer(t, func(w http.ResponseWriter, r *http.Request) { _, _ = fmt.Fprint(w, body) })

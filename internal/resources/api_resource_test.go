@@ -522,6 +522,55 @@ func TestAPIResourceCreate_ReflectedKeyNeverReachesDiagnostics(t *testing.T) {
 	}
 }
 
+// A creation time that carries the API key is refused like any other text of
+// an API: it never reaches state or a diagnostic, on create, read or update.
+func TestAPIResource_ReflectedCreatedAtNeverReachesState(t *testing.T) {
+	const key = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	const reflected = "created at " + key
+	ctx := context.Background()
+
+	t.Run("create", func(t *testing.T) {
+		f, c := newAPITestPocketIDWithKey(t, key)
+		f.tamper = func(route string, api *client.API) { api.CreatedAt = reflected }
+		resp, state := apiTestCreate(t, c, apiTestModel("", "Inventory", "https://inventory.example", false, nil))
+		require.True(t, resp.Diagnostics.HasError())
+		assert.NotContains(t, apiTestCreateDiag(resp), key)
+		assert.Nil(t, state)
+	})
+
+	t.Run("read", func(t *testing.T) {
+		f, c := newAPITestPocketIDWithKey(t, key)
+		existing := f.add(client.API{Name: "Inventory", Resource: "https://inventory.example", CreatedAt: reflected})
+		sr := apiTestSchema(t)
+		prior := apiTestModel(existing.ID, "Inventory", "https://inventory.example", false, nil)
+		state := tfsdk.State{Schema: sr.Schema}
+		require.False(t, state.Set(ctx, &prior).HasError())
+		resp := resource.ReadResponse{State: tfsdk.State{Schema: sr.Schema, Raw: state.Raw.Copy()}}
+		(&apiResource{client: c}).Read(ctx, resource.ReadRequest{State: state}, &resp)
+		require.True(t, resp.Diagnostics.HasError())
+		var text []string
+		for _, d := range resp.Diagnostics {
+			text = append(text, d.Summary(), d.Detail())
+		}
+		assert.NotContains(t, strings.Join(text, "\n"), key)
+		var after apiResourceModel
+		require.False(t, resp.State.Get(ctx, &after).HasError())
+		assert.NotContains(t, after.CreatedAt.ValueString(), key, "state keeps the prior value")
+	})
+
+	t.Run("update", func(t *testing.T) {
+		f, c := newAPITestPocketIDWithKey(t, key)
+		existing := f.add(client.API{Name: "Inventory", Resource: "https://inventory.example", CreatedAt: reflected})
+		prior := apiTestModel(existing.ID, "Inventory", "https://inventory.example", false, nil)
+		plan := apiTestModel(existing.ID, "Renamed", "https://inventory.example", false, nil)
+		resp, state := apiTestUpdate(t, c, prior, plan)
+		require.True(t, resp.Diagnostics.HasError())
+		assert.NotContains(t, apiTestUpdateDiag(resp), key)
+		assert.NotContains(t, state.CreatedAt.ValueString(), key)
+		assert.NotContains(t, f.routes(), "PUT api", "nothing was written")
+	})
+}
+
 // When a follow-up write fails, the created API stays in state as the
 // server holds it; nothing is deleted.
 func TestAPIResourceCreate_FailedStepKeepsAPI(t *testing.T) {
