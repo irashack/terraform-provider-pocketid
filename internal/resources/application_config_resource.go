@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"sort"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -168,8 +170,8 @@ func applicationConfigToModel(cfg *client.ApplicationConfig, m *applicationConfi
 	m.AutoCreateOIDCClientSecret = types.StringPointerValue(cfg.AutoCreateOIDCClientSecret)
 }
 
-// mergedString returns the planned value if it is set (known and non-null),
-// otherwise it falls back to the current server-side value. This lets unset
+// mergedString returns the configured value if it is set (known and
+// non-null), otherwise the current server-side value. This lets unset
 // attributes inherit the existing configuration so that required server-side
 // fields are never sent as empty values.
 func mergedString(planned types.String, current string) string {
@@ -179,8 +181,8 @@ func mergedString(planned types.String, current string) string {
 	return planned.ValueString()
 }
 
-// modelToApplicationConfig builds the client payload from the plan, merging in
-// the current server values for any attribute that is not explicitly set.
+// modelToApplicationConfig builds the client payload from the configuration,
+// merging in the current server values for any attribute that is not set.
 //
 // The payload starts as a copy of the current server configuration because the
 // update endpoint replaces the configuration in full: any field left at its
@@ -303,6 +305,9 @@ func (r *applicationConfigResource) Schema(_ context.Context, _ resource.SchemaR
 			Computed:    true,
 			Sensitive:   setting.sensitive,
 			Validators:  []validator.String{appConfigValueValidator{setting: setting}},
+			// Unset means "keep the server's value": an update of other
+			// settings plans it unchanged instead of unknown.
+			PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 		}
 	}
 	resp.Schema = schema.Schema{
@@ -374,9 +379,16 @@ func (r *applicationConfigResource) ModifyPlan(ctx context.Context, req resource
 	}
 }
 
-// applyConfig merges the plan with the current server config, performs the PUT
-// and writes the response back into the plan model.
-func (r *applicationConfigResource) applyConfig(ctx context.Context, plan *applicationConfigModel, diags *diag.Diagnostics) {
+// applyConfig reads the server's current configuration, sends it back with
+// the configured values over it, and writes the result into plan.
+//
+// Only attributes set in config are sent as planned. Every other key is sent
+// with the value the server holds right now, so a setting changed outside
+// Terraform after the plan was made is kept, not reverted by a change the plan
+// did not show. Such a setting's planned value (from state) stays in state
+// until the next refresh, as Terraform requires; the next refresh records the
+// server's value, without a planned change because it is not configured.
+func (r *applicationConfigResource) applyConfig(ctx context.Context, config, plan *applicationConfigModel, diags *diag.Diagnostics) {
 	current, err := r.client.GetApplicationConfig(ctx)
 	if err != nil {
 		diags.AddError(
@@ -386,7 +398,7 @@ func (r *applicationConfigResource) applyConfig(ctx context.Context, plan *appli
 		return
 	}
 
-	for _, setting := range unsupportedAppConfigSettings(plan, current) {
+	for _, setting := range unsupportedAppConfigSettings(config, current) {
 		diags.AddAttributeError(
 			path.Root(setting.attribute),
 			"Setting not supported by this Pocket ID",
@@ -397,7 +409,7 @@ func (r *applicationConfigResource) applyConfig(ctx context.Context, plan *appli
 		return
 	}
 
-	payload := modelToApplicationConfig(plan, current)
+	payload := modelToApplicationConfig(config, current)
 
 	tflog.Debug(ctx, "Updating application configuration")
 
@@ -410,18 +422,71 @@ func (r *applicationConfigResource) applyConfig(ctx context.Context, plan *appli
 		return
 	}
 
-	applicationConfigToModel(updated, plan)
+	if unstored := unstoredAppConfigSettings(current, payload, updated); len(unstored) > 0 {
+		diags.AddError(
+			"Pocket ID stored different application settings",
+			"Pocket ID accepted the update but did not store the value the provider sent for: "+strings.Join(unstored, ", ")+
+				". Its configuration has changed; refresh to see what it holds, and check those values.",
+		)
+		return
+	}
+
+	var stored applicationConfigModel
+	applicationConfigToModel(updated, &stored)
+	fillUnplannedFromServer(plan, &stored)
+}
+
+// unstoredAppConfigSettings names the settings whose value the update changed
+// but the server did not store as sent (by attribute, or by key for a setting
+// this provider has no attribute for). No value is included: some are
+// secrets.
+func unstoredAppConfigSettings(current, sent, updated *client.ApplicationConfig) []string {
+	before, request, after := current.Values(), sent.Values(), updated.Values()
+	attributes := make(map[string]string, len(appConfigSettings))
+	for _, setting := range appConfigSettings {
+		attributes[setting.key] = setting.attribute
+	}
+	var unstored []string
+	for key, value := range request {
+		if value == before[key] || value == after[key] {
+			continue
+		}
+		name, ok := attributes[key]
+		if !ok {
+			name = key
+		}
+		unstored = append(unstored, name)
+	}
+	sort.Strings(unstored)
+	return unstored
+}
+
+// fillUnplannedFromServer sets every planned value that is unknown (or null)
+// to the server's. A known planned value stays: for a configured attribute it
+// is what was sent and stored, otherwise it is the value from state the plan
+// showed.
+func fillUnplannedFromServer(plan, stored *applicationConfigModel) {
+	planValue := reflect.ValueOf(plan).Elem()
+	storedValue := reflect.ValueOf(stored).Elem()
+	for i := 0; i < planValue.NumField(); i++ {
+		value, ok := planValue.Field(i).Interface().(types.String)
+		if !ok || !(value.IsUnknown() || value.IsNull()) {
+			continue
+		}
+		planValue.Field(i).Set(storedValue.Field(i))
+	}
 }
 
 // Create creates the resource and sets the initial Terraform state.
 func (r *applicationConfigResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var plan applicationConfigModel
+	var plan, config applicationConfigModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	r.applyConfig(ctx, &plan, &resp.Diagnostics)
+	r.applyConfig(ctx, &config, &plan, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -455,13 +520,14 @@ func (r *applicationConfigResource) Read(ctx context.Context, req resource.ReadR
 
 // Update updates the resource and sets the updated Terraform state on success.
 func (r *applicationConfigResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan applicationConfigModel
+	var plan, config applicationConfigModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	r.applyConfig(ctx, &plan, &resp.Diagnostics)
+	r.applyConfig(ctx, &config, &plan, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}

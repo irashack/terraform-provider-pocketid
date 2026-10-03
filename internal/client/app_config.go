@@ -83,10 +83,10 @@ type ApplicationConfig struct {
 	Additional map[string]string `json:"-"`
 }
 
-// requestBody is the PUT body for cfg: every key in Additional, then every
-// named field over them. A pointer field that is nil (a key the server did
-// not report) is left out.
-func (cfg *ApplicationConfig) requestBody() map[string]string {
+// Values returns cfg as the key/value map an update sends: every key in
+// Additional, then every named field over them. A pointer field that is nil
+// (a key the server did not report) is left out.
+func (cfg *ApplicationConfig) Values() map[string]string {
 	body := make(map[string]string, len(cfg.Additional)+64)
 	for key, value := range cfg.Additional {
 		body[key] = value
@@ -181,7 +181,7 @@ func (c *Client) GetApplicationConfig(ctx context.Context) (*ApplicationConfig, 
 // body: a key that is missing, or an empty string, resets that setting to its
 // default.
 func (c *Client) UpdateApplicationConfig(ctx context.Context, cfg *ApplicationConfig) (*ApplicationConfig, error) {
-	body, err := c.doRequest(ctx, "PUT", "/api/application-configuration", cfg.requestBody())
+	body, err := c.doRequest(ctx, "PUT", "/api/application-configuration", cfg.Values())
 	if err != nil {
 		return nil, err
 	}

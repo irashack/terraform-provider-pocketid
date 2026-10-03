@@ -9,7 +9,9 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
@@ -93,7 +95,7 @@ func TestApplicationConfigSMTPPreservesSettings(t *testing.T) {
 			}
 			plan.SmtpHost = types.StringValue("smtp.example.invalid")
 			var diags diag.Diagnostics
-			r.applyConfig(context.Background(), plan, &diags)
+			r.applyConfig(context.Background(), plan, plan, &diags)
 			require.False(t, diags.HasError(), "%v", diags)
 			require.Equal(t, 1, puts)
 			want := *current
@@ -168,7 +170,7 @@ func TestApplicationConfigUpdateKeepsUnknownServerKeys(t *testing.T) {
 	}
 	plan.AppName = types.StringValue("Renamed")
 	var diags diag.Diagnostics
-	r.applyConfig(context.Background(), plan, &diags)
+	r.applyConfig(context.Background(), plan, plan, &diags)
 	require.False(t, diags.HasError(), "%v", diags)
 	require.Equal(t, 1, puts)
 	require.Equal(t, "Renamed", plan.AppName.ValueString())
@@ -191,11 +193,15 @@ func TestApplicationConfigOmitsUnreportedSettings(t *testing.T) {
 			return
 		}
 		puts++
-		var payload map[string]any
+		var payload map[string]string
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
 		require.NotContains(t, payload, "autoCreateOidcClientSecret")
 		require.Equal(t, "smtp.example.invalid", payload["smtpHost"])
-		require.NoError(t, json.NewEncoder(w).Encode(reported))
+		stored := make([]client.AppConfigVariable, 0, len(payload))
+		for key, value := range payload {
+			stored = append(stored, client.AppConfigVariable{Key: key, Value: value})
+		}
+		require.NoError(t, json.NewEncoder(w).Encode(stored))
 	}))
 	defer server.Close()
 	c, err := client.NewClient(server.URL, "synthetic-token", false, 30)
@@ -208,7 +214,114 @@ func TestApplicationConfigOmitsUnreportedSettings(t *testing.T) {
 	}
 	plan.SmtpHost = types.StringValue("smtp.example.invalid")
 	var diags diag.Diagnostics
-	r.applyConfig(context.Background(), plan, &diags)
+	r.applyConfig(context.Background(), plan, plan, &diags)
 	require.False(t, diags.HasError(), "%v", diags)
 	require.Equal(t, 1, puts)
+}
+
+// appConfigFakeServer serves GET /all from config and stores each PUT body,
+// passed through store first, as the new configuration. It returns the
+// client and a pointer to the last PUT body.
+func appConfigFakeServer(t *testing.T, config map[string]string, store func(map[string]string)) (*client.Client, *map[string]string) {
+	t.Helper()
+	var lastPut map[string]string
+	toVars := func(values map[string]string) []client.AppConfigVariable {
+		vars := make([]client.AppConfigVariable, 0, len(values))
+		for key, value := range values {
+			vars = append(vars, client.AppConfigVariable{Key: key, Value: value})
+		}
+		return vars
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			require.NoError(t, json.NewEncoder(w).Encode(toVars(config)))
+			return
+		}
+		var payload map[string]string
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		lastPut = make(map[string]string, len(payload))
+		for key, value := range payload {
+			lastPut[key] = value
+		}
+		if store != nil {
+			store(payload)
+		}
+		config = payload
+		require.NoError(t, json.NewEncoder(w).Encode(toVars(config)))
+	}))
+	t.Cleanup(server.Close)
+	c, err := client.NewClient(server.URL, "synthetic-token", false, 30)
+	require.NoError(t, err)
+	return c, &lastPut
+}
+
+func nullAppConfigModel() *applicationConfigModel {
+	m := &applicationConfigModel{}
+	value := reflect.ValueOf(m).Elem()
+	for i := 0; i < value.NumField(); i++ {
+		value.Field(i).Set(reflect.ValueOf(types.StringNull()))
+	}
+	return m
+}
+
+// An attribute that is not configured is planned at its value in state, so
+// an update of another setting shows no change for it. If the server's value
+// changed after that plan was made, the update sends the server's value (the
+// plan did not show a change), and state keeps the planned value until the
+// next refresh, as Terraform requires.
+func TestApplicationConfigUnconfiguredKeepsServerValue(t *testing.T) {
+	c, sent := appConfigFakeServer(t, map[string]string{"appName": "Fixture", "accentColor": "#changed-outside"}, nil)
+	r := &applicationConfigResource{client: c}
+	config := nullAppConfigModel()
+	config.AppName = types.StringValue("Renamed")
+	plan := nullAppConfigModel()
+	plan.AppName = types.StringValue("Renamed")
+	plan.AccentColor = types.StringValue("#from-state")
+	plan.ID = types.StringUnknown()
+	plan.SmtpHost = types.StringUnknown()
+
+	var diags diag.Diagnostics
+	r.applyConfig(context.Background(), config, plan, &diags)
+	require.False(t, diags.HasError(), "%v", diags)
+	assert.Equal(t, "#changed-outside", (*sent)["accentColor"], "the server's value is sent, not the planned one")
+	assert.Equal(t, "Renamed", (*sent)["appName"])
+	assert.Equal(t, "#from-state", plan.AccentColor.ValueString(), "a known planned value is kept")
+	assert.Equal(t, "", plan.SmtpHost.ValueString(), "an unknown planned value is the server's")
+	assert.False(t, plan.SmtpHost.IsUnknown())
+	assert.Equal(t, applicationConfigID, plan.ID.ValueString())
+}
+
+// When the server stores something other than what the provider sent for a
+// setting the update changes, the apply fails and names the setting, never
+// its value.
+func TestApplicationConfigUnstoredValueFails(t *testing.T) {
+	const secret = "synthetic-smtp-password"
+	c, _ := appConfigFakeServer(t, map[string]string{"appName": "Fixture", "smtpPassword": "", "accentColor": "default"}, func(payload map[string]string) {
+		payload["appName"] = "Coerced"
+		payload["smtpPassword"] = ""
+	})
+	r := &applicationConfigResource{client: c}
+	config := nullAppConfigModel()
+	config.AppName = types.StringValue("Renamed")
+	config.SmtpPassword = types.StringValue(secret)
+	config.AccentColor = types.StringValue("default")
+	plan := *config
+
+	var diags diag.Diagnostics
+	r.applyConfig(context.Background(), config, &plan, &diags)
+	require.True(t, diags.HasError())
+	detail := diags.Errors()[0].Detail()
+	assert.Contains(t, detail, "app_name, smtp_password.")
+	assert.NotContains(t, detail, "accent_color", "an unchanged setting is not checked")
+	assert.NotContains(t, detail, secret)
+	assert.NotContains(t, detail, "Coerced")
+}
+
+func TestApplicationConfigSettingsPlanFromState(t *testing.T) {
+	s := appConfigTestSchema(t)
+	for _, setting := range appConfigSettings {
+		attribute := s.Attributes[setting.attribute].(schema.StringAttribute)
+		assert.Len(t, attribute.PlanModifiers, 1, setting.attribute)
+	}
 }

@@ -27,3 +27,9 @@
 - New attribute `auto_create_oidc_client_secret` on `pocketid_application_config`
   and its data source (Pocket ID 2.17.0 and later). On an older server it is
   null, and configuring it is refused at plan time.
+- An update of `pocketid_application_config` no longer shows every setting you
+  did not configure as "(known after apply)": the plan shows them unchanged.
+  Settings you did not configure are still sent back with the value Pocket ID
+  holds at apply time, so a change made outside Terraform since the plan is
+  kept. After an update, the provider checks that Pocket ID stored each value
+  it changed, and fails naming the setting if it did not.

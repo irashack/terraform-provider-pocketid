@@ -10,7 +10,10 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
+	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 )
 
 func TestAccResourceApplicationConfig_basic(t *testing.T) {
@@ -206,6 +209,57 @@ data "pocketid_application_config" "test" {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr(resourceName, "auto_create_oidc_client_secret", "true"),
 					serverValue("true"),
+				),
+			},
+		},
+	})
+}
+
+// An update of one setting plans every unset setting at its current value
+// (not "known after apply"), and keeps a value changed outside Terraform.
+func TestAccResourceApplicationConfig_unrelatedUpdate(t *testing.T) {
+	resourceName := "pocketid_application_config.test"
+	suffix := acctest.RandString(8)
+	const outside = "#2a9d8f"
+	original := testAccAppConfig(t)
+	t.Cleanup(func() {
+		current := testAccAppConfig(t)
+		current["accentColor"] = original["accentColor"]
+		testAccPutAppConfig(t, current)
+	})
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccResourceApplicationConfigConfig_basic("tf-acc-"+suffix, "60"),
+			},
+			{
+				PreConfig: func() {
+					current := testAccAppConfig(t)
+					current["accentColor"] = outside
+					if status := testAccPutAppConfig(t, current); status != 200 {
+						t.Fatalf("setting the accent color outside Terraform returned HTTP %d", status)
+					}
+				},
+				Config: testAccResourceApplicationConfigConfig_basic("tf-upd-"+suffix, "60"),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction(resourceName, plancheck.ResourceActionUpdate),
+						plancheck.ExpectKnownValue(resourceName, tfjsonpath.New("accent_color"), knownvalue.StringExact(outside)),
+						plancheck.ExpectKnownValue(resourceName, tfjsonpath.New("smtp_tls"), knownvalue.NotNull()),
+						plancheck.ExpectKnownValue(resourceName, tfjsonpath.New("ldap_enabled"), knownvalue.NotNull()),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceName, "app_name", "tf-upd-"+suffix),
+					resource.TestCheckResourceAttr(resourceName, "accent_color", outside),
+					func(*terraform.State) error {
+						if got := testAccAppConfig(t)["accentColor"]; got != outside {
+							return fmt.Errorf("server accentColor = %q after an unrelated update, want %q", got, outside)
+						}
+						return nil
+					},
 				),
 			},
 		},

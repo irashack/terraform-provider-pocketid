@@ -290,7 +290,7 @@ func TestApplicationConfigApplyRefusesUnreportedSetting(t *testing.T) {
 	}
 	plan.AutoCreateOIDCClientSecret = types.StringValue("false")
 	var diags diag.Diagnostics
-	r.applyConfig(context.Background(), plan, &diags)
+	r.applyConfig(context.Background(), plan, plan, &diags)
 	require.True(t, diags.HasError())
 	assert.Contains(t, diags.Errors()[0].Detail(), "requires Pocket ID 2.17.0 or later")
 	assert.Contains(t, diags.Errors()[0].Detail(), "Nothing was changed")
