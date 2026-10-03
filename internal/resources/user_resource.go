@@ -698,22 +698,23 @@ func (r *userResource) checkFixedID(ctx context.Context, id string, resp *resour
 
 // uncertainFixedIDCreate handles a create with a caller-chosen ID whose
 // outcome is unknown (a transport failure or a server error): the user may
-// exist. The create is never repeated. A read decides what is reported: when
-// Pocket ID confirms no user has the ID, nothing was created. Otherwise the
-// ID is kept in state with the unresolved-creation marker, never as ordinary
-// ownership: a user found under the ID may be someone else's, created
-// between the provider's check and its create.
+// exist, or may still come to exist, since a proxy can give up before the
+// server commits. The create is never repeated, and no read settles it: a
+// user found under the ID may be someone else's, created between the
+// provider's check and its create, and a read that finds none may come
+// before the commit. So the ID is always kept in state with the
+// unresolved-creation marker, never as ordinary ownership. A read only adds
+// what it saw to the diagnostic.
 func (r *userResource) uncertainFixedIDCreate(ctx context.Context, plan *userResourceModel, displayName string, cause error, resp *resource.CreateResponse) {
 	id := plan.ID.ValueString()
 	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), accountCleanupTimeout)
 	defer cancel()
 	_, readErr := r.client.GetUser(readCtx, id)
-	if client.IsNotFound(readErr, client.ResourceUser) {
-		resp.Diagnostics.AddError("Error creating user", "Could not create user ("+cause.Error()+"); a read confirmed no user with ID "+id+" exists.")
-		return
-	}
 	found := "A read found a user with this ID, which may or may not be the one this apply created."
-	if readErr != nil {
+	switch {
+	case client.IsNotFound(readErr, client.ResourceUser):
+		found = "A read found no user with this ID yet; the create may still complete."
+	case readErr != nil:
 		found = "Whether a user with this ID exists could not be confirmed (read: " + readErr.Error() + ")."
 	}
 	if plan.DisplayName.IsUnknown() {
@@ -725,7 +726,8 @@ func (r *userResource) uncertainFixedIDCreate(ctx context.Context, plan *userRes
 		"Creating user "+id+" failed with an uncertain result ("+cause.Error()+"). "+found+
 			" The ID is kept in state as an unresolved creation: the provider will not change, delete or replace that user until it is resolved. "+
 			"Check the user in Pocket ID; if it is the intended user, run `terraform state rm` on this resource and `terraform import` it with ID "+id+
-			"; otherwise run `terraform state rm` and choose another id. The create was not repeated.")
+			"; otherwise run `terraform state rm` and choose another id. If the next refresh finds no user with this ID, Pocket ID's answer removes it from state. "+
+			"The create was not repeated.")
 }
 
 // ldapRestrictedChanges returns the attributes the update would change that

@@ -219,3 +219,29 @@ func TestUserUnresolvedCreationUnconfirmedRead(t *testing.T) {
 	require.Contains(t, errs, "User creation unresolved")
 	require.Zero(t, s.deletes)
 }
+
+// A recovery read that finds no user does not settle an uncertain create: a
+// proxy can give up before the server commits. Here the read comes before
+// the commit; the ID is still kept as an unresolved creation, and once the
+// create has committed the provider still refuses to delete the user.
+func TestUserUnresolvedCreationReadBeforeCommit(t *testing.T) {
+	s := &fixedIDServer{version: "2.17.0", createStatus: http.StatusGatewayTimeout}
+	h := newUsersGroupsUserHarness(t, s.start(t))
+	state, private, errs := h.apply(nil, fixedIDPlanModel(), nil)
+	require.Contains(t, errs, "found no user with this ID yet")
+	require.NotNil(t, state, "the ID is kept in state")
+	require.Contains(t, string(private), userUnresolvedCreationKey)
+	require.Equal(t, 2, s.gets, "the preflight and the recovery read both found no user")
+
+	// The server's transaction commits after the recovery read.
+	s.mu.Lock()
+	s.existing = true
+	s.mu.Unlock()
+	state, private, errs = h.read(state, private)
+	require.Empty(t, errs)
+	require.NotNil(t, state)
+	require.Contains(t, string(private), userUnresolvedCreationKey)
+	_, _, errs = h.apply(state, nil, private)
+	require.Contains(t, errs, "User creation unresolved")
+	require.Zero(t, s.deletes)
+}

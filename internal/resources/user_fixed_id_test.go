@@ -182,13 +182,6 @@ func TestUserCreateWithFixedID(t *testing.T) {
 		require.True(t, resp.Diagnostics.HasError())
 		require.Zero(t, s.posts)
 	})
-	t.Run("uncertain_create_confirmed_absent", func(t *testing.T) {
-		s := &fixedIDServer{version: "2.17.0", createStatus: http.StatusBadGateway}
-		resp := runFixedIDCreate(t, s, types.StringValue(fixedUserID))
-		require.True(t, resp.Diagnostics.HasError())
-		require.Equal(t, 1, s.posts, "the create is never repeated")
-		require.True(t, resp.State.Raw.IsNull(), "a read confirmed nothing was created")
-	})
 	t.Run("server_ignored_id_rolled_back", func(t *testing.T) {
 		s := &fixedIDServer{version: "2.17.0", createdID: "ffffffff-ffff-4fff-8fff-ffffffffffff"}
 		resp := runFixedIDCreate(t, s, types.StringValue(fixedUserID))
