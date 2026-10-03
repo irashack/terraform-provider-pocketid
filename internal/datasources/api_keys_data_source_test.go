@@ -35,14 +35,14 @@ func TestAPIKeysDataSource_SchemaHasNoKeyValue(t *testing.T) {
 	list, ok := resp.Schema.Attributes["keys"].(schema.ListNestedAttribute)
 	require.True(t, ok)
 	assert.True(t, list.Computed)
-	assert.ElementsMatch(t, []string{"id", "name", "description", "expires_at", "last_used_at", "created_at"}, keysOf(list.NestedObject.Attributes),
+	assert.ElementsMatch(t, []string{"id", "name", "description", "expires_at", "last_used_at", "created_at"}, apiKeysAttributeNames(list.NestedObject.Attributes),
 		"the data source must offer no attribute that could carry a key value")
 	for name, attribute := range list.NestedObject.Attributes {
 		assert.True(t, attribute.IsComputed(), name)
 	}
 }
 
-func keysOf(attributes map[string]schema.Attribute) []string {
+func apiKeysAttributeNames(attributes map[string]schema.Attribute) []string {
 	var names []string
 	for name := range attributes {
 		names = append(names, name)

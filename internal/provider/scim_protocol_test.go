@@ -18,9 +18,9 @@ import (
 
 const scimResourceType = "pocketid_scim_service_provider"
 
-// protocolServer starts the provider behind a fake Pocket ID served by
+// scimSignupProtocolServer starts the provider behind a fake Pocket ID served by
 // handler and returns the configured provider server and its schemas.
-func protocolServer(t *testing.T, handler http.Handler) (tfprotov6.ProviderServer, *tfprotov6.GetProviderSchemaResponse) {
+func scimSignupProtocolServer(t *testing.T, handler http.Handler) (tfprotov6.ProviderServer, *tfprotov6.GetProviderSchemaResponse) {
 	t.Helper()
 	ctx := context.Background()
 	api := httptest.NewServer(handler)
@@ -47,7 +47,7 @@ func protocolServer(t *testing.T, handler http.Handler) (tfprotov6.ProviderServe
 	return server, schemas
 }
 
-func resourceObjectType(t *testing.T, schemas *tfprotov6.GetProviderSchemaResponse, typeName string) tftypes.Object {
+func scimSignupObjectType(t *testing.T, schemas *tfprotov6.GetProviderSchemaResponse, typeName string) tftypes.Object {
 	t.Helper()
 	resourceSchema, ok := schemas.ResourceSchemas[typeName]
 	require.True(t, ok)
@@ -61,7 +61,7 @@ func resourceObjectType(t *testing.T, schemas *tfprotov6.GetProviderSchemaRespon
 // provider server together with the resource's object type.
 func scimProtocolServer(t *testing.T, serverToken string) (tfprotov6.ProviderServer, tftypes.Object) {
 	t.Helper()
-	server, schemas := protocolServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server, schemas := scimSignupProtocolServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/api/oidc/clients/scim-client/scim-service-provider" {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -73,7 +73,7 @@ func scimProtocolServer(t *testing.T, serverToken string) (tfprotov6.ProviderSer
 		}
 		w.WriteHeader(http.StatusNotFound)
 	}))
-	return server, resourceObjectType(t, schemas, scimResourceType)
+	return server, scimSignupObjectType(t, schemas, scimResourceType)
 }
 
 func scimProtocolObject(t *testing.T, objectType tftypes.Object, values map[string]any) tftypes.Value {

@@ -33,7 +33,7 @@ func signupProtocolSet(ids ...string) []tftypes.Value {
 // no longer holds the token.
 func TestSignupToken_ExpiredTokenPlansEmpty(t *testing.T) {
 	ctx := context.Background()
-	server, schemas := protocolServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server, schemas := scimSignupProtocolServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/api/signup-tokens" {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -44,7 +44,7 @@ func TestSignupToken_ExpiredTokenPlansEmpty(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusNotFound)
 	}))
-	objectType := resourceObjectType(t, schemas, signupTokenResourceType)
+	objectType := scimSignupObjectType(t, schemas, signupTokenResourceType)
 
 	stored := scimProtocolObject(t, objectType, map[string]any{
 		"id": signupProtocolTokenID, "ttl": "24h", "usage_limit": 3, "user_group_ids": signupProtocolSet(signupProtocolGroupID),
