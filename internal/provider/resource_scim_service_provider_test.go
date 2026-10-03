@@ -194,7 +194,7 @@ func TestAccResourceScimServiceProvider_tokenClearedOutsideTerraform(t *testing.
 			{
 				Config: config,
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr(resourceName, "token", "configured-token"),
+					testAccCheckSensitiveEquals(resourceName, "token", "configured-token"),
 					testAccScimCheckServerToken(resourceName, "configured-token"),
 					func(s *terraform.State) error {
 						clientID = s.RootModule().Resources[resourceName].Primary.Attributes["client_id"]
@@ -212,7 +212,7 @@ func TestAccResourceScimServiceProvider_tokenClearedOutsideTerraform(t *testing.
 			{
 				Config: config,
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr(resourceName, "token", "configured-token"),
+					testAccCheckSensitiveEquals(resourceName, "token", "configured-token"),
 					testAccScimCheckServerToken(resourceName, "configured-token"),
 				),
 			},
@@ -255,7 +255,7 @@ func TestAccResourceScimServiceProvider_noTokenDoesNotChurn(t *testing.T) {
 				// cannot tell apart; it must apply cleanly and then stay quiet.
 				Config: testAccResourceScimServiceProviderConfig_tokenLine(clientName, endpoint, `token = ""`),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr(resourceName, "token", ""),
+					testAccCheckSensitiveEquals(resourceName, "token", ""),
 					testAccScimCheckServerToken(resourceName, ""),
 				),
 			},
@@ -406,7 +406,7 @@ func TestAccResourceScimServiceProvider_writeOnlyToken(t *testing.T) {
 				// Moving to the plain attribute stores the token again.
 				Config: testAccResourceScimServiceProviderConfig_tokenLine(clientName, endpoint+"/again", `token = "plain-token"`),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr(resourceName, "token", "plain-token"),
+					testAccCheckSensitiveEquals(resourceName, "token", "plain-token"),
 					resource.TestCheckNoResourceAttr(resourceName, "token_wo_version"),
 					testAccScimCheckServerToken(resourceName, "plain-token"),
 				),
@@ -477,8 +477,10 @@ func TestAccResourceScimServiceProvider_writeOnlyImport(t *testing.T) {
 					}
 					return rs.Primary.Attributes["client_id"] + ",token_wo_version=7", nil
 				},
-				ImportStateVerify:       true,
-				ImportStateVerifyIgnore: []string{"created_at"},
+				ImportStateVerify: true,
+				// The token is checked below, never by ImportStateVerify, whose
+				// difference output would print it.
+				ImportStateVerifyIgnore: []string{"created_at", "token"},
 				ImportStateCheck: func(states []*terraform.InstanceState) error {
 					if len(states) != 1 {
 						return fmt.Errorf("expected one imported state, got %d", len(states))

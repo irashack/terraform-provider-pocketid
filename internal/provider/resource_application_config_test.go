@@ -19,6 +19,9 @@ import (
 
 func TestAccResourceApplicationConfig_basic(t *testing.T) {
 	resourceName := "pocketid_application_config.test"
+	// The passwords the state holds before the import, compared with the
+	// imported ones without printing either.
+	passwords := map[string]string{}
 	// Pocket-ID enforces appName max length of 30 characters, so keep both the
 	// create and update names short and distinct.
 	suffix := acctest.RandString(8)
@@ -38,6 +41,13 @@ func TestAccResourceApplicationConfig_basic(t *testing.T) {
 					resource.TestCheckResourceAttr(resourceName, "id", "application-configuration"),
 					// Computed defaults should be populated by the server.
 					resource.TestCheckResourceAttrSet(resourceName, "allow_user_signups"),
+					func(s *terraform.State) error {
+						attrs := s.RootModule().Resources[resourceName].Primary.Attributes
+						for _, name := range []string{"smtp_password", "ldap_bind_password"} {
+							passwords[name] = attrs[name]
+						}
+						return nil
+					},
 				),
 			},
 			// ImportState testing
@@ -45,6 +55,20 @@ func TestAccResourceApplicationConfig_basic(t *testing.T) {
 				ResourceName:      resourceName,
 				ImportState:       true,
 				ImportStateVerify: true,
+				// The passwords are compared below, never by
+				// ImportStateVerify, whose difference output would print them.
+				ImportStateVerifyIgnore: []string{"smtp_password", "ldap_bind_password"},
+				ImportStateCheck: func(states []*terraform.InstanceState) error {
+					if len(states) != 1 {
+						return fmt.Errorf("expected one imported state, got %d", len(states))
+					}
+					for _, name := range []string{"smtp_password", "ldap_bind_password"} {
+						if err := testAccSameError("the imported "+name, passwords[name], states[0].Attributes[name]); err != nil {
+							return err
+						}
+					}
+					return nil
+				},
 			},
 			// Update and Read testing
 			{
@@ -335,7 +359,7 @@ data "pocketid_application_config" "test" {
 			{
 				Config: plainConfig("tf-acc-"+suffix, plain),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr(resourceName, "smtp_password", plain),
+					testAccCheckSensitiveEquals(resourceName, "smtp_password", plain),
 					server(plain, ldapPlain),
 				),
 			},
@@ -375,8 +399,10 @@ data "pocketid_application_config" "test" {
 				ResourceName:      resourceName,
 				ImportState:       true,
 				ImportStateVerify: true,
-				// The versions live only in configuration and state.
-				ImportStateVerifyIgnore: []string{"smtp_password_wo_version", "ldap_bind_password_wo_version"},
+				// The versions live only in configuration and state. The
+				// passwords are checked below, never by ImportStateVerify,
+				// whose difference output would print them.
+				ImportStateVerifyIgnore: []string{"smtp_password_wo_version", "ldap_bind_password_wo_version", "smtp_password", "ldap_bind_password"},
 				ImportStateCheck: func(states []*terraform.InstanceState) error {
 					for _, name := range []string{"smtp_password", "ldap_bind_password"} {
 						if _, ok := states[0].Attributes[name]; ok {
@@ -390,7 +416,7 @@ data "pocketid_application_config" "test" {
 				// Back to the plain attribute.
 				Config: plainConfig("tf-acc-"+suffix, plain),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr(resourceName, "smtp_password", plain),
+					testAccCheckSensitiveEquals(resourceName, "smtp_password", plain),
 					resource.TestCheckNoResourceAttr(resourceName, "smtp_password_wo_version"),
 					server(plain, ldapPlain),
 				),
