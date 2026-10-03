@@ -262,6 +262,10 @@ func (f *fakePocketID) serve(w http.ResponseWriter, r *http.Request) {
 			write(404, map[string]any{"error": "Client secret not found", "code": "not_found", "details": map[string]string{"resource": "Client secret"}})
 			return
 		}
+		if f.lostResponse[call] {
+			w.WriteHeader(http.StatusBadGateway) // revoked, but the answer was lost
+			return
+		}
 		w.WriteHeader(204)
 	default:
 		f.t.Errorf("unexpected %s", call)

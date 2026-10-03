@@ -662,6 +662,9 @@ func (r *clientResource) Read(ctx context.Context, req resource.ReadRequest, res
 		state.GenerateSecret = types.BoolValue(true)
 	}
 	r.fillSecretID(ctx, &state)
+	if privateFlag(ctx, req.Private, pendingRevocationKey) && !r.reconcilePendingRevocation(ctx, &state) && resp.Private != nil {
+		resp.Diagnostics.Append(setPrivateFlag(ctx, resp.Private, pendingRevocationKey, false)...)
+	}
 
 	// Set the state
 	diags = resp.State.Set(ctx, &state)
@@ -794,6 +797,21 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 	recordPending := func(pending bool) {
 		if resp.Private != nil {
 			resp.Diagnostics.Append(setPrivateFlag(ctx, resp.Private, pendingRevocationKey, pending)...)
+		}
+	}
+	// A pending revocation that this plan cancels (the configuration asks for
+	// the secret again) keeps the secret only if it still exists: the
+	// revocation may have gone through although its answer was lost.
+	if pendingRevocation && secretAction == secretKeep && holdsSecret(state) {
+		if present, err := r.heldSecretPresent(ctx, state); err != nil || !present {
+			detail := "it has been revoked"
+			if err != nil {
+				detail = "whether it still exists could not be established (" + err.Error() + ")"
+			}
+			resp.Diagnostics.AddError("Client secret in state may no longer exist",
+				"An earlier apply could not confirm the revocation of the secret in state, and "+detail+". No change was made. "+
+					"Plan again with a refresh (without -refresh=false): a refresh that finds the secret gone removes it from state, and the plan then generates a new one.")
+			return
 		}
 	}
 	var revokeID string

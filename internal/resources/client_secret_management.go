@@ -338,3 +338,49 @@ func skipSecretAction(action secretAction, prior clientResourceModel, model *cli
 func definitelyRejected(err error) bool {
 	return !errors.Is(err, client.ErrResultUnread) && client.IsDefiniteRejection(err)
 }
+
+// heldSecretPresent reports whether the secret state holds still exists on
+// the server: by its exact ID when state has it, by its prefix otherwise. An
+// error means it could not be established (the list failed, or the prefix
+// is ambiguous).
+func (r *clientResource) heldSecretPresent(ctx context.Context, state clientResourceModel) (bool, error) {
+	secrets, err := r.client.ListClientSecrets(ctx, state.ID.ValueString())
+	if err != nil {
+		return false, err
+	}
+	if id := state.ClientSecretID; !id.IsNull() && !id.IsUnknown() && id.ValueString() != "" {
+		for _, secret := range secrets {
+			if secret.ID == id.ValueString() {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	_, gone, err := identifySecret(state.ClientSecret.ValueString(), secrets)
+	if err != nil {
+		return false, err
+	}
+	return !gone, nil
+}
+
+// reconcilePendingRevocation settles a pending revocation on refresh: when
+// the secret state still holds is confirmed gone (the revocation went through
+// although its answer was lost), it is removed from state and the mark is
+// cleared. A resource left in holding mode then records generate_secret =
+// false, so that a configuration asking for a secret generates a new one. It
+// returns whether the mark is still due; an unreadable list keeps it.
+func (r *clientResource) reconcilePendingRevocation(ctx context.Context, state *clientResourceModel) (stillPending bool) {
+	if !holdsSecret(*state) {
+		return false
+	}
+	present, err := r.heldSecretPresent(ctx, *state)
+	if err != nil || present {
+		return true
+	}
+	tflog.Debug(ctx, "The client secret whose revocation was pending is gone", map[string]any{"id": state.ID.ValueString()})
+	if holdingMode(*state) {
+		state.GenerateSecret = types.BoolValue(false)
+	}
+	state.ClientSecret, state.ClientSecretID = types.StringNull(), types.StringNull()
+	return false
+}
