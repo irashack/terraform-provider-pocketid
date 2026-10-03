@@ -3,7 +3,9 @@ package client
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"strconv"
 	"strings"
@@ -75,6 +77,13 @@ func (c *Client) checkRequestText(body any) error {
 	if !ok {
 		return fmt.Errorf("request body of type %T declares no texts; the request was not sent", body)
 	}
+	if documents, ok := body.(jsonBearing); ok {
+		for _, document := range documents.jsonDocuments() {
+			if JSONRepeatsMember(string(document)) {
+				return errRepeatedMemberInRequest
+			}
+		}
+	}
 	if c.containsKey(bearer.textsToSend()...) {
 		return errKeyInRequest
 	}
@@ -100,37 +109,113 @@ func optionalText(s *string) string {
 func intText(n int64) string { return strconv.FormatInt(n, 10) }
 
 // jsonTexts returns every string, number and object key of a JSON document
-// the provider keeps as it is (a federated identity's public key). A document
-// that does not decode gives its raw text.
+// the provider keeps as it is (a federated identity's public key), each
+// occurrence counted, so a member repeated under the same name is inspected
+// too. A document that does not decode gives its raw text.
 func jsonTexts(document []byte) []string {
-	decoder := json.NewDecoder(bytes.NewReader(document))
-	decoder.UseNumber()
-	var value any
-	if decoder.Decode(&value) != nil {
+	texts, _, ok := walkJSON(document)
+	if !ok {
 		return []string{string(document)}
 	}
-	var out []string
-	var walk func(any)
-	walk = func(v any) {
-		switch v := v.(type) {
-		case string:
-			out = append(out, v)
-		case json.Number:
-			out = append(out, v.String())
-		case []any:
-			for _, element := range v {
-				walk(element)
-			}
-		case map[string]any:
-			for key, element := range v {
-				out = append(out, key)
-				walk(element)
-			}
+	return texts
+}
+
+// JSONRepeatsMember reports whether an object anywhere in the JSON document
+// repeats a member name (compared after unescaping). Such a document reads
+// differently to different parsers (Go keeps the last value), so the
+// provider neither keeps nor sends one. A document that does not decode is
+// reported as repeating, too.
+func JSONRepeatsMember(document string) bool {
+	_, repeated, ok := walkJSON([]byte(document))
+	return repeated || !ok
+}
+
+// walkJSON reads a JSON document token by token. It returns every string
+// (object member names included) and number in it, each occurrence counted
+// and unescaped, whether an object repeats a member name, and whether the
+// document is valid JSON.
+func walkJSON(document []byte) (texts []string, repeated, ok bool) {
+	decoder := json.NewDecoder(bytes.NewReader(document))
+	decoder.UseNumber()
+	type frame struct {
+		object    bool
+		expectKey bool
+		names     map[string]bool
+	}
+	var stack []*frame
+	// value marks a value read in the current object, after which a member
+	// name comes next.
+	value := func() {
+		if len(stack) > 0 && stack[len(stack)-1].object {
+			stack[len(stack)-1].expectKey = true
 		}
 	}
-	walk(value)
-	return out
+	for {
+		token, err := decoder.Token()
+		if errors.Is(err, io.EOF) {
+			return texts, repeated, len(stack) == 0
+		}
+		if err != nil {
+			return texts, repeated, false
+		}
+		switch t := token.(type) {
+		case json.Delim:
+			switch t {
+			case '{':
+				value()
+				stack = append(stack, &frame{object: true, expectKey: true, names: map[string]bool{}})
+			case '[':
+				value()
+				stack = append(stack, &frame{})
+			default:
+				stack = stack[:len(stack)-1]
+			}
+		case string:
+			texts = append(texts, t)
+			if top := len(stack) - 1; top >= 0 && stack[top].object && stack[top].expectKey {
+				repeated = repeated || stack[top].names[t]
+				stack[top].names[t] = true
+				stack[top].expectKey = false
+				continue
+			}
+			value()
+		case json.Number:
+			texts = append(texts, t.String())
+			value()
+		default:
+			value()
+		}
+	}
 }
+
+// jsonBearing is a request body that sends JSON documents as they are (a
+// federated identity's public keys); checkRequestText refuses one that
+// repeats a member.
+type jsonBearing interface {
+	jsonDocuments() [][]byte
+}
+
+func federatedIdentityDocuments(identities []OIDCClientFederatedIdentity) [][]byte {
+	var documents [][]byte
+	for _, identity := range identities {
+		for _, key := range identity.PublicKeys {
+			documents = append(documents, key)
+		}
+	}
+	return documents
+}
+
+func (r OIDCClientCreateRequest) jsonDocuments() [][]byte {
+	return federatedIdentityDocuments(r.Credentials.FederatedIdentities)
+}
+
+// errRepeatedMemberInRequest refuses a request that would send a JSON
+// document repeating a member. Nothing was sent.
+var errRepeatedMemberInRequest = fmt.Errorf("%w: a JSON document in this request repeats an object member; the request was not sent", ErrInvalidIdentifier)
+
+// errRepeatedMemberInResponse refuses an answer that carries a JSON document
+// repeating a member; nothing of it is used.
+var errRepeatedMemberInResponse = fmt.Errorf("%w: a JSON document in the response repeats an object member", ErrUndecodableResponse)
 
 func claimTexts(claims []CustomClaim) []string {
 	out := make([]string, 0, 2*len(claims))

@@ -500,3 +500,32 @@ func TestClient_SecretMetadataIsCheckedEverywhere(t *testing.T) {
 	require.Len(t, got.Credentials.Secrets, 1)
 	assert.Equal(t, "abcd", got.Credentials.Secrets[0].Prefix)
 }
+
+// A public JWK that repeats a member (here "kid", once carrying the key in
+// escaped form) is neither used from an answer nor sent: a parser that keeps
+// the last value would see only the harmless one. The same holds without
+// the key.
+func TestClient_JWKsRepeatingAMemberAreRefused(t *testing.T) {
+	ctx := context.Background()
+	for name, first := range map[string]string{"carrying the escaped key": textKeyEscaped(), "harmless": "first"} {
+		jwk := `{"kty":"EC","crv":"P-256","kid":"` + first + `","kid":"safe","x":"a","y":"b"}`
+		t.Run("answer "+name, func(t *testing.T) {
+			c, _ := textServer(t, textClientJSON(`,"credentials":{"federatedIdentities":[{"issuer":"https://idp.example.com","publicKeys":[`+jwk+`]}]}`))
+			_, err := c.GetClient(ctx, "app")
+			require.ErrorIs(t, err, client.ErrUndecodableResponse)
+			assert.NotContains(t, err.Error(), textKey)
+			_, err = c.UpdateClient(ctx, "app", &client.OIDCClientCreateRequest{Name: "app"})
+			require.ErrorIs(t, err, client.ErrUndecodableResponse)
+			assert.ErrorIs(t, err, client.ErrResultUnread)
+		})
+		t.Run("request "+name, func(t *testing.T) {
+			c, requests := textServer(t, `{}`)
+			_, err := c.UpdateClient(ctx, "app", &client.OIDCClientCreateRequest{Name: "app", Credentials: client.OIDCClientCredentials{
+				FederatedIdentities: []client.OIDCClientFederatedIdentity{{Issuer: "https://idp.example.com", PublicKeys: []json.RawMessage{json.RawMessage(jwk)}}},
+			}})
+			require.ErrorIs(t, err, client.ErrInvalidIdentifier)
+			assert.NotContains(t, err.Error(), textKey)
+			assert.Zero(t, requests.Load(), "nothing is sent")
+		})
+	}
+}

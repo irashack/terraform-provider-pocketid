@@ -262,6 +262,11 @@ func TestPublicJWKProblem(t *testing.T) {
 		"public OKP key":      {`{"kty":"OKP","crv":"Ed25519","kid":"k","x":"a"}`, false},
 		"unknown key type":    {`{"kty":"future","kid":"k"}`, false},
 		"encryption-only use": {`{"kty":"EC","crv":"P-256","kid":"k","use":"enc","x":"a","y":"b"}`, true},
+		// A repeated member hides its first value from a parser that keeps
+		// the last, whatever its spelling.
+		"repeated kid":         {`{"kty":"EC","crv":"P-256","kid":"a","kid":"b","x":"a","y":"b"}`, true},
+		"repeated escaped kid": {`{"kty":"EC","crv":"P-256","kid":"a","k\u0069d":"b","x":"a","y":"b"}`, true},
+		"repeated nested":      {`{"kty":"EC","crv":"P-256","kid":"a","x":"a","y":"b","ext":{"n":1,"n":2}}`, true},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

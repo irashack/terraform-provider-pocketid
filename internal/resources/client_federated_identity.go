@@ -237,7 +237,7 @@ func checkFederatedPublicKeysSupport(ctx context.Context, api *client.Client, cr
 type publicJWKValidator struct{}
 
 func (publicJWKValidator) Description(context.Context) string {
-	return `must be one public, asymmetric JWK with a "kid", usable for signatures`
+	return `must be one public, asymmetric JWK with a "kid", usable for signatures, in which no member name repeats`
 }
 
 func (v publicJWKValidator) MarkdownDescription(ctx context.Context) string {
@@ -265,6 +265,11 @@ func publicJWKProblem(raw string) string {
 	var key map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(raw), &key); err != nil || key == nil {
 		return "Each public key must be a single JSON object containing one JWK."
+	}
+	// A repeated member reads differently to different parsers: the key
+	// checked here would not be the one Pocket ID or a relying party uses.
+	if client.JSONRepeatsMember(raw) {
+		return "A public key must not repeat a member name."
 	}
 	// member returns a string member, and whether it is present as a string.
 	member := func(name string) (string, bool) {

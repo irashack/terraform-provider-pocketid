@@ -81,6 +81,11 @@ func (c *Client) checkOIDCClient(addressed string, oidcClient *OIDCClient) error
 // and its groups' IDs: the metadata of every secret it lists
 // (checkSecretMetadata) and its text.
 func (c *Client) checkClientContent(oidcClient *OIDCClient) error {
+	for _, document := range federatedIdentityDocuments(oidcClient.Credentials.FederatedIdentities) {
+		if JSONRepeatsMember(string(document)) {
+			return errRepeatedMemberInResponse
+		}
+	}
 	for i := range oidcClient.Credentials.Secrets {
 		if err := c.checkSecretMetadata(&oidcClient.Credentials.Secrets[i]); err != nil {
 			return err
