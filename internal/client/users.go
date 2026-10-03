@@ -30,6 +30,9 @@ type User struct {
 
 // UserCreateRequest represents a request to create or update a user
 type UserCreateRequest struct {
+	// ID, on create only, is a caller-chosen user ID (a UUID; Pocket ID
+	// 2.12.0 and later). Empty lets Pocket ID generate one. Update ignores it.
+	ID       string `json:"id,omitempty"`
 	Username string `json:"username"`
 	// Email is omitted when empty: Pocket ID stores no address (null), and
 	// rejects "" as an invalid one.

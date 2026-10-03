@@ -671,3 +671,51 @@ resource "pocketid_user" "test" {
 		},
 	})
 }
+
+// A user created with a chosen ID keeps it; changing it is a plan-time error
+// (replacing a user would delete their passkeys), and leaving it out of the
+// configuration later keeps the user as it is.
+func TestAccResourceUser_fixedID(t *testing.T) {
+	const id = "5f0c8a52-3d4e-4b1a-9c2d-7e6f5a4b3c2d"
+	const otherID = "6a1d9b63-4e5f-4c2b-8d3e-8f7a6b5c4d3e"
+	config := func(id string) string {
+		idLine := ""
+		if id != "" {
+			idLine = fmt.Sprintf("  id       = %q\n", id)
+		}
+		return fmt.Sprintf(`
+resource "pocketid_user" "test" {
+%s  username = "fixed-id-user"
+  email    = "fixed-id-user@example.com"
+}
+`, idLine)
+	}
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: config(id),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("pocketid_user.test", "id", id),
+					testAccCheckExistsOnServer("pocketid_user.test", "/api/users"),
+				),
+			},
+			{Config: config(id), PlanOnly: true},
+			{ResourceName: "pocketid_user.test", ImportState: true, ImportStateVerify: true},
+			{Config: config(otherID), PlanOnly: true, ExpectError: regexp.MustCompile(`User ID cannot change`)},
+			{Config: config(""), PlanOnly: true},
+			// A second resource cannot claim the existing user by its ID.
+			{
+				Config: config(id) + fmt.Sprintf(`
+resource "pocketid_user" "claim" {
+  id       = %q
+  username = "fixed-id-claim"
+  email    = "fixed-id-claim@example.com"
+}
+`, id),
+				ExpectError: regexp.MustCompile(`already exists; import it`),
+			},
+		},
+	})
+}

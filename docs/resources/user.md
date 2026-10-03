@@ -121,10 +121,7 @@ resource "pocketid_user" "with_claims" {
 - `email_verified` (Boolean) Whether the user's email address is verified. Defaults to false.
 - `first_name` (String) The first name of the user, at most 50 characters. Omitted means none (an empty name in Pocket ID).
 - `groups` (Set of String) IDs of the groups the user belongs to. Authoritative: the user is in exactly these groups, and in none when the attribute is omitted or empty. On creation the groups are sent with the request, which keeps Pocket ID from adding the instance's signup default groups; when no groups are set, Pocket ID adds those defaults to the new user and the provider removes them right after, before the new account has a passkey or a session. Pocket ID ignores an ID that names no group, so the provider checks the user's groups after each change and fails, naming the group, if one was not applied.
+- `id` (String) The ID of the user, a lowercase UUID. Pocket ID generates it unless it is set here, which needs Pocket ID 2.12.0 or later. It cannot change once the user exists: a different value is a plan-time error, never a replacement, because replacing a user would delete their passkeys.
 - `is_admin` (Boolean) Whether the user has administrator privileges. Defaults to false.
 - `last_name` (String) The last name of the user, at most 50 characters. Omitted means none (an empty name in Pocket ID).
 - `locale` (String) The locale preference for the user (e.g., 'en', 'fr').
-
-### Read-Only
-
-- `id` (String) The ID of the user.

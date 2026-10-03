@@ -61,3 +61,8 @@
   Pocket ID would silently keep them. Changing only a group's custom claims no
   longer sends a group update Pocket ID refuses for LDAP groups, and refused
   deletions explain why.
+- `pocketid_user.id` can be set to choose the new user's ID (a lowercase
+  UUID; Pocket ID 2.12.0 or later, checked before anything is created). A
+  user that already has that ID is not taken over: import it instead. Changing
+  `id` later is a plan-time error rather than a replacement, because replacing
+  a user deletes their passkeys. Leaving `id` unset works as before.

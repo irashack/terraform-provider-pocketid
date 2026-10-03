@@ -74,10 +74,16 @@ func (r *userResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 ~> **LDAP** While LDAP is enabled, Pocket ID lets the API change only the locale of a user synchronized from LDAP (one with an LDAP ID); it silently keeps every other field. The provider checks this before an update and fails, naming the fields, instead of applying a change that would not take effect. Pocket ID also refuses to delete such a user unless it is disabled.`,
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
-				Description: "The ID of the user.",
-				Computed:    true,
+				Description: "The ID of the user, a lowercase UUID. Pocket ID generates it unless it is set here, which needs Pocket ID 2.12.0 or later. " +
+					"It cannot change once the user exists: a different value is a plan-time error, never a replacement, because replacing a user would delete their passkeys.",
+				Optional: true,
+				Computed: true,
+				Validators: []validator.String{
+					stringvalidator.RegexMatches(lowercaseUUIDPattern, "must be a lowercase UUID (8-4-4-4-12 hexadecimal digits)"),
+				},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
+					userIDUnchangeable{},
 				},
 			},
 			"username": schema.StringAttribute{
@@ -211,6 +217,7 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 
 	// Create the user
 	createReq := &client.UserCreateRequest{
+		ID:            plan.ID.ValueString(),
 		Username:      plan.Username.ValueString(),
 		Email:         plan.Email.ValueString(),
 		FirstName:     plan.FirstName.ValueString(),
@@ -236,7 +243,15 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 		"isAdmin":  createReq.IsAdmin,
 	})
 
+	if createReq.ID != "" && !r.checkFixedID(ctx, createReq.ID, resp) {
+		return
+	}
+
 	userResp, err := r.client.CreateUser(ctx, createReq)
+	if err != nil && createReq.ID != "" && !client.IsDefiniteRejection(err) {
+		r.uncertainFixedIDCreate(ctx, &plan, displayName, err, resp)
+		return
+	}
 	if err != nil {
 		detail := "Could not create user, unexpected error: " + err.Error()
 		var status *client.HTTPError
@@ -254,6 +269,10 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 	// Set state values from API response
 	plan.ID = types.StringValue(userResp.ID)
 	setUserFieldsFromAPI(&plan, userResp)
+	if createReq.ID != "" && userResp.ID != createReq.ID {
+		r.failedCreate(ctx, &plan, "ID", fmt.Errorf("the user was created with ID %s instead of the requested %s", userResp.ID, createReq.ID), resp)
+		return
+	}
 
 	// Pocket ID gives a user created through the API the instance's signup
 	// default groups (unless groups were sent with the create) and default
@@ -299,6 +318,39 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 	// Set the state
 	diags = resp.State.Set(ctx, &plan)
 	resp.Diagnostics.Append(diags...)
+}
+
+// lowercaseUUIDPattern is the form Pocket ID generates user IDs in. Pocket ID
+// stores a caller-chosen ID exactly as given and looks IDs up
+// case-sensitively, so only this form is accepted.
+var lowercaseUUIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// userIDMinVersion is the first Pocket ID release whose user create accepts
+// an ID (UserCreateDto.ID, binding "omitempty,uuid").
+const userIDMinVersion = "2.12.0"
+
+// userIDUnchangeable makes a configured id that differs from the existing
+// user's a plan-time error. Pocket ID cannot change a user's ID, and
+// replacing the user instead would delete their passkeys.
+type userIDUnchangeable struct{}
+
+func (userIDUnchangeable) Description(context.Context) string {
+	return "the ID of an existing user cannot change"
+}
+
+func (m userIDUnchangeable) MarkdownDescription(ctx context.Context) string {
+	return m.Description(ctx)
+}
+
+func (userIDUnchangeable) PlanModifyString(_ context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
+	if req.State.Raw.IsNull() || req.StateValue.IsNull() || req.StateValue.IsUnknown() ||
+		req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() || req.ConfigValue.Equal(req.StateValue) {
+		return
+	}
+	resp.Diagnostics.AddAttributeError(req.Path, "User ID cannot change",
+		"This user's ID is "+req.StateValue.ValueString()+". Pocket ID cannot change a user's ID, and the provider does not replace a user to change it, "+
+			"because that would delete the user's passkeys. Set id to the current value or remove it from the configuration. "+
+			"To create a different user with this ID, add a new resource.")
 }
 
 // setUserFieldsFromAPI copies the user's own fields from a Pocket ID response
@@ -427,6 +479,14 @@ func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	if !plan.Locale.IsNull() {
 		locale := plan.Locale.ValueString()
 		updateReq.Locale = &locale
+	}
+
+	// The plan modifier refuses a changed id at plan time; one that was
+	// unknown then is refused here, before anything is written.
+	if !plan.ID.Equal(state.ID) {
+		resp.Diagnostics.AddAttributeError(path.Root("id"), "User ID cannot change",
+			"This user's ID is "+state.ID.ValueString()+"; the configuration asks for "+plan.ID.ValueString()+". Pocket ID cannot change a user's ID. Nothing was changed.")
+		return
 	}
 
 	// While LDAP is enabled Pocket ID changes only the locale of a user
@@ -597,6 +657,60 @@ func (r *userResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 	tflog.Debug(ctx, "Deleted user", map[string]any{
 		"id": state.ID.ValueString(),
 	})
+}
+
+// checkFixedID checks, before a user with a caller-chosen ID is created, that
+// the server accepts one and that no user has that ID: a user that already
+// exists is imported, never claimed by a create. It reports false, with a
+// diagnostic, when the create must not be sent.
+func (r *userResource) checkFixedID(ctx context.Context, id string, resp *resource.CreateResponse) bool {
+	supported, err := r.client.VersionAtLeast(ctx, userIDMinVersion)
+	if err != nil {
+		resp.Diagnostics.AddAttributeError(path.Root("id"), "Cannot check the Pocket ID version",
+			"Setting id needs Pocket ID "+userIDMinVersion+" or later, and the server's version could not be read: "+err.Error()+". Nothing was created.")
+		return false
+	}
+	if !supported {
+		resp.Diagnostics.AddAttributeError(path.Root("id"), "Setting id needs a newer Pocket ID",
+			"Pocket ID accepts a chosen user ID from "+userIDMinVersion+" on; this server is older. Remove id to let it generate one. Nothing was created.")
+		return false
+	}
+	if _, err := r.client.GetUser(ctx, id); !client.IsNotFound(err, client.ResourceUser) {
+		detail := "A user with ID " + id + " already exists; import it instead (terraform import, or an import block). Nothing was created."
+		if err != nil {
+			detail = "Whether a user with ID " + id + " already exists could not be confirmed (" + err.Error() + "). Nothing was created."
+		}
+		resp.Diagnostics.AddAttributeError(path.Root("id"), "Cannot create a user with this ID", detail)
+		return false
+	}
+	return true
+}
+
+// uncertainFixedIDCreate handles a create with a caller-chosen ID whose
+// outcome is unknown (a transport failure or a server error): the user may
+// exist. A read decides: Pocket ID's own not-found means nothing was created;
+// otherwise the ID is kept in state (marked for replacement), so the user is
+// not lost track of. The create is never repeated.
+func (r *userResource) uncertainFixedIDCreate(ctx context.Context, plan *userResourceModel, displayName string, cause error, resp *resource.CreateResponse) {
+	id := plan.ID.ValueString()
+	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), accountCleanupTimeout)
+	defer cancel()
+	_, readErr := r.client.GetUser(readCtx, id)
+	if client.IsNotFound(readErr, client.ResourceUser) {
+		resp.Diagnostics.AddError("Error creating user", "Could not create user ("+cause.Error()+"); a read confirmed no user with ID "+id+" exists.")
+		return
+	}
+	found := "A read found the user exists."
+	if readErr != nil {
+		found = "Whether it exists could not be confirmed (read: " + readErr.Error() + ")."
+	}
+	if plan.DisplayName.IsUnknown() {
+		plan.DisplayName = types.StringValue(displayName)
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
+	resp.Diagnostics.AddError("User creation result uncertain",
+		"Creating user "+id+" failed with an uncertain result ("+cause.Error()+"). "+found+
+			" Its ID is kept in state, marked for replacement; inspect it before applying again. The create was not repeated.")
 }
 
 // ldapRestrictedChanges returns the attributes the update would change that
