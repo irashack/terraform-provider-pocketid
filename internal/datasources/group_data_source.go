@@ -53,7 +53,7 @@ func (d *groupDataSource) Metadata(_ context.Context, req datasource.MetadataReq
 // Schema defines the schema for the data source.
 func (d *groupDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Retrieves information about a Pocket-ID group, by ID or by exact name.",
+		Description: "Retrieves information about a Pocket-ID group, by ID or by exact name. A name is looked up in one request and the group found is then read in another; if the group is renamed in between, the read fails with an error instead of returning a group that no longer has the name.",
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -189,8 +189,9 @@ func (d *groupDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 // found". A name is resolved with the server's search, which can only return a
 // superset of the exact match, followed by an exact comparison over every page,
 // and then the single-object endpoint for the group found (the list carries
-// neither members nor allowed clients). When both are set they must name the
-// same group.
+// neither members nor allowed clients), whose name is compared again: a rename
+// between the two requests is reported, not returned. When both are set they
+// must name the same group.
 func (d *groupDataSource) lookup(ctx context.Context, data groupDataSourceModel, diags *diag.Diagnostics) *client.GroupDetail {
 	hasID, hasName := !data.ID.IsNull(), !data.Name.IsNull()
 
@@ -234,6 +235,15 @@ func (d *groupDataSource) lookup(ctx context.Context, data groupDataSourceModel,
 		group, err := d.client.GetUserGroupDetail(ctx, groups[i].ID)
 		switch {
 		case err == nil:
+			// The group was found by this name a moment ago; it may have been
+			// renamed since. Returning it would answer an exact-name lookup
+			// with a group that no longer has that name.
+			if group.Name != data.Name.ValueString() {
+				diags.AddError("Group changed while it was being read",
+					fmt.Sprintf("The group with id '%s' was named '%s' when it was found but is named '%s' when read. It was renamed while this data source was being read; read again.",
+						groups[i].ID, data.Name.ValueString(), group.Name))
+				return nil
+			}
 			return group
 		case client.IsNotFound(err, client.ResourceUserGroup):
 			diags.AddError("Group Not Found", fmt.Sprintf("The group named '%s' was deleted while it was being read", data.Name.ValueString()))

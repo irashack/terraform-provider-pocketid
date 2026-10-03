@@ -165,6 +165,23 @@ func TestGroupDataSource_Read_ByNameWithNoExactMatch(t *testing.T) {
 	assert.Contains(t, resp.Diagnostics.Errors()[0].Detail(), "No group found with name 'admins'")
 }
 
+// A group found by name that is renamed before its own record is read must not
+// be returned for the old name: the detail's name is compared again.
+func TestGroupDataSource_Read_ByNameReportsARenameDuringTheLookup(t *testing.T) {
+	groups := []map[string]any{b2GroupJSON(1, "admins")}
+	renamed := b2GroupJSON(1, "operators")
+	fake := newB2Fake(t)
+	fake.handle("GET /api/user-groups", b2GroupSearchHandler(groups))
+	fake.handle("GET /api/user-groups/"+b2UUID(1), func(w http.ResponseWriter, _ *http.Request) { b2JSON(w, http.StatusOK, renamed) })
+	ds := b2Configure(t, datasources.NewGroupDataSource(), fake.client())
+
+	resp := b2Read(t, ds, map[string]tftypes.Value{"name": b2Str("admins")})
+	require.True(t, resp.Diagnostics.HasError())
+	assert.Equal(t, []string{"Group changed while it was being read"}, b2Summaries(resp))
+	assert.Contains(t, resp.Diagnostics.Errors()[0].Detail(), "renamed")
+	assert.True(t, resp.State.Raw.IsNull(), "no group is reported")
+}
+
 // PostgreSQL reads a backslash in a LIKE pattern as an escape, so a search for
 // such a name could miss the group it names. The lookup lists every group
 // instead and still finds it.

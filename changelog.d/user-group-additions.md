@@ -83,3 +83,6 @@
   membership changed while the data source was read. The groups, users and
   clients are still read in separate passes, so the result is not an atomic
   snapshot of the server.
+- `pocketid_group` looked up by `name` now fails with an error if the group is
+  renamed between finding it and reading its details, instead of returning a
+  group that no longer has that name. Read again to resolve it.
