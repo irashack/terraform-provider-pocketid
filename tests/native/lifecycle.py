@@ -14,10 +14,10 @@ import urllib.parse
 import urllib.request
 import uuid
 
-# Usage: lifecycle.py TOOL MIRROR [FORK_VERSION]; the version defaults to the
-# first fork release, which the migration case was written against.
+# Usage: lifecycle.py TOOL MIRROR [PROVIDER_VERSION]; the version of the provider
+# in MIRROR to install, 3.0.0 unless given.
 tool, mirror = sys.argv[1:3]
-fork_version = sys.argv[3] if len(sys.argv) > 3 else "2.3.1"
+fork_version = sys.argv[3] if len(sys.argv) > 3 else "3.0.0"
 version = os.environ["POCKETID_TEST_VERSION"]
 base = os.environ["POCKETID_BASE_URL"]
 assert base.startswith("http://127.0.0.1:")

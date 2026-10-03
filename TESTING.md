@@ -59,7 +59,7 @@ with a random passphrase.
 
 | Script and arguments | What it proves |
 |---|---|
-| `lifecycle.py TOOL MIRROR PROVIDER_VERSION` (the version defaults to 2.3.1; always pass it) | The provider in the mirror installs; a confidential client is created, refreshed, updated, imported (no secret invented), planned empty and destroyed. On 2.14.0 and later the client has exactly one secret, client-credentials authentication works with it and fails with a wrong one. Under OpenTofu, state, backups and a saved plan are encrypted. |
+| `lifecycle.py TOOL MIRROR [PROVIDER_VERSION]` (the version in the mirror; defaults to 3.0.0) | The provider in the mirror installs; a confidential client is created, refreshed, updated, imported (no secret invented), planned empty and destroyed. On 2.14.0 and later the client has exactly one secret, client-credentials authentication works with it and fails with a wrong one. Under OpenTofu, state, backups and a saved plan are encrypted. |
 | `upgrade.py TOOL RELEASED_ARCHIVE NEW_BINARY` | State written by a published release upgrades with an empty plan. The released provider creates a confidential client with two federated identities; an administrator enables replay protection on one outside Terraform. The new build keeps the client ID and secret and each identity's replay protection through an update applied with `-refresh=false`. On 2.17.0 a back-channel logout URL set outside Terraform survives such an update, shows on the next refreshed plan, and plans empty once configured. |
 | `client_upgrade.py TOOL RELEASED_ARCHIVE NEW_BINARY` | `pocketid_client` state from a published release survives the client changes: homelab-shaped clients (fixed `client_id`, `launch_url`, `prevent_destroy`, a sorted `allowed_user_groups` list), a public restricted client and one with a generated ID plan empty (list to set, `client_id`, new computed attributes, `generate_secret`, `client_secret_id`). `generate_secret = false` applied without a refresh revokes exactly the stored secret and keeps the restriction; `true` generates a new one; removing the groups leaves the client restricted; a client restricted outside Terraform is not opened by an unrefreshed update; a different `client_id` plans a replacement that `prevent_destroy` refuses. |
 | `upgrade_users_groups.py TOOL OLD_BINARY NEW_BINARY` | User and group state from a previous build upgrades with an empty plan. The old build creates groups (with and without custom claims), a user with names, groups and claims, a group membership for a user Terraform does not manage, and a one-time access token. The new build plans no change, applies an unrelated update and plans empty again. |
@@ -148,7 +148,8 @@ directory. Release packaging uses GoReleaser as documented in RELEASE_CHECKLIST.
 `PROVIDER_MIGRATION_TEST=1` (address migration from upstream 2.3.0) was last run on
 Pocket ID 2.13.0 for release 2.3.1. It cannot run on a supported server: upstream
 2.3.0 cannot create a confidential client on 2.14 or later, and 2.13.0 has left the
-fixture allowlist. The case is retained in `lifecycle.py` as a record.
+fixture allowlist. The case is retained in `lifecycle.py` as a record; it was written
+against release 2.3.1, so pass `2.3.1` as `PROVIDER_VERSION` to reproduce it.
 The migration case additionally needs the genuine upstream 2.3.0 artifact under
 `registry.opentofu.org/trozz/pocketid` in the isolated mirror. It must not be a
 renamed binary of this provider. The test uses supported state replacement, checks
