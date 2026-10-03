@@ -44,6 +44,29 @@ def write_failure_log(path, data):
         os.close(fd)
 
 
+def host_reach(platform):
+    """What a listener the tests run on the host needs for the container to
+    reach it: extra `docker run` arguments and the address the listener binds.
+
+    Tests that serve an endpoint for Pocket ID to call (the SCIM sync test)
+    advertise it as host.docker.internal and bind POCKETID_TEST_HOST_BIND.
+    The macOS runtimes (OrbStack here) define that name and forward it to
+    services bound to the host's loopback address, so nothing is exposed.
+    Docker Engine on Linux, such as a GitHub runner, defines neither: the name
+    is added with host-gateway (the bridge network's gateway address), and a
+    loopback listener does not answer there, so the listener binds every
+    interface for the length of the test."""
+    if platform.startswith("linux"):
+        return ["--add-host", "host.docker.internal:host-gateway"], "0.0.0.0"
+    return [], "127.0.0.1"
+
+
+def docker_run_command(name, envfile, version, platform):
+    return ["docker", "run", "-d", "--name", name, "--label", "pocketid-provider-fixture=true",
+            "--env-file", str(envfile), "-p", "127.0.0.1::1411", *host_reach(platform)[0],
+            "ghcr.io/pocket-id/pocket-id:v" + version]
+
+
 def run(version, command):
     if version not in ("2.14.0", "2.15.0", "2.16.0", "2.17.0"):
         raise ValueError("version must be in the tested matrix")
@@ -63,9 +86,7 @@ def run(version, command):
                            "\nPGID=" + str(os.getgid()) + "\n")
         created = False
         try:
-            subprocess.run(["docker", "run", "-d", "--name", name, "--label", "pocketid-provider-fixture=true",
-                            "--env-file", str(envfile), "-p", "127.0.0.1::1411",
-                            "ghcr.io/pocket-id/pocket-id:v"+version], check=True, capture_output=True)
+            subprocess.run(docker_run_command(name, envfile, version, sys.platform), check=True, capture_output=True)
             created = True
             port = subprocess.check_output(["docker", "port", name, "1411/tcp"], text=True).strip().split(":")[-1]
             base = "http://127.0.0.1:" + port
@@ -116,7 +137,8 @@ def run(version, command):
             for key in list(env):
                 if key.startswith(("TF_LOG", "POCKETID_")):
                     del env[key]
-            env.update(POCKETID_BASE_URL=base, POCKETID_API_TOKEN=token, TF_ACC="1", POCKETID_TEST_VERSION=version)
+            env.update(POCKETID_BASE_URL=base, POCKETID_API_TOKEN=token, TF_ACC="1", POCKETID_TEST_VERSION=version,
+                       POCKETID_TEST_HOST_BIND=host_reach(sys.platform)[1])
             print("Fixture " + version + " ready (official image, isolated database, loopback)", flush=True)
             result = subprocess.run(command, env=env, capture_output=True)
             output = result.stdout + result.stderr

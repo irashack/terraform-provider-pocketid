@@ -39,13 +39,18 @@ database on a free loopback port, waits for health (HTTP 204 is success), stops 
 server, and seeds one synthetic administrator and a hash of a random API token,
 following upstream's fixture strategy. It restarts before running COMMAND and
 removes its container and anonymous volumes afterward. COMMAND sees
-`POCKETID_BASE_URL`, `POCKETID_API_TOKEN` and `POCKETID_TEST_VERSION`. No production
-URL, database, or user input is accepted. Credentials pass only through process
-memory/environment. Failure output is suppressed because the acceptance harness may
-include state in errors. For local diagnosis only, `POCKETID_FIXTURE_FAILURE_LOG`
-can name a new private file outside source; never publish that file. Logs/state are
-not release assets. `make test-scripts` (part of `make check`) runs the fixture
-script's own unit tests without a container.
+`POCKETID_BASE_URL`, `POCKETID_API_TOKEN`, `POCKETID_TEST_VERSION` and
+`POCKETID_TEST_HOST_BIND`, the address a test must bind for a server it runs on the
+host to be reached from the container as `host.docker.internal` (the SCIM sync test
+serves one). On macOS that name is the runtime's own and loopback is enough; on Linux
+the fixture adds the name with `--add-host host.docker.internal:host-gateway` and the
+address is `0.0.0.0`. No production URL, database, or user input is accepted.
+Credentials pass only through process memory/environment. Failure output is
+suppressed because the acceptance harness may include state in errors. For local
+diagnosis only, `POCKETID_FIXTURE_FAILURE_LOG` can name a new private file outside
+source; never publish that file. Logs/state are not release assets.
+`make test-scripts` (part of `make check`) runs the fixture script's own unit tests
+without a container.
 
 ## Native Terraform and OpenTofu scripts
 

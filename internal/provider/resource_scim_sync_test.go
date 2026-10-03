@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -34,16 +35,22 @@ type fakeScimEndpoint struct {
 	url       string
 }
 
-// newFakeScimEndpoint listens on the loopback interface only, for the length
-// of the test. The fixture's container reaches the host as
-// host.docker.internal, and under the OrbStack runtime this machine uses that
-// name connects to services bound to the host's loopback address, so nothing
-// here is reachable from the network. (A runtime that does not forward to
-// loopback needs a wider bind; the test then fails to sync rather than
-// exposing anything.)
+// newFakeScimEndpoint listens for the length of the test, on the address the
+// fixture names in POCKETID_TEST_HOST_BIND (loopback when it is unset). The
+// fixture's container reaches the host as host.docker.internal. Under the
+// OrbStack runtime this machine uses, that name connects to services bound to
+// the host's loopback address, so nothing here is reachable from the network.
+// Docker Engine on Linux, such as a CI runner, routes the name to the bridge
+// gateway, which a loopback listener does not answer; there the fixture adds
+// the name and asks for every interface. Every request needs the bearer token
+// and the data is disposable.
 func newFakeScimEndpoint(t *testing.T, token string) *fakeScimEndpoint {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	bind := os.Getenv("POCKETID_TEST_HOST_BIND")
+	if bind == "" {
+		bind = "127.0.0.1"
+	}
+	listener, err := net.Listen("tcp", net.JoinHostPort(bind, "0"))
 	require.NoError(t, err)
 	fake := &fakeScimEndpoint{token: token}
 	server := &http.Server{Handler: http.HandlerFunc(fake.serve)}

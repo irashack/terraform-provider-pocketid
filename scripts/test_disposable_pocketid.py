@@ -1,4 +1,5 @@
-"""Unit tests for the fixture's failure-log handling (no container needed).
+"""Unit tests for the fixture's failure-log handling and host reachability
+(no container needed).
 
 Run: python3 -m unittest discover -s scripts -p 'test_*.py'
 """
@@ -72,6 +73,28 @@ class FailureLogTest(unittest.TestCase):
     def test_missing_directory_refused(self):
         with self.assertRaises(ValueError):
             fixture.check_failure_log_path(os.path.join(self.dir.name, "missing", "failure.log"))
+
+
+class HostReachTest(unittest.TestCase):
+    def test_linux_adds_the_host_name_and_binds_every_interface(self):
+        extra, bind = fixture.host_reach("linux")
+        self.assertEqual(extra, ["--add-host", "host.docker.internal:host-gateway"])
+        self.assertEqual(bind, "0.0.0.0")
+
+    def test_macos_keeps_the_runtimes_own_name_and_stays_on_loopback(self):
+        extra, bind = fixture.host_reach("darwin")
+        self.assertEqual(extra, [])
+        self.assertEqual(bind, "127.0.0.1")
+
+    def test_run_command_carries_the_host_name_only_on_linux(self):
+        linux = fixture.docker_run_command("name", "/tmp/env", "2.14.0", "linux")
+        darwin = fixture.docker_run_command("name", "/tmp/env", "2.14.0", "darwin")
+        pair = ["--add-host", "host.docker.internal:host-gateway"]
+        self.assertEqual(linux[linux.index("--add-host"):linux.index("--add-host") + 2], pair)
+        self.assertNotIn("--add-host", darwin)
+        for command in (linux, darwin):
+            self.assertEqual(command[-1], "ghcr.io/pocket-id/pocket-id:v2.14.0")
+            self.assertIn("127.0.0.1::1411", command)  # still published on loopback only
 
 
 if __name__ == "__main__":
