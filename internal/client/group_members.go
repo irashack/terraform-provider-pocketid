@@ -43,10 +43,10 @@ func (c *Client) SetGroupMembers(ctx context.Context, groupID string, userIDs []
 	// UserGroupDto.users has no omitempty: a group without members is [] or
 	// null; a response without the key is not one this client understands.
 	var fields map[string]json.RawMessage
-	raw, present := json.RawMessage(nil), false
-	if json.Unmarshal(body, &fields) == nil {
-		raw, present = fields["users"]
+	if err := decodeResult(body, &fields); err != nil {
+		return nil, fmt.Errorf("members of group %s: %w", groupID, err)
 	}
+	raw, present := fields["users"]
 	var users []groupRelationRef
 	if !present || json.Unmarshal(raw, &users) != nil {
 		return nil, fmt.Errorf("members of group %s: %w: the response did not list them", groupID, ErrResultUnread)

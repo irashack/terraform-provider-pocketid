@@ -308,7 +308,7 @@ var errUserGroupsUnlisted = errors.New("the response did not list the user's gro
 // that writes the user's groups afterwards addresses the returned ID.
 func (c *Client) decodeUserGroupIDs(body []byte, userID string) (string, []string, error) {
 	var fields map[string]json.RawMessage
-	if json.Unmarshal(body, &fields) != nil || fields == nil {
+	if decodeResponse(body, &fields) != nil || fields == nil {
 		return "", nil, errUserGroupsUnlisted
 	}
 	var gotID string

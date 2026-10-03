@@ -258,3 +258,76 @@ func TestClient_RevokeClientSecretComparesTheListedIDAsAUUID(t *testing.T) {
 	require.Error(t, err, "the secret is still listed")
 	assert.Contains(t, err.Error(), "still listed")
 }
+
+// The area files' own decode sites use the foundation's decoders: a body the
+// decoder rejects (here a number too long for its field, which could be a
+// reflected all-digit key) gives ErrUndecodableResponse alone for a read, and
+// for a mutation the server accepted also ErrResultUnread; no error carries
+// the literal or the decoder's own message.
+func TestClient_AreaDecodeErrorsAreTheFoundationsSentinels(t *testing.T) {
+	const literal = "98765432109876543210987654321098765432109876543210"
+	ctx := context.Background()
+	reads := map[string]struct {
+		body string
+		call func(c *client.Client) error
+	}{
+		"GetCurrentUser":   {`{"id":"` + returnedIDsUser + `","isAdmin":` + literal + `}`, func(c *client.Client) error { _, err := c.GetCurrentUser(ctx); return err }},
+		"ListUserPasskeys": {`[{"id":"` + returnedIDsUser + `","backupState":` + literal + `}]`, func(c *client.Client) error { _, err := c.ListUserPasskeys(ctx, returnedIDsUser); return err }},
+		"GetUserGroupDetail": {`{"id":"` + returnedIDsGroup + `","customClaims":[],"users":[],"allowedOidcClients":[],"ldapId":` + literal + `}`, func(c *client.Client) error {
+			_, err := c.GetUserGroupDetail(ctx, returnedIDsGroup)
+			return err
+		}},
+		"AllowedClientIDsByGroup": {pageJSON(`{"id":"app","allowedUserGroups":` + literal + `}`), func(c *client.Client) error {
+			_, _, err := c.AllowedClientIDsByGroup(ctx)
+			return err
+		}},
+		"LDAPEnabled":       {`[{"key":"ldapEnabled","value":` + literal + `}]`, func(c *client.Client) error { _, err := c.LDAPEnabled(ctx); return err }},
+		"ListClientSecrets": {`[{"id":"` + returnedIDsUser + `","isActive":` + literal + `}]`, func(c *client.Client) error { _, err := c.ListClientSecrets(ctx, "app"); return err }},
+		"GetAPI":            {`{"id":"` + returnedIDsAPI + `","name":` + literal + `}`, func(c *client.Client) error { _, err := c.GetAPI(ctx, returnedIDsAPI); return err }},
+		"IsOIDCClientPublic": {`{"isPublic":` + literal + `}`, func(c *client.Client) error {
+			_, err := c.IsOIDCClientPublic(ctx, "app")
+			return err
+		}},
+	}
+	for name, tc := range reads {
+		t.Run("read "+name, func(t *testing.T) {
+			c, _ := returnedIDsServer(t, tc.body)
+			err := tc.call(c)
+			require.Error(t, err)
+			assert.Equal(t, client.ErrUndecodableResponse, err, "the sentinel alone")
+		})
+	}
+	mutations := map[string]struct {
+		body string
+		call func(c *client.Client) error
+	}{
+		"SetGroupMembers": {`{"id":"` + returnedIDsGroup + `","users":` + literal + `}`, func(c *client.Client) error {
+			_, err := c.SetGroupMembers(ctx, returnedIDsGroup, nil)
+			return err
+		}},
+		"SetGroupMembers, not an object": {literal, func(c *client.Client) error {
+			_, err := c.SetGroupMembers(ctx, returnedIDsGroup, nil)
+			return err
+		}},
+		"CreateSignupToken": {`{"id":"` + returnedIDsUser + `","usageLimit":` + literal + `}`, func(c *client.Client) error {
+			_, err := c.CreateSignupToken(ctx, &client.SignupTokenCreateRequest{UsageLimit: 1})
+			return err
+		}},
+		"CreateOneTimeAccessToken": {`{"token":` + literal + `}`, func(c *client.Client) error {
+			_, err := c.CreateOneTimeAccessToken(ctx, returnedIDsUser, &client.OneTimeAccessTokenRequest{})
+			return err
+		}},
+	}
+	for name, tc := range mutations {
+		t.Run("mutation "+name, func(t *testing.T) {
+			c, _ := returnedIDsServer(t, tc.body)
+			err := tc.call(c)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, client.ErrResultUnread)
+			assert.NotContains(t, err.Error(), literal[:12])
+			var syntax *json.SyntaxError
+			var typeErr *json.UnmarshalTypeError
+			assert.False(t, errors.As(err, &syntax) || errors.As(err, &typeErr), "no decoder error is kept")
+		})
+	}
+}

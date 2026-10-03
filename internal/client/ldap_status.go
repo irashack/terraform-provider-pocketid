@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 )
@@ -37,8 +36,8 @@ func (c *Client) LDAPEnabled(ctx context.Context) (bool, error) {
 		Key   string `json:"key"`
 		Value string `json:"value"`
 	}
-	if err := json.Unmarshal(body, &vars); err != nil {
-		return false, fmt.Errorf("the application configuration could not be read")
+	if err := decodeResponse(body, &vars); err != nil {
+		return false, err
 	}
 	for _, v := range vars {
 		if v.Key == "ldapEnabled" {

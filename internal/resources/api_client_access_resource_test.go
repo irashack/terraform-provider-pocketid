@@ -942,7 +942,7 @@ func TestAPIClientAccess_ClientCheckDecodesOnlyTheFlag(t *testing.T) {
 				return
 			}
 			assert.Contains(t, errs, "Could not read OIDC client")
-			assert.Contains(t, errs, "could not be decoded")
+			assert.Contains(t, errs, client.ErrUndecodableResponse.Error())
 			assert.Contains(t, errs, "no mutation was attempted")
 			assert.NotContains(t, errs, numericKey)
 			assert.NotContains(t, errs, overflow)

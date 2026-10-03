@@ -323,8 +323,8 @@ func (c *Client) ListClientSecrets(ctx context.Context, clientID string) ([]Clie
 	}
 
 	var result []ClientSecretMetadata
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("error unmarshaling client secret list")
+	if err := decodeResponse(body, &result); err != nil {
+		return nil, err
 	}
 	if err := c.checkClientSecretList(result); err != nil {
 		return nil, err

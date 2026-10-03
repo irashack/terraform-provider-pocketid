@@ -237,7 +237,7 @@ func TestClient_APIDecodeErrorsCarryNoValue(t *testing.T) {
 	check := func(label string, err error) {
 		t.Helper()
 		require.Error(t, err, label)
-		assert.Contains(t, err.Error(), "could not be decoded", label)
+		assert.ErrorIs(t, err, client.ErrUndecodableResponse, label)
 		assert.NotContains(t, err.Error(), numericKey, label)
 		assert.NotContains(t, err.Error(), overflow, label)
 	}
@@ -305,7 +305,7 @@ func TestClient_IsOIDCClientPublic(t *testing.T) {
 			public, err := c.IsOIDCClientPublic(ctx, "app")
 			if tc.fails {
 				require.Error(t, err)
-				assert.Contains(t, err.Error(), "could not be decoded")
+				assert.ErrorIs(t, err, client.ErrUndecodableResponse)
 				assert.NotContains(t, err.Error(), numericKey)
 				return
 			}

@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -45,7 +44,7 @@ func (c *Client) CreateOneTimeAccessToken(ctx context.Context, userID string, re
 	// The POST succeeded, so a token may exist from here on; it is never sent
 	// again. Pocket ID answers {"token": "..."} (onetimeaccess handler).
 	var token OneTimeAccessToken
-	if err := json.Unmarshal(body, &token); err != nil || token.Token == "" {
+	if err := decodeResult(body, &token); err != nil || token.Token == "" {
 		return nil, fmt.Errorf("one-time access token for user %s: %w: the response held no token, so a token may have been created that stays valid until it expires; no second request was sent", userID, ErrResultUnread)
 	}
 

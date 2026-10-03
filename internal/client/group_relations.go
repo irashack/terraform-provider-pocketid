@@ -57,8 +57,8 @@ func (c *Client) GetUserGroupDetail(ctx context.Context, groupID string) (*Group
 		return nil, err
 	}
 	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(body, &fields); err != nil {
-		return nil, fmt.Errorf("error unmarshaling response: %w", err)
+	if err := decodeResponse(body, &fields); err != nil {
+		return nil, err
 	}
 	for _, key := range []string{"id", "customClaims", "users", "allowedOidcClients"} {
 		if _, present := fields[key]; !present {
@@ -75,8 +75,8 @@ func (c *Client) GetUserGroupDetail(ctx context.Context, groupID string) (*Group
 		Users              []groupRelationRef `json:"users"`
 		AllowedOidcClients []groupRelationRef `json:"allowedOidcClients"`
 	}
-	if err := json.Unmarshal(body, &wire); err != nil {
-		return nil, fmt.Errorf("error unmarshaling response: %w", err)
+	if err := decodeResponse(body, &wire); err != nil {
+		return nil, err
 	}
 	if err := c.checkReturnedID("user group", groupID, wire.ID); err != nil {
 		return nil, fmt.Errorf("the answer for user group %s describes another group; refusing to use it: %w", groupID, err)
@@ -173,8 +173,8 @@ func (c *Client) AllowedClientIDsByGroup(ctx context.Context) (clients map[strin
 			return nil, false, nil
 		}
 		var groups []groupRelationRef
-		if err := json.Unmarshal(item.AllowedUserGroups, &groups); err != nil {
-			return nil, false, fmt.Errorf("error unmarshaling response: %w", err)
+		if err := decodeResponse(item.AllowedUserGroups, &groups); err != nil {
+			return nil, false, err
 		}
 		for _, group := range groups {
 			if err := c.checkReturnedID("user group", "", group.ID); err != nil {

@@ -281,7 +281,7 @@ func (c *Client) DeleteAPI(ctx context.Context, id string) error {
 func (c *Client) ListAPIs(ctx context.Context) ([]API, error) {
 	apis, err := listAll(ctx, c, "APIs", "/api/apis", nil, func(api API) string { return api.ID })
 	if err != nil {
-		return nil, valueFreeDecodeError(err)
+		return nil, err
 	}
 	for i := range apis {
 		if err := c.apiCheckResponse(&apis[i], ""); err != nil {
@@ -427,8 +427,8 @@ func (c *Client) IsOIDCClientPublic(ctx context.Context, clientID string) (bool,
 	var fields struct {
 		IsPublic *bool `json:"isPublic"`
 	}
-	if json.Unmarshal(body, &fields) != nil || fields.IsPublic == nil {
-		return false, errAPIResponseUndecodable
+	if decodeResponse(body, &fields) != nil || fields.IsPublic == nil {
+		return false, ErrUndecodableResponse
 	}
 	return *fields.IsPublic, nil
 }
@@ -581,31 +581,16 @@ func (c *Client) decodeClientAPIGrants(body []byte) ([]ClientAPIGrant, error) {
 	return grants, nil
 }
 
-// errAPIResponseUndecodable is what every decode failure in this file becomes:
-// a fixed message with no part of the response. Go's own decoding errors can
-// carry a value from it (a number that overflows its field), which could be
-// a reflected credential. At integration the sites switch to the foundation's
-// decodeResponse.
-var errAPIResponseUndecodable = errors.New("the response could not be decoded")
-
+// decodeAPI decodes an API the server returned. A body that is not the JSON
+// expected is the foundation's fixed ErrUndecodableResponse, which repeats
+// nothing from the response (Go's own decoding errors can carry a value from
+// it, such as a number that overflows its field).
 func decodeAPI(body []byte) (*API, error) {
 	var result API
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, errAPIResponseUndecodable
+	if err := decodeResponse(body, &result); err != nil {
+		return nil, err
 	}
 	return &result, nil
-}
-
-// valueFreeDecodeError replaces a Go JSON decoding error found anywhere in
-// err's chain (the pagination walk wraps one) with errAPIResponseUndecodable;
-// other errors pass unchanged.
-func valueFreeDecodeError(err error) error {
-	var typeErr *json.UnmarshalTypeError
-	var syntaxErr *json.SyntaxError
-	if errors.As(err, &typeErr) || errors.As(err, &syntaxErr) {
-		return errAPIResponseUndecodable
-	}
-	return err
 }
 
 // Pocket ID's limits for APIs (api.apiCreateDto and apiPermissionInputDto,

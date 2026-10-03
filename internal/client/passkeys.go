@@ -2,8 +2,6 @@ package client
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 )
 
 // Passkey is a WebAuthn credential registered by a user, as far as the
@@ -52,8 +50,8 @@ func (c *Client) ListUserPasskeys(ctx context.Context, userID string) ([]Passkey
 		Transport      []string `json:"transport"`
 		AAGUID         string   `json:"aaguid"`
 	}
-	if err := json.Unmarshal(body, &wire); err != nil {
-		return nil, fmt.Errorf("error unmarshaling response: %w", err)
+	if err := decodeResponse(body, &wire); err != nil {
+		return nil, err
 	}
 	passkeys := make([]Passkey, 0, len(wire))
 	for _, item := range wire {

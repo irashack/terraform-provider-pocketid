@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 )
@@ -189,7 +188,7 @@ func (c *Client) GetScimServiceProviderToken(ctx context.Context, clientID, prov
 		ID    *string `json:"id"`
 		Token *string `json:"token"`
 	}
-	if err := json.Unmarshal(body, &answer); err != nil || answer.ID == nil || answer.Token == nil ||
+	if err := decodeResponse(body, &answer); err != nil || answer.ID == nil || answer.Token == nil ||
 		c.checkReturnedID("SCIM service provider", providerID, *answer.ID) != nil {
 		return "", "", ErrUnexpectedAnswer
 	}

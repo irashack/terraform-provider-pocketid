@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/url"
 )
@@ -72,7 +71,10 @@ func (c *Client) CreateSignupToken(ctx context.Context, req *SignupTokenCreateRe
 	}
 
 	var result SignupToken
-	if err := json.Unmarshal(raw, &result); err != nil || c.checkCreatedID("signup token", "", result.ID) != nil {
+	if err := decodeResult(raw, &result); err != nil {
+		return nil, fmt.Errorf("signup token creation: %w; a token may have been created that this provider cannot name; it expires on its own", err)
+	}
+	if c.checkCreatedID("signup token", "", result.ID) != nil {
 		return nil, fmt.Errorf("signup token creation: %w: the response held no usable ID, so a token may have been created that this provider cannot name; it expires on its own", ErrResultUnread)
 	}
 	if err := c.checkGroupIDs(result.UserGroups); err != nil {
