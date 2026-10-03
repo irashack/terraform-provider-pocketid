@@ -48,11 +48,20 @@
   of reusing one. This keeps anything a server sends outside a response out of
   the logs, and makes each attempt exactly one request; the cost is one TCP
   (and TLS) handshake per request, which is small next to a Terraform run.
-- An object ID in any Pocket ID response is checked before the provider uses
-  it: it must be the ID the request named (when it named one), otherwise a
-  valid ID for its kind, and it must never contain the API key. A list that
-  holds an ID no Pocket ID object can have fails as a whole. Such a response
-  is reported as an error that does not include the value.
+- The ID of an object Pocket ID creates, and the ID of every object in a list
+  the provider reads, is checked before the provider uses it: it must have a
+  form Pocket ID itself can give an object, and it must never contain the
+  API key. A list that holds an ID no Pocket ID object can have fails as a
+  whole; clients whose IDs Pocket ID allows but this provider cannot address
+  (such as metadata-document clients) are still listed. Such a response is
+  reported as an error that does not include the value.
+<!-- Integrator: this bullet covers only what the foundation branch applies
+(create responses, listed objects' top-level IDs, identifiers going out).
+Once the area methods adopt checkReturnedID per the checklist in
+internal/client/doc.go, extend it: an ID in a read or update response must
+be the object the request named (the same UUID in any letter case; a client
+ID exactly), and nested IDs (a user's groups, a client's allowed groups, a
+SCIM provider's client, signup default groups) are checked too. -->
 - Setting up a connection to Pocket ID now ends with the request: when a run
   is cancelled or the provider's `timeout` passes, a connection still waiting
   for the server's TLS handshake is closed at once. Connecting is also limited

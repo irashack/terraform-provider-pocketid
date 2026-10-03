@@ -83,8 +83,10 @@ func getPage[T any](ctx context.Context, c *Client, endpoint string, query url.V
 //     before anything is returned: it does not contain the API key, and it
 //     has a form a Pocket ID object ID takes (a UUID, a client ID or a CIMD
 //     client's URL; listAll does not know which kind it lists). Any other ID
-//     fails the whole list. IDs nested inside the objects are the caller's
-//     to check.
+//     fails the whole list. This is a preliminary check: a caller listing
+//     objects with UUIDs still checks each top-level ID as its kind, and
+//     the IDs nested inside the objects as well (see the integration
+//     checklist in doc.go).
 //   - It ends: it refuses a pagination block that is missing or inconsistent,
 //     a page number the server did not honor (a server that never advances),
 //     and more than maxListPages pages.
