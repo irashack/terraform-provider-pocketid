@@ -4,21 +4,22 @@ page_title: "pocketid_signup_tokens Data Source - terraform-provider-pocketid"
 subcategory: ""
 description: |-
   Lists the signup tokens that are currently valid in Pocket-ID, oldest first: the ones created in the Pocket-ID interface as well as by pocketid_signup_token. Pocket-ID removes a token when it expires, so expired tokens are not listed; a token whose uses are used up is listed until it expires.
-  Pocket-ID's list includes each token's value, so every token here is a live secret: anyone who can read the state can register an account with it. The values are marked sensitive, but they are stored in the state in plain text. Do not use this data source where the state is widely readable, and prefer reading only id, expires_at and the counts.
+  Token values are deliberately not exposed. Pocket-ID's list includes each token's value, but a value lets anyone who has it register an account, and this data source would copy the value of every outstanding token, including tokens created outside Terraform, into the state. It returns only each token's ID, times, limits, use count and groups. The value of a token that Terraform created is available as token on pocketid_signup_token.
 ---
 
 # pocketid_signup_tokens (Data Source)
 
 Lists the signup tokens that are currently valid in Pocket-ID, oldest first: the ones created in the Pocket-ID interface as well as by `pocketid_signup_token`. Pocket-ID removes a token when it expires, so expired tokens are not listed; a token whose uses are used up is listed until it expires.
 
-**Pocket-ID's list includes each token's value**, so every `token` here is a live secret: anyone who can read the state can register an account with it. The values are marked sensitive, but they are stored in the state in plain text. Do not use this data source where the state is widely readable, and prefer reading only `id`, `expires_at` and the counts.
+**Token values are deliberately not exposed.** Pocket-ID's list includes each token's value, but a value lets anyone who has it register an account, and this data source would copy the value of every outstanding token, including tokens created outside Terraform, into the state. It returns only each token's ID, times, limits, use count and groups. The value of a token that Terraform created is available as `token` on `pocketid_signup_token`.
 
 ## Example Usage
 
 ```terraform
 # Every signup token that is currently valid, including the ones created in
-# the Pocket-ID interface. Each token's value is in the list and is a live
-# secret, so it lands in the state: read only what you need.
+# the Pocket-ID interface. The list has each token's ID, times, limits, use count
+# and groups, but never a token's value: that is available only as `token` on a
+# pocketid_signup_token that Terraform created.
 data "pocketid_signup_tokens" "all" {}
 
 output "open_signup_tokens" {
@@ -43,8 +44,7 @@ Read-Only:
 
 - `created_at` (String) When the token was created, in RFC3339 format.
 - `expires_at` (String) When the token expires, in RFC3339 format.
-- `id` (String) The ID of the signup token (not the token value).
-- `token` (String, Sensitive) The signup token value that people present to register. Sensitive.
+- `id` (String) The ID of the signup token.
 - `usage_count` (Number) How many people have registered with the token.
 - `usage_limit` (Number) How many people can register with the token.
 - `user_group_ids` (Set of String) IDs of the groups people who register with the token join.

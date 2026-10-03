@@ -38,9 +38,13 @@
   state with `expired = true` and the next plan does not create a new one. Use
   `-replace` for a fresh token. Pocket ID silently ignores a group ID that
   names no group; the provider fails and records the token as tainted so the
-  next apply replaces it. The data source lists the valid tokens; because
-  Pocket ID's list includes each token's value, every `token` it returns is a
-  live secret that is stored in the state (marked sensitive).
+  next apply replaces it. The data source lists the valid tokens with their
+  ID, times, limits, use count and groups. Token values are deliberately not
+  exposed by the list: Pocket ID's list includes each token's value, and
+  copying every outstanding token, including ones created outside Terraform,
+  into the state would let anyone who can read it register accounts. The value
+  of a token Terraform created is the `token` attribute of
+  `pocketid_signup_token`.
 - New data source `pocketid_api_keys`: lists the API keys of the Pocket ID user
   who owns the key the provider uses (name, description, and creation, expiry
   and last-used times; never a key value). Its purpose is a `check` block that

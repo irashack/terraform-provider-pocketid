@@ -37,7 +37,6 @@ type signupTokensDataSourceModel struct {
 
 type signupTokenItemModel struct {
 	ID           types.String `tfsdk:"id"`
-	Token        types.String `tfsdk:"token"`
 	ExpiresAt    types.String `tfsdk:"expires_at"`
 	CreatedAt    types.String `tfsdk:"created_at"`
 	UsageLimit   types.Int64  `tfsdk:"usage_limit"`
@@ -53,14 +52,15 @@ func (d *signupTokensDataSource) Metadata(_ context.Context, req datasource.Meta
 // Schema defines the schema for the data source.
 func (d *signupTokensDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Lists the signup tokens that are currently valid in Pocket-ID.",
+		Description: "Lists the signup tokens that are currently valid in Pocket-ID, without their values.",
 		MarkdownDescription: "Lists the signup tokens that are currently valid in Pocket-ID, oldest first: the ones created in the " +
 			"Pocket-ID interface as well as by `pocketid_signup_token`. Pocket-ID removes a token when it expires, so expired " +
 			"tokens are not listed; a token whose uses are used up is listed until it expires.\n\n" +
-			"**Pocket-ID's list includes each token's value**, so every `token` here is a live secret: anyone who can read the " +
-			"state can register an account with it. The values are marked sensitive, but they are stored in the state in " +
-			"plain text. Do not use this data source where the state is widely readable, and prefer reading only `id`, " +
-			"`expires_at` and the counts.",
+			"**Token values are deliberately not exposed.** Pocket-ID's list includes each token's value, but a value lets " +
+			"anyone who has it register an account, and this data source would copy the value of every outstanding token, " +
+			"including tokens created outside Terraform, into the state. It returns only each token's ID, times, limits, " +
+			"use count and groups. The value of a token that Terraform created is available as `token` on " +
+			"`pocketid_signup_token`.",
 		Attributes: map[string]schema.Attribute{
 			"tokens": schema.ListNestedAttribute{
 				Description: "The valid signup tokens, oldest first.",
@@ -68,13 +68,8 @@ func (d *signupTokensDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
 						"id": schema.StringAttribute{
-							Description: "The ID of the signup token (not the token value).",
+							Description: "The ID of the signup token.",
 							Computed:    true,
-						},
-						"token": schema.StringAttribute{
-							Description: "The signup token value that people present to register. Sensitive.",
-							Computed:    true,
-							Sensitive:   true,
 						},
 						"expires_at": schema.StringAttribute{
 							Description: "When the token expires, in RFC3339 format.",
@@ -139,7 +134,6 @@ func (d *signupTokensDataSource) Read(ctx context.Context, _ datasource.ReadRequ
 		}
 		data.Tokens[i] = signupTokenItemModel{
 			ID:           types.StringValue(token.ID),
-			Token:        types.StringValue(token.Token),
 			ExpiresAt:    types.StringValue(token.ExpiresAt),
 			CreatedAt:    types.StringValue(token.CreatedAt),
 			UsageLimit:   types.Int64Value(int64(token.UsageLimit)),

@@ -28,24 +28,25 @@ func TestSignupTokensDataSource_Metadata(t *testing.T) {
 	assert.Equal(t, "pocketid_signup_tokens", resp.TypeName)
 }
 
-func TestSignupTokensDataSource_SchemaMarksTheTokenSensitive(t *testing.T) {
+// Pocket ID's list carries each token's value. A list data source that kept
+// them would copy every outstanding invitation, including those created
+// outside Terraform, into the state, so the schema has no attribute for it.
+func TestSignupTokensDataSource_SchemaOffersNoTokenValue(t *testing.T) {
 	resp := &datasource.SchemaResponse{}
 	datasources.NewSignupTokensDataSource().Schema(context.Background(), datasource.SchemaRequest{}, resp)
 	require.False(t, resp.Diagnostics.HasError())
-	assert.Contains(t, resp.Schema.MarkdownDescription, "live secret")
+	assert.Contains(t, resp.Schema.MarkdownDescription, "deliberately not exposed")
 
 	list, ok := resp.Schema.Attributes["tokens"].(schema.ListNestedAttribute)
 	require.True(t, ok)
 	assert.True(t, list.Computed)
-	token, ok := list.NestedObject.Attributes["token"].(schema.StringAttribute)
-	require.True(t, ok)
-	assert.True(t, token.Sensitive, "Pocket ID's list returns each token's value, so it must be sensitive")
-	for _, name := range []string{"id", "expires_at", "created_at", "usage_limit", "usage_count", "user_group_ids"} {
-		attribute, ok := list.NestedObject.Attributes[name]
-		require.True(t, ok, name)
-		assert.False(t, attribute.IsSensitive(), name)
+	var names []string
+	for name, attribute := range list.NestedObject.Attributes {
+		names = append(names, name)
 		assert.True(t, attribute.IsComputed(), name)
+		assert.False(t, attribute.IsSensitive(), name)
 	}
+	assert.ElementsMatch(t, []string{"id", "expires_at", "created_at", "usage_limit", "usage_count", "user_group_ids"}, names)
 }
 
 func TestSignupTokensDataSource_Configure(t *testing.T) {
@@ -87,7 +88,7 @@ func TestSignupTokensDataSource_ListsEveryTokenAcrossPages(t *testing.T) {
 		var data []map[string]any
 		for i := (page - 1) * limit; i < total && i < page*limit; i++ {
 			data = append(data, map[string]any{
-				"id": fmt.Sprintf("00000000-0000-4000-8000-%012d", i), "token": fmt.Sprintf("token-%d", i),
+				"id": fmt.Sprintf("00000000-0000-4000-8000-%012d", i), "token": fmt.Sprintf("must-not-reach-state-%d", i),
 				"expiresAt": "2026-10-03T10:00:00Z", "createdAt": "2026-10-02T10:00:00Z", "usageLimit": 2, "usageCount": i % 2,
 				"userGroups": []map[string]any{{"id": "66666666-6666-4666-8666-666666666666", "name": "staff", "friendlyName": "Staff"}},
 			})
@@ -110,7 +111,9 @@ func TestSignupTokensDataSource_ListsEveryTokenAcrossPages(t *testing.T) {
 	items := list.Elements()
 	require.Len(t, items, total)
 	last := items[total-1].(types.Object).Attributes()
-	assert.Equal(t, types.StringValue("token-129"), last["token"])
+	assert.Equal(t, types.StringValue("00000000-0000-4000-8000-000000000129"), last["id"])
+	assert.NotContains(t, last, "token")
+	assert.NotContains(t, list.String(), "must-not-reach-state", "a token value the list carried must not reach the state")
 	second := items[1].(types.Object).Attributes()
 	assert.Equal(t, types.Int64Value(1), second["usage_count"])
 	groups, ok := second["user_group_ids"].(types.Set)

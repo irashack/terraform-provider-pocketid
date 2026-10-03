@@ -18,7 +18,7 @@ import (
 )
 
 // The data source lists the tokens the fixture holds, with their limits and
-// groups, and marks the token values sensitive.
+// groups, and never their values (Pocket ID's list carries them).
 func TestAccSignupTokensDataSource_listsTokens(t *testing.T) {
 	testAccPreCheck(t)
 	ctx := context.Background()
@@ -53,6 +53,11 @@ output "token_ids" {
 `,
 			Check: func(s *terraform.State) error {
 				attrs := s.RootModule().Resources["data.pocketid_signup_tokens.all"].Primary.Attributes
+				for key, value := range attrs {
+					if value == plain.Token || value == grouped.Token {
+						return fmt.Errorf("attribute %s holds a token value", key)
+					}
+				}
 				found := map[string]string{}
 				for key, value := range attrs {
 					if strings.HasPrefix(key, "tokens.") && strings.HasSuffix(key, ".id") {
@@ -64,8 +69,8 @@ output "token_ids" {
 					if !ok {
 						return fmt.Errorf("signup token %s is not listed", id)
 					}
-					if attrs[prefix+".token"] != want.Token {
-						return fmt.Errorf("the listed token value of %s differs from the one Pocket ID created", id)
+					if _, present := attrs[prefix+".token"]; present {
+						return fmt.Errorf("the data source exposes a token value for %s", id)
 					}
 					if attrs[prefix+".usage_limit"] != fmt.Sprint(want.UsageLimit) || attrs[prefix+".usage_count"] != "0" {
 						return fmt.Errorf("unexpected limits for %s", id)
