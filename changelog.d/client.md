@@ -46,3 +46,18 @@
 - A public client may now set `requires_pushed_authorization_requests = true`.
   Pocket ID has stored it for public clients since 2.10.0; on an older server
   the apply stops before changing anything.
+- `pocketid_client` has a new `is_group_restricted` attribute, and group
+  restriction now fails closed. When it is omitted, a client is restricted if
+  it has `allowed_user_groups` or is restricted already, so removing a
+  client's groups leaves it admitting nobody instead of opening it to every
+  user. **Breaking:** to let every user sign in to a client that is
+  restricted, set `is_group_restricted = false`; the plan warns when it opens
+  a client. `is_group_restricted = true` with no groups (nobody may sign in)
+  is now representable and stable, also for clients restricted in the admin
+  UI. `is_group_restricted = false` together with groups is an error.
+- An `allowed_user_groups` ID that names no group now fails the apply and is
+  named in the error (Pocket ID drops such IDs silently); a new client is
+  rolled back.
+- On Pocket ID 2.17, restricting a client no longer signs out (back-channel
+  logout) the users who are about to be allowed: the provider writes the
+  groups before it turns the restriction on.

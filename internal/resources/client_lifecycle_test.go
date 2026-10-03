@@ -110,7 +110,7 @@ func lifecycleModel() clientResourceModel {
 		IsPublic:            types.BoolValue(false), PkceEnabled: types.BoolValue(true), HasLogo: types.BoolUnknown(),
 		RequiresReauthentication: types.BoolValue(false), RequiresPushedAuthorizationRequests: types.BoolValue(false),
 		LaunchURL: types.StringNull(), ClientSecret: types.StringUnknown(), BackchannelLogoutURL: types.StringNull(),
-		GenerateSecret: types.BoolValue(true), ClientSecretID: types.StringUnknown(),
+		GenerateSecret: types.BoolValue(true), ClientSecretID: types.StringUnknown(), IsGroupRestricted: types.BoolUnknown(),
 	}
 }
 

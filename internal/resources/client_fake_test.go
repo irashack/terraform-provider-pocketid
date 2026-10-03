@@ -325,6 +325,7 @@ func managedModel() clientResourceModel {
 	m.HasLogo = types.BoolValue(false)
 	m.ClientSecret = types.StringValue("gen0synthetic-held-secret")
 	m.ClientSecretID = types.StringValue("00000000-0000-4000-8000-000000000000")
+	m.IsGroupRestricted = types.BoolValue(false)
 	return m
 }
 
@@ -345,6 +346,9 @@ func configOf(m clientResourceModel) clientResourceModel {
 	m.HasLogo = types.BoolNull()
 	m.ClientSecret = types.StringNull()
 	m.ClientSecretID = types.StringNull()
+	if !m.IsGroupRestricted.IsUnknown() {
+		m.IsGroupRestricted = types.BoolNull()
+	}
 	return m
 }
 

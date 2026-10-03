@@ -57,6 +57,7 @@ type clientResourceModel struct {
 	IsPublic                            types.Bool   `tfsdk:"is_public"`
 	PkceEnabled                         types.Bool   `tfsdk:"pkce_enabled"`
 	AllowedUserGroups                   types.Set    `tfsdk:"allowed_user_groups"`
+	IsGroupRestricted                   types.Bool   `tfsdk:"is_group_restricted"`
 	HasLogo                             types.Bool   `tfsdk:"has_logo"`
 	RequiresReauthentication            types.Bool   `tfsdk:"requires_reauthentication"`
 	RequiresPushedAuthorizationRequests types.Bool   `tfsdk:"requires_pushed_authorization_requests"`
@@ -230,9 +231,17 @@ func (r *clientResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Default:     booldefault.StaticBool(true),
 			},
 			"allowed_user_groups": schema.SetAttribute{
-				Description: "IDs of the user groups whose members may use this client. If empty, all users can use this client. Omitting it and setting it to `[]` both mean none.",
+				Description: "IDs of the user groups whose members may use this client (when `is_group_restricted` is true). Omitting it and setting it to `[]` both mean none. " +
+					"Pocket ID silently ignores an ID that names no group; the apply then fails and names it.",
 				Optional:    true,
 				ElementType: types.StringType,
+			},
+			"is_group_restricted": schema.BoolAttribute{
+				Description: "Whether only members of `allowed_user_groups` may sign in to this client. When omitted, the client is restricted if `allowed_user_groups` is not empty or if it is restricted already: " +
+					"giving a client groups restricts it, and removing them never opens a restricted client to everyone (it then admits nobody). " +
+					"Set it to false to let every user sign in; together with a non-empty `allowed_user_groups` that is an error. Set it to true with no groups to admit nobody.",
+				Optional: true,
+				Computed: true,
 			},
 			"has_logo": schema.BoolAttribute{
 				Description: "Whether the client has a logo configured.",
@@ -300,6 +309,16 @@ func (r *clientResource) ValidateConfig(ctx context.Context, req resource.Valida
 				resp.Diagnostics.AddAttributeError(path.Root("backchannel_logout_url"), "Invalid back-channel logout URL", "backchannel_logout_url "+problem+".")
 			}
 		}
+	}
+
+	// An unrestricted client admits every user: groups would mean nothing,
+	// and Pocket ID clears them.
+	if !config.IsGroupRestricted.IsNull() && !config.IsGroupRestricted.IsUnknown() && !config.IsGroupRestricted.ValueBool() && knownSetSize(config.AllowedUserGroups) > 0 {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("allowed_user_groups"),
+			"Conflicting group restriction",
+			"allowed_user_groups has no effect with is_group_restricted = false: every user may sign in. Remove the groups, or set is_group_restricted = true (or omit it).",
+		)
 	}
 
 	// Pocket ID forces PKCE on for a public client (updateOIDCClientModelFromDto:
@@ -409,6 +428,7 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 			if createReq.ClientID != nil {
 				plan.ID = types.StringValue(*createReq.ClientID)
 				plan.ClientID = plan.ID
+				plan.IsGroupRestricted = types.BoolValue(createReq.IsGroupRestricted)
 				plan.ClientSecret = types.StringNull()
 				plan.ClientSecretID = types.StringNull()
 				plan.HasLogo = types.BoolValue(false)
@@ -439,6 +459,7 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 	apiModel := mapAPIClientToModel(ctx, clientResp)
 	plan.ID = apiModel.ID
 	plan.ClientID = apiModel.ID
+	plan.IsGroupRestricted = types.BoolValue(createReq.IsGroupRestricted)
 	plan.HasLogo = apiModel.HasLogo
 	plan.RequiresReauthentication = apiModel.RequiresReauthentication
 	plan.FederatedIdentities = apiModel.FederatedIdentities
@@ -481,24 +502,14 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 		plan.ClientSecretID = optionalString(secret.ID)
 	}
 
-	// Handle allowed user groups
-	if !plan.AllowedUserGroups.IsNull() && !plan.AllowedUserGroups.IsUnknown() {
-		var groupIDs []string
-		diags = plan.AllowedUserGroups.ElementsAs(ctx, &groupIDs, false)
-		resp.Diagnostics.Append(diags...)
-		if !resp.Diagnostics.HasError() && len(groupIDs) > 0 {
-			tflog.Debug(ctx, "Updating allowed user groups", map[string]any{
-				"groups": groupIDs,
-			})
-			// TODO(association-check): the first result is the set of group IDs
-			// the server now holds; it drops IDs that name no group. Not
-			// compared yet, and an unreadable result is not an error here.
-			_, err = r.client.UpdateClientAllowedUserGroups(ctx, clientResp.ID, groupIDs)
-			if err != nil && !errors.Is(err, client.ErrResultUnread) {
-				r.failedCreate(ctx, &plan, err, resp)
+	// The client was created with its restriction already in place, so it
+	// never admits more users than planned; its groups follow. A new client
+	// has no signed-in users to notify.
+	if groupIDs := setStrings(plan.AllowedUserGroups); len(groupIDs) > 0 {
+		if _, err := r.writeAllowedGroups(ctx, clientResp.ID, groupIDs); err != nil {
+			r.failedCreate(ctx, &plan, err, resp)
 
-				return
-			}
+			return
 		}
 	}
 
@@ -567,6 +578,7 @@ func (r *clientResource) Read(ctx context.Context, req resource.ReadRequest, res
 	// stable.
 	state.LogoutCallbackURLs = stringListFromServer(clientResp.LogoutCallbackURLs, state.LogoutCallbackURLs)
 	state.AllowedUserGroups = groupSetFromServer(clientResp.AllowedUserGroups, state.AllowedUserGroups)
+	state.IsGroupRestricted = types.BoolValue(clientResp.IsGroupRestricted)
 
 	// client_secret is never returned by Pocket ID after creation, so it
 	// stays as stored. State written before generate_secret existed always
@@ -631,14 +643,6 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
-	// Determine if group restriction is enabled based on allowed_user_groups
-	var isGroupRestricted bool
-	if !plan.AllowedUserGroups.IsNull() && !plan.AllowedUserGroups.IsUnknown() {
-		var groupIDs []string
-		_ = plan.AllowedUserGroups.ElementsAs(ctx, &groupIDs, false)
-		isGroupRestricted = len(groupIDs) > 0
-	}
-
 	// The update endpoint replaces the client in full, so the current client
 	// is read first. Settings the provider does not expose are sent back
 	// unchanged; without this a description is cleared, skip_consent reverts
@@ -658,6 +662,17 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 		currentIdentities = current.Credentials.FederatedIdentities
 	}
 
+	// Group restriction: never wider than planned. Restricting a client
+	// sends its groups first; see the ordering below.
+	wantGroups := setStrings(plan.AllowedUserGroups)
+	isGroupRestricted := resolveGroupRestriction(plan.IsGroupRestricted, wantGroups, current.IsGroupRestricted)
+	if !isGroupRestricted && len(wantGroups) > 0 {
+		resp.Diagnostics.AddAttributeError(path.Root("allowed_user_groups"), "Conflicting group restriction",
+			"allowed_user_groups has no effect with is_group_restricted = false: every user may sign in. No change was made.")
+		return
+	}
+	currentGroups := userGroupIDList(current.AllowedUserGroups)
+
 	// Update the client
 	updateReq := &client.OIDCClientCreateRequest{
 		Name:                                plan.Name.ValueString(),
@@ -669,7 +684,6 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 		RequiresPushedAuthorizationRequests: plan.RequiresPushedAuthorizationRequests.ValueBool(),
 		LaunchURL:                           launchURLForUpdate(config.LaunchURL, plan.LaunchURL, current.LaunchURL),
 		PkceEnabled:                         plan.PkceEnabled.ValueBool(),
-		IsGroupRestricted:                   isGroupRestricted,
 		Credentials:                         buildCredentialsFromPlan(ctx, &plan, currentIdentities),
 	}
 	if err := checkFederatedPublicKeysSupport(ctx, r.client, updateReq.Credentials); err != nil {
@@ -699,13 +713,39 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 
 	preserveUnmanagedClientFields(updateReq, current)
 
+	// On Pocket ID 2.17, turning the restriction on signs out every user who
+	// authorized the client and is in none of its allowed groups at that
+	// moment (UpdateClient -> NotifyLostGroupAccess). The groups are therefore
+	// written first, while the client's restriction is unchanged: an
+	// unrestricted client admits everyone either way, and a restricted one
+	// notifies only users who really lose access. Lifting the restriction
+	// needs no group write: Pocket ID clears the groups itself.
+	if isGroupRestricted && !sameMembers(wantGroups, currentGroups) {
+		got, err := r.writeAllowedGroups(ctx, plan.ID.ValueString(), wantGroups)
+		if err != nil {
+			detail := "The client itself was not updated. "
+			if got != nil {
+				// The write happened; record what the server kept.
+				state.AllowedUserGroups = groupSetFromServer(groupsFromIDs(got), plan.AllowedUserGroups)
+				resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+			} else if !client.IsDefiniteRejection(err) {
+				detail += "The allowed groups may have changed; refresh to see them. "
+			}
+			resp.Diagnostics.AddAttributeError(path.Root("allowed_user_groups"), "Error updating allowed user groups", detail+err.Error())
+			return
+		}
+		state.AllowedUserGroups = plan.AllowedUserGroups
+	}
+
 	tflog.Debug(ctx, "Updating OIDC client", map[string]any{
 		"id":   plan.ID.ValueString(),
 		"name": updateReq.Name,
 	})
 
+	updateReq.IsGroupRestricted = isGroupRestricted
 	clientResp, err := r.client.UpdateClient(ctx, plan.ID.ValueString(), updateReq)
 	if err != nil {
+		resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 		resp.Diagnostics.AddError(
 			"Error updating OIDC client",
 			"Could not update OIDC client, unexpected error: "+err.Error(),
@@ -728,55 +768,14 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 	if plan.LaunchURL.IsUnknown() {
 		plan.LaunchURL = optionalString(clientResp.LaunchURL)
 	}
+	plan.IsGroupRestricted = types.BoolValue(isGroupRestricted)
 
-	// Handle allowed user groups
-	var plannedGroupIDs []string
-	if !plan.AllowedUserGroups.IsNull() && !plan.AllowedUserGroups.IsUnknown() {
-		diags = plan.AllowedUserGroups.ElementsAs(ctx, &plannedGroupIDs, false)
-		resp.Diagnostics.Append(diags...)
-	}
-
-	var currentGroupIDs []string
-	if !state.AllowedUserGroups.IsNull() && !state.AllowedUserGroups.IsUnknown() {
-		diags = state.AllowedUserGroups.ElementsAs(ctx, &currentGroupIDs, false)
-		resp.Diagnostics.Append(diags...)
-	}
-
-	if !resp.Diagnostics.HasError() {
-		// Check if groups have changed
-		groupsChanged := false
-		if len(plannedGroupIDs) != len(currentGroupIDs) {
-			groupsChanged = true
-		} else {
-			// Check if group IDs are different
-			groupMap := make(map[string]bool)
-			for _, id := range currentGroupIDs {
-				groupMap[id] = true
-			}
-			for _, id := range plannedGroupIDs {
-				if !groupMap[id] {
-					groupsChanged = true
-					break
-				}
-			}
-		}
-
-		if groupsChanged {
-			tflog.Debug(ctx, "Updating allowed user groups", map[string]any{
-				"groups": plannedGroupIDs,
-			})
-			// TODO(association-check): the first result is the set of group IDs
-			// the server now holds; it drops IDs that name no group. Not
-			// compared yet, and an unreadable result is not an error here.
-			_, err = r.client.UpdateClientAllowedUserGroups(ctx, plan.ID.ValueString(), plannedGroupIDs)
-			if err != nil && !errors.Is(err, client.ErrResultUnread) {
-				resp.Diagnostics.AddError(
-					"Error updating allowed user groups",
-					"Could not update allowed user groups: "+err.Error(),
-				)
-				return
-			}
-		}
+	// Verify the restriction the server applied.
+	if clientResp.IsGroupRestricted != isGroupRestricted || (!isGroupRestricted && len(clientResp.AllowedUserGroups) > 0) {
+		plan.IsGroupRestricted = types.BoolValue(clientResp.IsGroupRestricted)
+		plan.AllowedUserGroups = groupSetFromServer(clientResp.AllowedUserGroups, plan.AllowedUserGroups)
+		resp.Diagnostics.AddAttributeError(path.Root("is_group_restricted"), "Group restriction not applied",
+			fmt.Sprintf("Pocket ID reports is_group_restricted = %t with %d allowed groups after the update, which is not what was planned. State records what it reports.", clientResp.IsGroupRestricted, len(clientResp.AllowedUserGroups)))
 	}
 
 	if err := r.applySecretAction(ctx, secretAction, revokeID, revokeGone, state, &plan); err != nil {
@@ -793,8 +792,9 @@ func (r *clientResource) ModifyPlan(ctx context.Context, req resource.ModifyPlan
 	if req.Plan.Raw.IsNull() {
 		return // destroy
 	}
-	var plan clientResourceModel
+	var plan, config clientResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	var state *clientResourceModel
 	if !req.State.Raw.IsNull() {
 		state = &clientResourceModel{}
@@ -805,6 +805,8 @@ func (r *clientResource) ModifyPlan(ctx context.Context, req resource.ModifyPlan
 	}
 
 	planSecretAttributes(state, &plan)
+	planGroupRestriction(state, config, &plan)
+	warnOnOpening(state, plan, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
 }
@@ -917,13 +919,7 @@ func buildCreateRequestFromPlan(ctx context.Context, plan *clientResourceModel) 
 		launchPtr = &v
 	}
 
-	// Determine if group restriction is enabled based on allowed_user_groups
-	var isGroupRestricted bool
-	if !plan.AllowedUserGroups.IsNull() && !plan.AllowedUserGroups.IsUnknown() {
-		var groupIDs []string
-		_ = plan.AllowedUserGroups.ElementsAs(ctx, &groupIDs, false)
-		isGroupRestricted = len(groupIDs) > 0
-	}
+	isGroupRestricted := resolveGroupRestriction(plan.IsGroupRestricted, setStrings(plan.AllowedUserGroups), false)
 
 	return &client.OIDCClientCreateRequest{
 		Name:                                plan.Name.ValueString(),
@@ -1062,7 +1058,7 @@ func (r *clientResource) revokeServerCreatedSecret(ctx context.Context, clientID
 // rejection. An ambiguous mutation is inspected, never retried or deleted.
 func (r *clientResource) failedCreate(ctx context.Context, plan *clientResourceModel, cause error, resp *resource.CreateResponse) {
 	id := plan.ID.ValueString()
-	if client.IsDefiniteRejection(cause) || errors.Is(cause, errUnidentifiedCreatedSecret) {
+	if client.IsDefiniteRejection(cause) || errors.Is(cause, errUnidentifiedCreatedSecret) || errors.Is(cause, errGroupsDropped) {
 		if cleanupErr := r.client.DeleteClient(ctx, id); cleanupErr == nil {
 			resp.Diagnostics.AddError("OIDC client creation rolled back", "The newly created client was deleted after a rejected operation: "+cause.Error())
 			return
