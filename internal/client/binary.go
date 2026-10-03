@@ -76,11 +76,15 @@ func (c *Client) getBinaryUncached(ctx context.Context, endpoint string, query u
 }
 
 // mediaType returns the media type of a Content-Type header in lower case and
-// without parameters, or "" when it is missing, malformed or contains the API
-// key.
+// without parameters, or "" when it is missing, malformed, not a type/subtype
+// pair or contains the API key. mime.ParseMediaType also parses
+// Content-Disposition values, so it accepts a bare token such as
+// "attachment"; a media type needs the slash, and its parser has already
+// checked that both sides of it are tokens.
 func (c *Client) mediaType(header string) string {
 	mediaType, _, err := mime.ParseMediaType(header)
-	if err != nil || (c.apiToken != "" && strings.Contains(mediaType, strings.ToLower(c.apiToken))) {
+	if err != nil || !strings.Contains(mediaType, "/") ||
+		(c.apiToken != "" && strings.Contains(mediaType, strings.ToLower(c.apiToken))) {
 		return "" // ParseMediaType lower-cases, so compare the key in lower case
 	}
 	return mediaType

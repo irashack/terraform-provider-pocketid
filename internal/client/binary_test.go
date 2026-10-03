@@ -264,3 +264,37 @@ func TestOversizedBodyErrorsQuoteNoServerNumber(t *testing.T) {
 		})
 	}
 }
+
+// The media type returned is a type/subtype pair or nothing: a bare token,
+// which mime.ParseMediaType accepts because it also parses
+// Content-Disposition values, is no media type.
+func TestMediaTypeNeedsTypeAndSubtype(t *testing.T) {
+	c, err := NewClient("https://pocket-id.example.com", "test-token", false, 30)
+	require.NoError(t, err)
+	for header, want := range map[string]string{
+		"image/png":                  "image/png",
+		"IMAGE/SVG+XML; charset=x":   "image/svg+xml",
+		"application/octet-stream":   "application/octet-stream",
+		"attachment":                 "",
+		"attachment; filename=a.png": "",
+		"png":                        "",
+		"image/":                     "",
+		"/png":                       "",
+		"image/png/x":                "",
+		"":                           "",
+	} {
+		assert.Equal(t, want, c.mediaType(header), "%q", header)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "attachment")
+		_, _ = w.Write([]byte("x"))
+	}))
+	defer server.Close()
+	c, err = NewClient(server.URL, "test-token", false, 30)
+	require.NoError(t, err)
+	body, mediaType, err := c.getBinaryUncached(context.Background(), "/api/x", nil, 0)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("x"), body)
+	assert.Empty(t, mediaType)
+}
