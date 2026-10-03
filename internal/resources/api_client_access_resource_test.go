@@ -28,10 +28,14 @@ import (
 )
 
 const (
-	apiAccessTestAPI    = "00000000-0000-4000-8000-0000000000a1"
-	apiAccessTestRead   = "00000000-0000-4000-8000-0000000000b1"
-	apiAccessTestWrite  = "00000000-0000-4000-8000-0000000000b2"
-	apiAccessTestClient = "app"
+	// apiAccessTestSpanningKey is a 16-character static key that spans the
+	// separator of the grant ID <apiAccessTestAPI>/<apiAccessTestClient>:
+	// neither half contains it.
+	apiAccessTestSpanningKey = "0000000000a1/app"
+	apiAccessTestAPI         = "00000000-0000-4000-8000-0000000000a1"
+	apiAccessTestRead        = "00000000-0000-4000-8000-0000000000b1"
+	apiAccessTestWrite       = "00000000-0000-4000-8000-0000000000b2"
+	apiAccessTestClient      = "app"
 	// apiAccessTestClientGone is Pocket ID's not-found error for an OIDC client.
 	apiAccessTestClientGone = `{"error":"OIDC client not found","code":"not_found","details":{"resource":"OIDC client"},"request_id":"r"}`
 )
@@ -224,6 +228,13 @@ func apiAccessTestPlan(userAccess bool, userKeys []string, clientAccess bool, cl
 		UserDelegatedAccess: types.BoolValue(userAccess), UserDelegatedPermissions: apiAccessTestSet(userKeys...),
 		ClientAccess: types.BoolValue(clientAccess), ClientPermissions: apiAccessTestSet(clientKeys...),
 	}
+}
+
+// apiAccessTestPlanFor is a user-delegated grant plan for the given API ID.
+func apiAccessTestPlanFor(apiID string) apiClientAccessModel {
+	m := apiAccessTestPlan(true, nil, false, nil)
+	m.APIID = types.StringValue(apiID)
+	return m
 }
 
 // apiAccessTestUpdate calls Update directly, as the framework does after a
@@ -760,7 +771,10 @@ func TestAPIClientAccess_KeyBearingIdentities(t *testing.T) {
 			"api half is the key":      {uuidKey, uuidKey + "/app"},
 			"client half is the key":   {clientKey, apiAccessTestAPI + "/" + clientKey},
 			"client half contains key": {clientKey, apiAccessTestAPI + "/x-" + clientKey},
-			"whole ID contains key":    {"abc/def-0123456789", apiAccessTestAPI + "/abc/def-0123456789"},
+			// Both halves are valid and neither contains the key; the key spans
+			// the separator (API ID ...0000a1, client "app"), so only a check of
+			// the whole ID catches it.
+			"key spans the separator": {apiAccessTestSpanningKey, apiAccessTestAPI + "/" + apiAccessTestClient},
 		} {
 			t.Run(name, func(t *testing.T) {
 				_, c := newAPIAccessTestPocketIDWithKey(t, tc.key)
@@ -779,7 +793,8 @@ func TestAPIClientAccess_KeyBearingIdentities(t *testing.T) {
 	})
 
 	// Operations on an identity from state or configuration that carries the
-	// key refuse before any request and show nothing of it.
+	// key refuse before any request and show nothing of it: planning (known
+	// values), and create, update, read and delete when they are reached.
 	t.Run("operations", func(t *testing.T) {
 		f, c := newAPIAccessTestPocketIDWithKey(t, uuidKey)
 		h := newAPIHarness(t, c)
@@ -793,11 +808,15 @@ func TestAPIClientAccess_KeyBearingIdentities(t *testing.T) {
 		assert.NotContains(t, errs, uuidKey)
 		require.NotNil(t, refreshed, "state is left as it was")
 
-		step := apiAccessRun(t, h, nil, nil, config)
-		require.NotNil(t, step.apply)
-		assert.Contains(t, apiHarnessErrors(step.apply.Diagnostics), "Unusable identifier")
-		assert.NotContains(t, apiHarnessErrors(step.apply.Diagnostics), uuidKey)
-		assert.Nil(t, step.state)
+		// The plan refuses (the pair carries the key)...
+		planned := apiAccessRun(t, h, nil, nil, config)
+		assert.Contains(t, apiHarnessErrors(planned.plan.Diagnostics), "Unusable identifier")
+		assert.NotContains(t, apiHarnessErrors(planned.plan.Diagnostics), uuidKey)
+		// ...and so does create when it is called without one.
+		createErrs, created := apiAccessTestCreate(t, c, apiAccessTestPlanFor(uuidKey))
+		assert.Contains(t, createErrs, "Unusable identifier")
+		assert.NotContains(t, createErrs, uuidKey)
+		assert.Nil(t, created)
 
 		priorValue := apiHarnessValue(t, r, &state)
 		null := apiHarnessValue(t, r, (*apiClientAccessModel)(nil))
@@ -805,12 +824,66 @@ func TestAPIClientAccess_KeyBearingIdentities(t *testing.T) {
 		assert.Contains(t, apiHarnessErrors(destroy.Diagnostics), "Unusable identifier")
 		assert.NotContains(t, apiHarnessErrors(destroy.Diagnostics), uuidKey)
 
-		update := apiAccessRun(t, h, &state, nil, config)
-		require.NotNil(t, update.apply)
-		assert.Contains(t, apiHarnessErrors(update.apply.Diagnostics), "Unusable identifier")
-		assert.NotContains(t, apiHarnessErrors(update.apply.Diagnostics), uuidKey)
+		updateErrs := apiAccessTestUpdate(t, c, state, apiAccessTestPlanFor(uuidKey))
+		assert.Contains(t, updateErrs, "Unusable identifier")
+		assert.NotContains(t, updateErrs, uuidKey)
 
-		assert.Empty(t, f.routes(), "no request carried the identity")
+		assert.Zero(t, f.received(), "no request carried the identity")
+	})
+
+	// A key that spans the separator of the grant ID passes both halves, but
+	// the pair becomes the resource ID in state and appears in hints: create
+	// and update refuse before any request, planning refuses, read refuses and
+	// leaves state alone, the unresolved-plan hint shows nothing, and a
+	// delete, which needs only the checked halves, still works.
+	t.Run("key spans the separator", func(t *testing.T) {
+		const key = apiAccessTestSpanningKey
+		f, c := newAPIAccessTestPocketIDWithKey(t, key)
+		h := newAPIHarness(t, c)
+		r := &apiClientAccessResource{}
+		state := apiAccessModel(apiAccessTestAPI, apiAccessTestClient, apiAccessGrant{UserAccess: true})
+		require.Contains(t, state.ID.ValueString(), key, "the fixture's composite ID carries the key")
+		require.NoError(t, c.CheckAPIIdentifier(apiAccessTestAPI), "each half is fine")
+		require.NoError(t, c.CheckClientIdentifier(apiAccessTestClient), "each half is fine")
+
+		createErrs, created := apiAccessTestCreate(t, c, apiAccessTestPlan(true, nil, false, nil))
+		assert.Contains(t, createErrs, "Unusable identifier")
+		assert.NotContains(t, createErrs, key)
+		assert.Nil(t, created)
+		updateErrs := apiAccessTestUpdate(t, c, state, apiAccessTestPlan(true, nil, false, nil))
+		assert.Contains(t, updateErrs, "Unusable identifier")
+		assert.NotContains(t, updateErrs, key)
+
+		step := apiAccessRun(t, h, nil, nil, apiAccessConfig([]string{"read"}, nil))
+		assert.Contains(t, apiHarnessErrors(step.plan.Diagnostics), "Unusable identifier")
+		assert.NotContains(t, apiHarnessErrors(step.plan.Diagnostics), key)
+
+		errs, refreshed, _ := apiAccessRefresh(t, h, &state, nil)
+		assert.Contains(t, errs, "Unusable identifier")
+		assert.NotContains(t, errs, key)
+		require.NotNil(t, refreshed, "state is left as it was")
+		assert.Zero(t, f.received(), "nothing was sent")
+
+		// The unresolved-plan hint: the configuration moves to another client, so
+		// the plan itself is fine, and the identities from state are not shown.
+		marker, err := json.Marshal(map[string][]byte{apiAccessUnresolvedKey: []byte(`{"unresolved":true}`)})
+		require.NoError(t, err)
+		config := apiAccessConfig([]string{"read"}, nil)
+		config.ClientID = types.StringValue("other")
+		hint := apiAccessRun(t, h, &state, marker, config)
+		errs = apiHarnessErrors(hint.plan.Diagnostics)
+		assert.Contains(t, errs, "API access outcome unresolved")
+		assert.Contains(t, errs, "import it again with its API ID and client ID")
+		assert.NotContains(t, errs, key)
+
+		// A delete uses only the halves, each of which passed.
+		f.grant = &client.APIClientGrant{UserDelegatedAccess: true}
+		priorValue := apiHarnessValue(t, r, &state)
+		null := apiHarnessValue(t, r, (*apiClientAccessModel)(nil))
+		destroy := h.apply("pocketid_api_client_access", priorValue, null, h.dynamic("pocketid_api_client_access", null), nil)
+		assert.Empty(t, apiHarnessErrors(destroy.Diagnostics))
+		assert.Contains(t, f.routes(), "DELETE grant")
+		assert.Nil(t, f.grant)
 	})
 
 	// The plan refusal of an unresolved outcome prints the identity from state
@@ -828,8 +901,9 @@ func TestAPIClientAccess_KeyBearingIdentities(t *testing.T) {
 			"clean identity":    {apiAccessModel(apiAccessTestAPI, "app", apiAccessGrant{UserAccess: true}), apiAccessTestAPI + "/app"},
 		} {
 			t.Run(name, func(t *testing.T) {
+				// The configuration names a clean API, so only the state's identity is
+				// at issue.
 				config := apiAccessConfig([]string{"read"}, nil)
-				config.APIID = tc.state.APIID
 				step := apiAccessRun(t, h, &tc.state, marker, config)
 				errs := apiHarnessErrors(step.plan.Diagnostics)
 				assert.Contains(t, errs, "API access outcome unresolved")

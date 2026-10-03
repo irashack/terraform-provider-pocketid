@@ -551,7 +551,7 @@ func (r *apiClientAccessResource) Create(ctx context.Context, req resource.Creat
 		return
 	}
 	apiID, clientID := plan.APIID.ValueString(), plan.ClientID.ValueString()
-	if !apiIdentityOK(r.client, &resp.Diagnostics, "configuration", apiID, clientID) {
+	if !apiIdentityOK(r.client, &resp.Diagnostics, "configuration", apiID, clientID) || !apiPairOK(r.client, &resp.Diagnostics, apiID, clientID) {
 		return
 	}
 	outcome := r.apiAccessWrite(ctx, apiID, clientID, want, &resp.Diagnostics)
@@ -579,7 +579,7 @@ func (r *apiClientAccessResource) Read(ctx context.Context, req resource.ReadReq
 		return
 	}
 	apiID, clientID := state.APIID.ValueString(), state.ClientID.ValueString()
-	if !apiIdentityOK(r.client, &resp.Diagnostics, "state", apiID, clientID) {
+	if !apiIdentityOK(r.client, &resp.Diagnostics, "state", apiID, clientID) || !apiPairOK(r.client, &resp.Diagnostics, apiID, clientID) {
 		return
 	}
 	entry, err := r.client.FindClientAPIGrant(ctx, clientID, apiID)
@@ -627,7 +627,7 @@ func (r *apiClientAccessResource) ModifyPlan(ctx context.Context, req resource.M
 		return
 	}
 	// Configured text that carries the API key is refused at plan time, for
-	// the values that are known now (see apiPermissionKeysOK).
+	// the values that are known now (see apiPermissionKeysOK, apiPairOK).
 	var keys []string
 	for _, set := range []types.Set{plan.UserDelegatedPermissions, plan.ClientPermissions} {
 		if set.IsNull() || set.IsUnknown() {
@@ -640,6 +640,10 @@ func (r *apiClientAccessResource) ModifyPlan(ctx context.Context, req resource.M
 		}
 	}
 	if !apiPermissionKeysOK(r.client, &resp.Diagnostics, keys) {
+		return
+	}
+	if !plan.APIID.IsNull() && !plan.APIID.IsUnknown() && !plan.ClientID.IsNull() && !plan.ClientID.IsUnknown() &&
+		!apiPairOK(r.client, &resp.Diagnostics, plan.APIID.ValueString(), plan.ClientID.ValueString()) {
 		return
 	}
 
@@ -655,9 +659,9 @@ func (r *apiClientAccessResource) ModifyPlan(ctx context.Context, req resource.M
 		return
 	}
 	// The identities come from state and are printed only when they pass the
-	// check.
-	apiAccessUnresolvedDiagnostics(&resp.Diagnostics,
-		apiShownAPIID(r.client, state.APIID.ValueString()), apiShownClientID(r.client, state.ClientID.ValueString()))
+	// check, each and as a pair.
+	shownAPI, shownClient := apiShownIDs(r.client, state.APIID.ValueString(), state.ClientID.ValueString())
+	apiAccessUnresolvedDiagnostics(&resp.Diagnostics, shownAPI, shownClient)
 }
 
 func (r *apiClientAccessResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -667,7 +671,7 @@ func (r *apiClientAccessResource) Update(ctx context.Context, req resource.Updat
 		return
 	}
 	apiID, clientID := plan.APIID.ValueString(), plan.ClientID.ValueString()
-	if !apiIdentityOK(r.client, &resp.Diagnostics, "configuration", apiID, clientID) {
+	if !apiIdentityOK(r.client, &resp.Diagnostics, "configuration", apiID, clientID) || !apiPairOK(r.client, &resp.Diagnostics, apiID, clientID) {
 		return
 	}
 	// ModifyPlan refuses to plan an unresolved resource; a plan made before the

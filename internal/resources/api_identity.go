@@ -93,6 +93,34 @@ func apiModelTexts(ctx context.Context, m apiResourceModel) []string {
 	return texts
 }
 
+// apiPairOK checks the canonical pair "<api_id>/<client_id>" that becomes a
+// grant's ID in state and appears in recovery hints. A key can span the
+// separator (a static key of 16 or more characters such as "000000000001/app"
+// passes both halves), so the pair is checked as a whole before it is stored
+// or shown. On failure it adds a fixed error that never includes a value and
+// returns false; nothing is sent. A delete needs only the individually
+// checked halves and does not call this.
+func apiPairOK(c *client.Client, diags *diag.Diagnostics, apiID, clientID string) bool {
+	if !c.ContainsAPIKey(apiID + "/" + clientID) {
+		return true
+	}
+	diags.AddError("Unusable identifier",
+		"The combined ID of this grant, <api_id>/<client_id>, contains the API key this provider authenticates with. It would be stored in state and "+
+			"shown in messages, so it is refused; it is not shown here, and no request was made. For state, run terraform state rm on the resource "+
+			"(terraform destroy -refresh=false still removes the grant).")
+	return false
+}
+
+// apiShownIDs returns the identities of a grant for a diagnostic: each when
+// it passes its check and the pair does too, otherwise placeholders.
+func apiShownIDs(c *client.Client, apiID, clientID string) (string, string) {
+	shownAPI, shownClient := apiShownAPIID(c, apiID), apiShownClientID(c, clientID)
+	if c.ContainsAPIKey(apiID + "/" + clientID) {
+		return apiNotShown, apiNotShown
+	}
+	return shownAPI, shownClient
+}
+
 // apiPermissionKeysOK refuses configured permission keys that contain the API
 // key before they are sent or printed (a missing key is named in a
 // diagnostic): a fixed error, no value, and false.

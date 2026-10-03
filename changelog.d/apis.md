@@ -57,7 +57,10 @@
   and must not contain the provider's own API key. Such an identifier is
   refused with a fixed message that does not show it, before any request is
   sent, and a diagnostic prints an identifier from state only after it passes
-  the check.
+  the check. For a grant this includes the combined ID `<api_id>/<client_id>`,
+  which a key can span without being in either half: create and update refuse
+  it before any request, read refuses it without changing state, and a delete,
+  which needs only the two checked halves, still works.
 - Text that contains the provider's own admin API key is deliberately
   unsupported in a `pocketid_api`: its `name`, `resource`, and each permission
   key, `name` and `description`. Pocket ID would accept such a value, but the
