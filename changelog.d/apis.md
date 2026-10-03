@@ -10,7 +10,10 @@
   store differently (a trailing slash, a reserved or malformed permission
   key, a name that is too long) are refused at plan time, and an API whose
   `resource` another API already holds is refused before anything is
-  written; import that one instead.
+  written; import that one instead. If a create ends without a definite
+  answer from Pocket ID, nothing is recorded in state, because an API that
+  holds the identifier afterwards may be someone else's; the error names it
+  (ID and name) so you can import it if it is yours.
 - New resource `pocketid_api_client_access` (Pocket ID 2.14.0 or later)
   grants one OIDC client access to one API: user-delegated access (tokens on
   behalf of a signed-in user) and client access (client credentials), each

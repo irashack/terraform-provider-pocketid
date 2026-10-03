@@ -50,6 +50,8 @@ type apiTestPocketID struct {
 	// tamper, when set, may change what a route stores (simulating a
 	// server that ignores part of a request).
 	tamper func(route string, api *client.API)
+	// beforeList, when set, runs before each list is answered.
+	beforeList func()
 }
 
 func newAPITestPocketID(t *testing.T) (*apiTestPocketID, *client.Client) {
@@ -134,6 +136,9 @@ func (f *apiTestPocketID) apply(route string, api *client.API, r *http.Request) 
 	case "GET version":
 		return status, []byte(fmt.Sprintf(`{"currentVersion":%q}`, f.version))
 	case "GET apis":
+		if f.beforeList != nil {
+			f.beforeList()
+		}
 		list := []client.API{}
 		for _, id := range f.order {
 			if a, ok := f.apis[id]; ok {
@@ -355,18 +360,21 @@ func TestAPIResourceCreate_GuardsBeforeMutation(t *testing.T) {
 	}
 }
 
-// A create that failed without a definite answer keeps the API's identity
-// when a read finds it, and records nothing when it finds none; a definite
-// rejection records nothing and reads nothing.
+// A create that failed without a definite answer records nothing, even when
+// an API now holds the identifier: it may be someone else's. The error names
+// that API (ID and name) so the operator can import it. A definite rejection
+// records nothing and reads nothing.
 func TestAPIResourceCreate_UncertainResult(t *testing.T) {
 	for name, tc := range map[string]struct {
-		failure  apiTestFailure
-		retained bool
-		summary  string
+		failure apiTestFailure
+		summary string
+		detail  []string
 	}{
-		"committed then 503": {apiTestFailure{status: 503, afterApply: true}, true, "API creation result uncertain"},
-		"503 before commit":  {apiTestFailure{status: 503}, false, "Error creating API"},
-		"rejected":           {apiTestFailure{status: 409}, false, "Error creating API"},
+		"committed then 503": {apiTestFailure{status: 503, afterApply: true}, "API creation result uncertain",
+			[]string{"(ID 00000000-0000-4000-8000-000000000001, name \"Inventory\")", "not recorded as managed", "import it"}},
+		"503 before commit": {apiTestFailure{status: 503}, "API creation result uncertain",
+			[]string{"found no API", "Nothing was recorded"}},
+		"rejected": {apiTestFailure{status: 409}, "Error creating API", nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f, c := newAPITestPocketID(t)
@@ -376,19 +384,39 @@ func TestAPIResourceCreate_UncertainResult(t *testing.T) {
 			}))
 			require.True(t, resp.Diagnostics.HasError())
 			assert.Equal(t, tc.summary, resp.Diagnostics[len(resp.Diagnostics)-1].Summary())
-			assert.Contains(t, f.sent(), fmt.Sprintf("POST apis %d", tc.failure.status), "the injected status is what the provider received")
-			assert.NotContains(t, f.routes(), "PUT permissions", "no follow-up write after an uncertain create")
-			if tc.retained {
-				require.NotNil(t, state)
-				assert.Equal(t, "00000000-0000-4000-8000-000000000001", state.ID.ValueString())
-			} else {
-				assert.Nil(t, state)
+			for _, want := range tc.detail {
+				assert.Contains(t, apiTestCreateDiag(resp), want)
 			}
+			assert.Contains(t, f.sent(), fmt.Sprintf("POST apis %d", tc.failure.status), "the injected status is what the provider received")
+			assert.Nil(t, state, "nothing is recorded as owned")
+			assert.NotContains(t, f.routes(), "PUT permissions", "no follow-up write after an uncertain create")
+			assert.NotContains(t, f.routes(), "DELETE api", "nothing is cleaned up")
 			if tc.failure.status == 409 {
 				assert.Equal(t, []string{"GET apis", "POST apis"}, f.routes())
 			}
 		})
 	}
+}
+
+// An API someone else created between the provider's check and its failed
+// create is reported, never adopted.
+func TestAPIResourceCreate_UncertainResultDoesNotAdoptAnother(t *testing.T) {
+	f, c := newAPITestPocketID(t)
+	f.failures["POST apis"] = apiTestFailure{status: 502}
+	lists := 0
+	// The first list (the provider's check) finds nothing; another actor's
+	// API appears before the recovery read.
+	f.beforeList = func() {
+		lists++
+		if lists == 2 {
+			f.add(client.API{Name: "Someone else's", Resource: "https://inventory.example"})
+		}
+	}
+	resp, state := apiTestCreate(t, c, apiTestModel("", "Inventory", "https://inventory.example", false, nil))
+	require.True(t, resp.Diagnostics.HasError())
+	assert.Contains(t, apiTestCreateDiag(resp), `name "Someone else's"`)
+	assert.Nil(t, state)
+	assert.Equal(t, []string{"GET apis", "POST apis", "GET apis"}, f.routes())
 }
 
 // When a follow-up write fails, the created API stays in state as the

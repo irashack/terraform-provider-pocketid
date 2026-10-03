@@ -8,6 +8,7 @@ description: |-
   Permissions are a map keyed by the permission key (the scope a client requests). Pocket ID keeps a permission's ID as long as its key stays the same, so changing a permission's name or description leaves every client's grant of it in place. Removing a key, or renaming it, deletes that permission together with every client's grant of it; a client that held no other permission of this API for the same kind of access (user-delegated or client) loses that access too, even if it was granted without permissions.
   CIMD access (allow_cimd_clients) lets every client registered through a Client ID Metadata Document request user-delegated tokens for this API, with the permissions marked allowed_for_cimd_clients. It is off unless configured.
   ~> Deleting or replacing an API removes access to it. Pocket ID deletes an API's permissions and every client's grants on it together with the API. resource cannot be changed in place: changing it replaces the API, and the replacement has a new ID, so pocketid_api_client_access resources that refer to it are replaced as well.
+  If creating an API ends without a definite answer from Pocket ID (a timeout or a server error), nothing is recorded in state: an API holding the same resource afterwards may be someone else's. The error names that API's ID and name; import it if it is the intended one.
 ---
 
 # pocketid_api (Resource)
@@ -21,6 +22,8 @@ Which clients may use the API, and with which permissions, is managed with `pock
 **CIMD access** (`allow_cimd_clients`) lets every client registered through a Client ID Metadata Document request user-delegated tokens for this API, with the permissions marked `allowed_for_cimd_clients`. It is off unless configured.
 
 ~> **Deleting or replacing an API removes access to it.** Pocket ID deletes an API's permissions and every client's grants on it together with the API. `resource` cannot be changed in place: changing it replaces the API, and the replacement has a new ID, so `pocketid_api_client_access` resources that refer to it are replaced as well.
+
+If creating an API ends without a definite answer from Pocket ID (a timeout or a server error), nothing is recorded in state: an API holding the same `resource` afterwards may be someone else's. The error names that API's ID and name; import it if it is the intended one.
 
 ## Example Usage
 

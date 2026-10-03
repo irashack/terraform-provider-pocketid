@@ -85,7 +85,10 @@ func (r *apiResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *
 			"user-delegated tokens for this API, with the permissions marked `allowed_for_cimd_clients`. It is off unless configured.\n\n" +
 			"~> **Deleting or replacing an API removes access to it.** Pocket ID deletes an API's permissions and every client's " +
 			"grants on it together with the API. `resource` cannot be changed in place: changing it replaces the API, and the " +
-			"replacement has a new ID, so `pocketid_api_client_access` resources that refer to it are replaced as well.",
+			"replacement has a new ID, so `pocketid_api_client_access` resources that refer to it are replaced as well.\n\n" +
+			"If creating an API ends without a definite answer from Pocket ID (a timeout or a server error), nothing is recorded " +
+			"in state: an API holding the same `resource` afterwards may be someone else's. The error names that API's ID and " +
+			"name; import it if it is the intended one.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The ID of the API.",
@@ -422,8 +425,7 @@ func (r *apiResource) Create(ctx context.Context, req resource.CreateRequest, re
 	}
 
 	// The resource identifier is unique. An API that already holds it is
-	// refused here, before anything is written, so that an uncertain create
-	// below can tell its own API apart from one that existed before.
+	// refused here, before anything is written, with a pointer to import.
 	existing, err := r.apiFindByResource(ctx, desired.Resource)
 	if err != nil {
 		resp.Diagnostics.AddError("Cannot create API", fmt.Sprintf("Could not check whether an API with resource %q already exists: %s; no mutation was attempted.", desired.Resource, err))
@@ -441,7 +443,7 @@ func (r *apiResource) Create(ctx context.Context, req resource.CreateRequest, re
 			resp.Diagnostics.AddError("Error creating API", "Pocket ID refused to create the API: "+err.Error())
 			return
 		}
-		r.apiRecoverUncertainCreate(ctx, desired.Resource, err, resp)
+		r.apiReportUncertainCreate(ctx, desired.Resource, err, resp)
 		return
 	}
 
@@ -478,31 +480,31 @@ func (r *apiResource) Create(ctx context.Context, req resource.CreateRequest, re
 	}
 }
 
-// apiRecoverUncertainCreate handles a create request that failed without a
+// apiReportUncertainCreate handles a create request that failed without a
 // definite rejection (a server error, a timeout, an unusable response): the
-// API may exist. Because no API held the identifier before the request, one
-// that holds it now is this create's, and its ID is kept in state.
-func (r *apiResource) apiRecoverUncertainCreate(ctx context.Context, resourceID string, cause error, resp *resource.CreateResponse) {
+// API may or may not exist. An API that holds the identifier afterwards
+// cannot be told apart from one another actor created after the provider's
+// check, and Pocket ID offers nothing that would prove which, so nothing is
+// recorded as managed: adopting it would let a later replacement delete
+// someone else's API with every grant on it. The error names the API that
+// holds the identifier, if any, so the operator can inspect and import it.
+func (r *apiResource) apiReportUncertainCreate(ctx context.Context, resourceID string, cause error, resp *resource.CreateResponse) {
 	found, err := r.apiFindByResource(ctx, resourceID)
+	var seen string
 	switch {
 	case err != nil:
-		resp.Diagnostics.AddError("API creation result uncertain",
-			fmt.Sprintf("The create request failed (%s), and the list of APIs could not be read (%s). An API with resource %q may exist; inspect it before applying again. Nothing was cleaned up.", cause, err, resourceID))
+		seen = fmt.Sprintf("Whether an API with resource %q exists could not be checked (%s).", resourceID, err)
 	case found == nil:
-		resp.Diagnostics.AddError("Error creating API",
-			fmt.Sprintf("The create request failed (%s). A read afterwards found no API with resource %q.", cause, resourceID))
+		seen = fmt.Sprintf("A read afterwards found no API with resource %q; the create may still complete.", resourceID)
 	case client.ValidateUUID("API", found.ID) != nil:
-		resp.Diagnostics.AddError("API creation result uncertain",
-			fmt.Sprintf("The create request failed (%s). An API with resource %q exists, but its ID is not usable, so it was not recorded; inspect it before applying again.", cause, resourceID))
+		seen = fmt.Sprintf("An API with resource %q exists, but Pocket ID reported no usable ID for it.", resourceID)
 	default:
-		model, diags := apiModelFromServer(found)
-		resp.Diagnostics.Append(diags...)
-		if !diags.HasError() {
-			resp.Diagnostics.Append(resp.State.Set(ctx, &model)...)
-		}
-		resp.Diagnostics.AddError("API creation result uncertain",
-			fmt.Sprintf("The create request failed (%s), but an API with resource %q now exists (ID %s). It is kept in state and will be replaced on the next apply; its permissions and CIMD access were not set.", cause, resourceID, found.ID))
+		seen = fmt.Sprintf("An API with resource %q exists now (ID %s, name %q). It may be the one this request created, or one someone else created after the provider checked, so it is not recorded as managed by this configuration.", resourceID, found.ID, found.Name)
 	}
+	resp.Diagnostics.AddError("API creation result uncertain",
+		fmt.Sprintf("The create request failed without a definite answer (%s). %s Nothing was recorded in state and nothing was cleaned up. "+
+			"Inspect the API in Pocket ID: if it is the intended one, import it into this resource (terraform import, or an import block) "+
+			"before applying again; otherwise choose another resource identifier.", cause, seen))
 }
 
 // apiFailedCreateStep records a created API whose permissions or CIMD access
