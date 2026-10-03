@@ -80,7 +80,7 @@ func (r *groupResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			},
 			"custom_claims": schema.MapAttribute{
 				Description:         "Custom claims to include in the OIDC tokens of users in this group, as a map of claim name to value. Reserved claim names (e.g. 'email', 'groups', 'sub') are rejected by Pocket-ID.",
-				MarkdownDescription: "Custom claims to include in the OIDC tokens of users in this group, as a map of claim name to value. Setting this attribute replaces all custom claims for the group. Reserved claim names (e.g. `email`, `groups`, `sub`) are rejected by Pocket-ID.",
+				MarkdownDescription: "Custom claims to include in the OIDC tokens of users in this group, as a map of claim name to value. Authoritative: the group has exactly these claims, and none when the attribute is omitted or `{}`. Reserved claim names (e.g. `email`, `groups`, `sub`) are rejected by Pocket-ID.",
 				Optional:            true,
 				ElementType:         types.StringType,
 			},
@@ -161,11 +161,14 @@ func (r *groupResource) Create(ctx context.Context, req resource.CreateRequest, 
 			"id": groupResp.ID,
 		})
 		updatedClaims, err := r.client.UpdateGroupCustomClaims(ctx, groupResp.ID, claims)
+		if err == nil {
+			err = checkCustomClaims(claims, updatedClaims)
+		}
 		if err != nil {
 			r.failedCreate(ctx, &plan, "custom claims", err, resp)
 			return
 		}
-		claimsMap, claimDiags := customClaimsToState(ctx, updatedClaims)
+		claimsMap, claimDiags := customClaimsToState(ctx, updatedClaims, plan.CustomClaims)
 		if claimDiags.HasError() {
 			r.failedCreate(ctx, &plan, "custom claims", errors.New("the server's custom claims could not be stored"), resp)
 			return
@@ -216,7 +219,7 @@ func (r *groupResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	state.FriendlyName = types.StringValue(groupResp.FriendlyName)
 
 	// Update custom claims
-	claimsMap, claimDiags := customClaimsToState(ctx, groupResp.CustomClaims)
+	claimsMap, claimDiags := customClaimsToState(ctx, groupResp.CustomClaims, state.CustomClaims)
 	resp.Diagnostics.Append(claimDiags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -286,12 +289,18 @@ func (r *groupResource) Update(ctx context.Context, req resource.UpdateRequest, 
 			return
 		}
 
-		claimsMap, claimDiags := customClaimsToState(ctx, updatedClaims)
+		claimsMap, claimDiags := customClaimsToState(ctx, updatedClaims, plan.CustomClaims)
 		resp.Diagnostics.Append(claimDiags...)
 		if resp.Diagnostics.HasError() {
 			return
 		}
 		plan.CustomClaims = claimsMap
+		if err := checkCustomClaims(claims, updatedClaims); err != nil {
+			// The replacement was made: record what the group holds.
+			resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+			resp.Diagnostics.AddError("Error updating user group custom claims", err.Error())
+			return
+		}
 	}
 
 	// Set the state

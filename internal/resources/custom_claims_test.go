@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -46,16 +47,24 @@ func TestCustomClaimsToState(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("empty slice maps to null", func(t *testing.T) {
-		m, diags := customClaimsToState(ctx, nil)
+		m, diags := customClaimsToState(ctx, nil, types.MapNull(types.StringType))
 		require.False(t, diags.HasError())
 		assert.True(t, m.IsNull())
+	})
+
+	t.Run("empty slice keeps an explicit empty map", func(t *testing.T) {
+		empty := types.MapValueMust(types.StringType, map[string]attr.Value{})
+		m, diags := customClaimsToState(ctx, []client.CustomClaim{}, empty)
+		require.False(t, diags.HasError())
+		require.False(t, m.IsNull())
+		assert.Empty(t, m.Elements())
 	})
 
 	t.Run("populated slice maps to map", func(t *testing.T) {
 		m, diags := customClaimsToState(ctx, []client.CustomClaim{
 			{Key: "department", Value: "engineering"},
 			{Key: "level", Value: "senior"},
-		})
+		}, types.MapNull(types.StringType))
 		require.False(t, diags.HasError())
 		require.False(t, m.IsNull())
 
@@ -73,11 +82,25 @@ func TestCustomClaimsToState(t *testing.T) {
 			{Key: "a", Value: "1"},
 			{Key: "b", Value: "2"},
 		}
-		m, diags := customClaimsToState(ctx, original)
+		m, diags := customClaimsToState(ctx, original, types.MapNull(types.StringType))
 		require.False(t, diags.HasError())
 
 		roundTripped, diags := customClaimsToAPI(ctx, m)
 		require.False(t, diags.HasError())
 		assert.ElementsMatch(t, original, roundTripped)
 	})
+}
+
+func TestCheckCustomClaims(t *testing.T) {
+	want := []client.CustomClaim{{Key: "a", Value: "1"}, {Key: "b", Value: "2"}}
+	require.NoError(t, checkCustomClaims(want, []client.CustomClaim{{Key: "b", Value: "2"}, {Key: "a", Value: "1"}}))
+	require.NoError(t, checkCustomClaims(nil, nil))
+	err := checkCustomClaims(want, []client.CustomClaim{{Key: "a", Value: "zz-held-value"}, {Key: "c", Value: "3"}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not stored: b")
+	assert.Contains(t, err.Error(), "stored but not requested: c")
+	assert.Contains(t, err.Error(), "stored with a different value: a")
+	assert.NotContains(t, err.Error(), "zz-held-value", "values are never named")
+	// Default claims left on a user whose plan has none.
+	require.Error(t, checkCustomClaims(nil, []client.CustomClaim{{Key: "dept", Value: "default"}}))
 }

@@ -91,11 +91,11 @@ func (r *userResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 				},
 			},
 			"first_name": schema.StringAttribute{
-				Description: "The first name of the user.",
+				Description: "The first name of the user. Omitted means none (an empty name in Pocket ID).",
 				Optional:    true,
 			},
 			"last_name": schema.StringAttribute{
-				Description: "The last name of the user.",
+				Description: "The last name of the user. Omitted means none (an empty name in Pocket ID).",
 				Optional:    true,
 			},
 			"display_name": schema.StringAttribute{
@@ -126,13 +126,15 @@ func (r *userResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 				Default:     booldefault.StaticBool(false),
 			},
 			"groups": schema.SetAttribute{
-				Description: "IDs of the groups the user belongs to. Pocket ID ignores an ID that names no group, so the provider checks the user's groups after each change and fails, naming the group, if one was not applied.",
+				Description: "IDs of the groups the user belongs to. Authoritative: the user is in exactly these groups, and in none when the attribute is omitted or empty. " +
+					"On creation the groups are sent with the request, which keeps Pocket ID from adding the instance's signup default groups; when no groups are set, Pocket ID adds those defaults to the new user and the provider removes them right after, before the new account has a passkey or a session. " +
+					"Pocket ID ignores an ID that names no group, so the provider checks the user's groups after each change and fails, naming the group, if one was not applied.",
 				Optional:    true,
 				ElementType: types.StringType,
 			},
 			"custom_claims": schema.MapAttribute{
-				Description:         "Custom claims to include in the user's OIDC tokens, as a map of claim name to value. Reserved claim names (e.g. 'email', 'groups', 'sub') are rejected by Pocket-ID.",
-				MarkdownDescription: "Custom claims to include in the user's OIDC tokens, as a map of claim name to value. Setting this attribute replaces all custom claims for the user. Reserved claim names (e.g. `email`, `groups`, `sub`) are rejected by Pocket-ID.",
+				Description:         "Custom claims to include in the user's OIDC tokens, as a map of claim name to value. Authoritative: the user has exactly these claims, and none when the attribute is omitted or empty. Pocket ID gives every new user the instance's signup default custom claims; the provider replaces them right after creation, before the new account has a passkey or a session. Reserved claim names (e.g. 'email', 'groups', 'sub') are rejected by Pocket-ID.",
+				MarkdownDescription: "Custom claims to include in the user's OIDC tokens, as a map of claim name to value. Authoritative: the user has exactly these claims, and none when the attribute is omitted or `{}`. Pocket ID gives every new user the instance's signup default custom claims; the provider replaces them right after creation, before the new account has a passkey or a session. Reserved claim names (e.g. `email`, `groups`, `sub`) are rejected by Pocket-ID.",
 				Optional:            true,
 				ElementType:         types.StringType,
 			},
@@ -208,6 +210,9 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 		EmailVerified: plan.EmailVerified.ValueBool(),
 		IsAdmin:       plan.IsAdmin.ValueBool(),
 		Disabled:      plan.Disabled.ValueBool(),
+		// Sent with the create, the planned groups also keep Pocket ID from
+		// adding its signup default groups.
+		UserGroupIDs: groupIDs,
 	}
 
 	// Handle locale if provided
@@ -237,58 +242,82 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 
 	// Set state values from API response
 	plan.ID = types.StringValue(userResp.ID)
-	plan.Username = types.StringValue(userResp.Username)
-	plan.Email = types.StringValue(userResp.Email)
-	plan.FirstName = types.StringValue(userResp.FirstName)
-	plan.LastName = types.StringValue(userResp.LastName)
-	plan.DisplayName = types.StringValue(userResp.DisplayName)
-	plan.EmailVerified = types.BoolValue(userResp.EmailVerified)
-	plan.IsAdmin = types.BoolValue(userResp.IsAdmin)
+	setUserFieldsFromAPI(&plan, userResp)
 
-	plan.Disabled = types.BoolValue(userResp.Disabled)
-
-	// Handle locale
-	if userResp.Locale != nil && *userResp.Locale != "" {
-		plan.Locale = types.StringValue(*userResp.Locale)
-	} else if plan.Locale.ValueString() != "" {
-		// Keep the planned value if API returns empty but plan had a value
-		// This handles cases where the API might not return locale in create response
-	} else {
-		plan.Locale = types.StringNull()
-	}
-
-	// Handle user groups
+	// Pocket ID gives a user created through the API the instance's signup
+	// default groups (unless groups were sent with the create) and default
+	// custom claims. The groups and claims attributes are authoritative, so
+	// the user must end up with exactly the planned ones, none included.
+	held := userResp.GroupIDs()
 	if len(groupIDs) > 0 {
-		tflog.Debug(ctx, "Updating user groups", map[string]any{
-			"groups": groupIDs,
+		if err := client.CheckUserGroups(userResp.ID, groupIDs, held); err != nil {
+			r.failedCreate(ctx, &plan, "groups", err, resp)
+			return
+		}
+	} else if len(held) > 0 {
+		tflog.Debug(ctx, "Removing the signup default groups from the new user", map[string]any{
+			"id": userResp.ID,
 		})
-		if _, err := r.setGroups(ctx, userResp.ID, groupIDs); err != nil {
+		if _, err := r.setGroups(ctx, userResp.ID, nil); err != nil {
 			r.failedCreate(ctx, &plan, "groups", err, resp)
 			return
 		}
 	}
+	plan.Groups = groupIDsToState(ctx, groupIDs, plan.Groups)
 
-	// Handle custom claims
-	if len(claims) > 0 {
-		tflog.Debug(ctx, "Updating user custom claims", map[string]any{
-			"id": userResp.ID,
-		})
-		updatedClaims, err := r.client.UpdateUserCustomClaims(ctx, userResp.ID, claims)
-		if err != nil {
-			r.failedCreate(ctx, &plan, "custom claims", err, resp)
-			return
-		}
-		claimsMap, claimDiags := customClaimsToState(ctx, updatedClaims)
-		if claimDiags.HasError() {
-			r.failedCreate(ctx, &plan, "custom claims", errors.New("the server's custom claims could not be stored"), resp)
-			return
-		}
-		plan.CustomClaims = claimsMap
+	// The create response does not show default claims, so the claims are
+	// always replaced, with an empty list when none are planned.
+	tflog.Debug(ctx, "Setting user custom claims", map[string]any{
+		"id": userResp.ID,
+	})
+	updatedClaims, err := r.client.UpdateUserCustomClaims(ctx, userResp.ID, claims)
+	if err == nil {
+		err = checkCustomClaims(claims, updatedClaims)
 	}
+	if err != nil {
+		r.failedCreate(ctx, &plan, "custom claims", err, resp)
+		return
+	}
+	claimsMap, claimDiags := customClaimsToState(ctx, updatedClaims, plan.CustomClaims)
+	if claimDiags.HasError() {
+		r.failedCreate(ctx, &plan, "custom claims", errors.New("the server's custom claims could not be stored"), resp)
+		return
+	}
+	plan.CustomClaims = claimsMap
 
 	// Set the state
 	diags = resp.State.Set(ctx, &plan)
 	resp.Diagnostics.Append(diags...)
+}
+
+// setUserFieldsFromAPI copies the user's own fields from a Pocket ID response
+// into model. An empty first or last name keeps model's representation (null
+// stays null, "" stays ""), as does a missing locale.
+func setUserFieldsFromAPI(model *userResourceModel, user *client.User) {
+	model.Username = types.StringValue(user.Username)
+	model.Email = types.StringValue(user.Email)
+	model.FirstName = optionalStringToState(user.FirstName, model.FirstName)
+	model.LastName = optionalStringToState(user.LastName, model.LastName)
+	model.DisplayName = types.StringValue(user.DisplayName)
+	model.EmailVerified = types.BoolValue(user.EmailVerified)
+	model.IsAdmin = types.BoolValue(user.IsAdmin)
+	model.Disabled = types.BoolValue(user.Disabled)
+	if user.Locale != nil && *user.Locale != "" {
+		model.Locale = types.StringValue(*user.Locale)
+	} else {
+		model.Locale = types.StringNull()
+	}
+}
+
+// optionalStringToState returns value for an Optional string attribute whose
+// server value is "" when unset. "" keeps the representation of like (the
+// configured or prior value): null stays null, so an omitted attribute never
+// becomes "".
+func optionalStringToState(value string, like types.String) types.String {
+	if value == "" && (like.IsNull() || like.IsUnknown()) {
+		return types.StringNull()
+	}
+	return types.StringValue(value)
 }
 
 // Read refreshes the Terraform state with the latest data.
@@ -325,37 +354,11 @@ func (r *userResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	}
 
 	// Update state from API response
-	state.Username = types.StringValue(userResp.Username)
-	state.Email = types.StringValue(userResp.Email)
-	state.FirstName = types.StringValue(userResp.FirstName)
-	state.LastName = types.StringValue(userResp.LastName)
-	state.DisplayName = types.StringValue(userResp.DisplayName)
-	state.EmailVerified = types.BoolValue(userResp.EmailVerified)
-	state.IsAdmin = types.BoolValue(userResp.IsAdmin)
-	state.Disabled = types.BoolValue(userResp.Disabled)
-
-	// Handle locale
-	if userResp.Locale != nil && *userResp.Locale != "" {
-		state.Locale = types.StringValue(*userResp.Locale)
-	} else {
-		state.Locale = types.StringNull()
-	}
-
-	// Update groups
-	if len(userResp.UserGroups) > 0 {
-		var groupIDs []string
-		for _, group := range userResp.UserGroups {
-			groupIDs = append(groupIDs, group.ID)
-		}
-		groups, diags := types.SetValueFrom(ctx, types.StringType, groupIDs)
-		resp.Diagnostics.Append(diags...)
-		state.Groups = groups
-	} else {
-		state.Groups = types.SetNull(types.StringType)
-	}
+	setUserFieldsFromAPI(&state, userResp)
+	state.Groups = groupIDsToState(ctx, userResp.GroupIDs(), state.Groups)
 
 	// Update custom claims
-	claimsMap, claimDiags := customClaimsToState(ctx, userResp.CustomClaims)
+	claimsMap, claimDiags := customClaimsToState(ctx, userResp.CustomClaims, state.CustomClaims)
 	resp.Diagnostics.Append(claimDiags...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -431,21 +434,7 @@ func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	}
 
 	// Update state values from API response
-	plan.Username = types.StringValue(userResp.Username)
-	plan.Email = types.StringValue(userResp.Email)
-	plan.FirstName = types.StringValue(userResp.FirstName)
-	plan.LastName = types.StringValue(userResp.LastName)
-	plan.DisplayName = types.StringValue(userResp.DisplayName)
-	plan.EmailVerified = types.BoolValue(userResp.EmailVerified)
-	plan.IsAdmin = types.BoolValue(userResp.IsAdmin)
-	plan.Disabled = types.BoolValue(userResp.Disabled)
-
-	// Handle locale
-	if userResp.Locale != nil && *userResp.Locale != "" {
-		plan.Locale = types.StringValue(*userResp.Locale)
-	} else {
-		plan.Locale = types.StringNull()
-	}
+	setUserFieldsFromAPI(&plan, userResp)
 
 	// Handle user groups
 	var plannedGroupIDs []string
@@ -485,12 +474,12 @@ func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, r
 			})
 			held, err := r.setGroups(ctx, plan.ID.ValueString(), plannedGroupIDs)
 			if err != nil {
+				plan.Groups = groupIDsToState(ctx, held, plan.Groups)
 				var mismatch *client.UserGroupsMismatchError
 				if errors.As(err, &mismatch) {
 					// The write was made: record the groups the user is in now,
 					// and the claims as they were, so the next plan shows what
 					// is still to do.
-					plan.Groups = groupIDsToState(ctx, held, plan.Groups)
 					plan.CustomClaims = state.CustomClaims
 					resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 				}
@@ -524,12 +513,18 @@ func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, r
 			return
 		}
 
-		claimsMap, claimDiags := customClaimsToState(ctx, updatedClaims)
+		claimsMap, claimDiags := customClaimsToState(ctx, updatedClaims, plan.CustomClaims)
 		resp.Diagnostics.Append(claimDiags...)
 		if resp.Diagnostics.HasError() {
 			return
 		}
 		plan.CustomClaims = claimsMap
+		if err := checkCustomClaims(claims, updatedClaims); err != nil {
+			// The replacement was made: record what the user holds.
+			resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+			resp.Diagnostics.AddError("Error updating user custom claims", err.Error())
+			return
+		}
 	}
 
 	// Set the state

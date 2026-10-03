@@ -2,8 +2,11 @@ package resources
 
 import (
 	"context"
+	"fmt"
 	"sort"
+	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
@@ -39,12 +42,17 @@ func customClaimsToAPI(ctx context.Context, claims types.Map) ([]client.CustomCl
 	return result, diags
 }
 
-// customClaimsToState converts the API's list of custom claims into a Terraform
-// map. An empty list is mapped to a null map to avoid perpetual diffs when the
-// configuration omits the attribute.
-func customClaimsToState(ctx context.Context, claims []client.CustomClaim) (types.Map, diag.Diagnostics) {
+// customClaimsToState converts the API's list of custom claims into a
+// Terraform map. No claims take the representation of like, the configured or
+// prior value: null stays null and an explicit empty map stays empty, so
+// neither "custom_claims = {}" nor an omitted attribute shows a difference
+// when the object has no claims.
+func customClaimsToState(ctx context.Context, claims []client.CustomClaim, like types.Map) (types.Map, diag.Diagnostics) {
 	if len(claims) == 0 {
-		return types.MapNull(types.StringType), diag.Diagnostics{}
+		if like.IsNull() || like.IsUnknown() {
+			return types.MapNull(types.StringType), diag.Diagnostics{}
+		}
+		return types.MapValueMust(types.StringType, map[string]attr.Value{}), diag.Diagnostics{}
 	}
 
 	values := make(map[string]string, len(claims))
@@ -52,4 +60,48 @@ func customClaimsToState(ctx context.Context, claims []client.CustomClaim) (type
 		values[claim.Key] = claim.Value
 	}
 	return types.MapValueFrom(ctx, types.StringType, values)
+}
+
+// checkCustomClaims compares the claims Pocket ID holds after a replacement
+// with the ones requested. Pocket ID stores keys and values in Unicode NFC
+// form, so a request in another form comes back different; an error names
+// the keys that differ (never the values).
+func checkCustomClaims(want, held []client.CustomClaim) error {
+	wanted := make(map[string]string, len(want))
+	for _, claim := range want {
+		wanted[claim.Key] = claim.Value
+	}
+	have := make(map[string]string, len(held))
+	for _, claim := range held {
+		have[claim.Key] = claim.Value
+	}
+	var missing, unexpected, changed []string
+	for key, value := range wanted {
+		got, ok := have[key]
+		switch {
+		case !ok:
+			missing = append(missing, key)
+		case got != value:
+			changed = append(changed, key)
+		}
+	}
+	for key := range have {
+		if _, ok := wanted[key]; !ok {
+			unexpected = append(unexpected, key)
+		}
+	}
+	if len(missing)+len(unexpected)+len(changed) == 0 {
+		return nil
+	}
+	var parts []string
+	for _, group := range []struct {
+		label string
+		keys  []string
+	}{{"not stored", missing}, {"stored but not requested", unexpected}, {"stored with a different value", changed}} {
+		if len(group.keys) > 0 {
+			sort.Strings(group.keys)
+			parts = append(parts, fmt.Sprintf("%s: %s", group.label, strings.Join(group.keys, ", ")))
+		}
+	}
+	return fmt.Errorf("the custom claims Pocket ID holds differ from the requested ones (%s); it stores keys and values in Unicode NFC form", strings.Join(parts, "; "))
 }

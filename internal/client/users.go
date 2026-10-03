@@ -39,6 +39,11 @@ type UserCreateRequest struct {
 	IsAdmin       bool    `json:"isAdmin"`
 	Locale        *string `json:"locale,omitempty"`
 	Disabled      bool    `json:"disabled"`
+	// UserGroupIDs, on create only, are the groups the new user is put in.
+	// When it is non-empty Pocket ID (2.14.0 to 2.17.0) does not add the
+	// instance's signup default groups; an ID that names no group is
+	// dropped without an error. Update ignores it.
+	UserGroupIDs []string `json:"userGroupIds,omitempty"`
 }
 
 // UpdateUserGroupsRequest represents a request to update a user's groups
@@ -247,7 +252,26 @@ func (c *Client) writeUserGroups(ctx context.Context, userID string, groupIDs []
 	if readErr != nil {
 		return nil, fmt.Errorf("groups of user %s: %w; reading them back failed: %w", userID, ErrResultUnread, readErr)
 	}
-	return userGroupIDs(user.UserGroups), nil
+	return user.GroupIDs(), nil
+}
+
+// CheckUserGroups compares the groups a user is in (held) with the ones
+// requested (want) and returns a *UserGroupsMismatchError when they differ.
+func CheckUserGroups(userID string, want, held []string) error {
+	if missing, unexpected := diffGroupIDs(want, held); len(missing) > 0 || len(unexpected) > 0 {
+		return &UserGroupsMismatchError{UserID: userID, Missing: missing, Unexpected: unexpected}
+	}
+	return nil
+}
+
+// GroupIDs returns the IDs of the groups the user is in, as the response
+// that produced u listed them.
+func (u *User) GroupIDs() []string {
+	ids := make([]string, 0, len(u.UserGroups))
+	for _, group := range u.UserGroups {
+		ids = append(ids, group.ID)
+	}
+	return ids
 }
 
 // SetUserGroups replaces the groups a user belongs to with exactly groupIDs
@@ -260,10 +284,7 @@ func (c *Client) SetUserGroups(ctx context.Context, userID string, groupIDs []st
 	if err != nil {
 		return nil, err
 	}
-	if missing, unexpected := diffGroupIDs(groupIDs, held); len(missing) > 0 || len(unexpected) > 0 {
-		return held, &UserGroupsMismatchError{UserID: userID, Missing: missing, Unexpected: unexpected}
-	}
-	return held, nil
+	return held, CheckUserGroups(userID, groupIDs, held)
 }
 
 // AddUserToGroup adds a user to a group without changing the user's other

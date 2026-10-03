@@ -117,7 +117,7 @@ output "department_groups" {
 
 ### Optional
 
-- `custom_claims` (Map of String) Custom claims to include in the OIDC tokens of users in this group, as a map of claim name to value. Setting this attribute replaces all custom claims for the group. Reserved claim names (e.g. `email`, `groups`, `sub`) are rejected by Pocket-ID.
+- `custom_claims` (Map of String) Custom claims to include in the OIDC tokens of users in this group, as a map of claim name to value. Authoritative: the group has exactly these claims, and none when the attribute is omitted or `{}`. Reserved claim names (e.g. `email`, `groups`, `sub`) are rejected by Pocket-ID.
 
 ### Read-Only
 

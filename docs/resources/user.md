@@ -112,14 +112,14 @@ resource "pocketid_user" "with_claims" {
 
 ### Optional
 
-- `custom_claims` (Map of String) Custom claims to include in the user's OIDC tokens, as a map of claim name to value. Setting this attribute replaces all custom claims for the user. Reserved claim names (e.g. `email`, `groups`, `sub`) are rejected by Pocket-ID.
+- `custom_claims` (Map of String) Custom claims to include in the user's OIDC tokens, as a map of claim name to value. Authoritative: the user has exactly these claims, and none when the attribute is omitted or `{}`. Pocket ID gives every new user the instance's signup default custom claims; the provider replaces them right after creation, before the new account has a passkey or a session. Reserved claim names (e.g. `email`, `groups`, `sub`) are rejected by Pocket-ID.
 - `disabled` (Boolean) Whether the user account is disabled. Defaults to false.
 - `display_name` (String) The display name of the user. Computed from first and last name if not set.
 - `email_verified` (Boolean) Whether the user's email address is verified. Defaults to false.
-- `first_name` (String) The first name of the user.
-- `groups` (Set of String) IDs of the groups the user belongs to. Pocket ID ignores an ID that names no group, so the provider checks the user's groups after each change and fails, naming the group, if one was not applied.
+- `first_name` (String) The first name of the user. Omitted means none (an empty name in Pocket ID).
+- `groups` (Set of String) IDs of the groups the user belongs to. Authoritative: the user is in exactly these groups, and in none when the attribute is omitted or empty. On creation the groups are sent with the request, which keeps Pocket ID from adding the instance's signup default groups; when no groups are set, Pocket ID adds those defaults to the new user and the provider removes them right after, before the new account has a passkey or a session. Pocket ID ignores an ID that names no group, so the provider checks the user's groups after each change and fails, naming the group, if one was not applied.
 - `is_admin` (Boolean) Whether the user has administrator privileges. Defaults to false.
-- `last_name` (String) The last name of the user.
+- `last_name` (String) The last name of the user. Omitted means none (an empty name in Pocket ID).
 - `locale` (String) The locale preference for the user (e.g., 'en', 'fr').
 
 ### Read-Only

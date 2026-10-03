@@ -18,3 +18,26 @@
   the apply); before, the provider then recorded a membership that did not
   exist. Now the apply fails with an error naming the group. For
   `pocketid_user`, state records the groups the user is actually in.
+- A `pocketid_user` created by the provider now holds exactly the configured
+  `groups` and `custom_claims`, including none at all. Before, Pocket ID's
+  signup default groups and default custom claims (Settings, "Signup defaults")
+  were added to every user the provider created and stayed there, invisible to
+  Terraform when `groups` or `custom_claims` was empty or omitted. The planned
+  groups are now sent with the create request, which keeps Pocket ID from
+  adding its default groups; with no groups planned, and for the default
+  claims (which Pocket ID always adds), the provider replaces them right after
+  the create. If your instance has signup defaults and you relied on them for
+  users created by Terraform, list those groups and claims in the
+  configuration.
+- `groups = []`, `custom_claims = {}` (on `pocketid_user` and
+  `pocketid_group`) and an omitted attribute now all plan empty once applied.
+  Before, an explicit empty value showed a change on every plan, and clearing
+  claims with `{}` failed with "Provider produced inconsistent result".
+- An omitted `first_name` or `last_name` stays null instead of becoming `""`,
+  which made creating a user without them fail with "Provider produced
+  inconsistent result" and then show a change on every plan. A user already
+  in that state shows one last in-place update, which changes nothing in
+  Pocket ID.
+- After writing custom claims, the provider compares what Pocket ID stored with
+  what was configured and fails, naming the keys, if they differ (Pocket ID
+  stores keys and values in Unicode NFC form).
