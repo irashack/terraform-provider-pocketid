@@ -184,7 +184,7 @@ resource "pocketid_client_secret" "app" {
 }
 `, rotation))
 	}
-	var clientID, firstID, clientOwn string
+	var clientID, firstID, clientOwn, rotatedPrefix string
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
@@ -225,6 +225,7 @@ resource "pocketid_client_secret" "app" {
 					testAccClientSecretResChanged(&firstID),
 					testAccClientSecretResAbsent(&clientID, &firstID),
 					testAccClientSecretResOnServer(&clientOwn),
+					testAccClientSecretResCapture(testAccClientSecretAddr, "prefix", &rotatedPrefix),
 					resource.TestCheckResourceAttrPtr("pocketid_client.app", "id", &clientID),
 					func(*terraform.State) error {
 						listed, err := testAccClientSecretResList(clientID)
@@ -245,8 +246,17 @@ resource "pocketid_client_secret" "app" {
 					attrs, err := testAccClientSecretResAttrs(s, testAccClientSecretAddr)
 					return attrs["client_id"] + "/" + attrs["id"], err
 				},
+				// ImportStateVerify prints a difference of the attributes it
+				// compares, and a prefix that differs may be the whole value,
+				// so the prefix is compared in ImportStateCheck, value-free.
 				ImportStateVerify:       true,
-				ImportStateVerifyIgnore: []string{"secret"},
+				ImportStateVerifyIgnore: []string{"secret", "prefix"},
+				ImportStateCheck: func(states []*terraform.InstanceState) error {
+					if len(states) != 1 {
+						return fmt.Errorf("expected one imported state, got %d", len(states))
+					}
+					return testAccSameError("the imported prefix", rotatedPrefix, states[0].Attributes["prefix"])
+				},
 			},
 		},
 	})
