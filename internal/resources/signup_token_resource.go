@@ -353,7 +353,7 @@ func (r *signupTokenResource) Create(ctx context.Context, req resource.CreateReq
 		// still be valid, and the taint makes the next apply delete it.
 		resp.Diagnostics.AddError(summary,
 			what+"One attempt to delete it again could not be confirmed ("+cleanupErr.Error()+"), so the token may still be "+
-				"valid until it expires at "+created.ExpiresAt+". It is recorded in the state as tainted, so the next apply "+
+				"valid until it expires. It is recorded in the state as tainted, so the next apply "+
 				"deletes it; delete it in the Pocket-ID interface to revoke it sooner. Fix the configuration first.")
 		return
 	}

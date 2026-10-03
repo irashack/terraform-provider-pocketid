@@ -82,17 +82,18 @@ func (c *Client) CreateSignupToken(ctx context.Context, req *SignupTokenCreateRe
 	if c.checkCreatedID("signup token", "", result.ID) != nil {
 		return nil, fmt.Errorf("signup token creation: %w: the response held no usable ID, so a token may have been created that this provider cannot name; it expires on its own", ErrResultUnread)
 	}
+	// The text is checked before any partial result is returned: an answer
+	// whose text carries the API key is not used beyond the token's ID and
+	// value (the token exists and may be valid), and what it grants is
+	// unknown, whatever else is wrong with it.
+	if err := c.checkReturnedText(result.shownTexts()...); err != nil {
+		return &SignupToken{ID: result.ID, Token: result.Token}, fmt.Errorf("signup token %s: %w", result.ID, unreadResult(err))
+	}
 	if err := c.checkGroupIDs(result.UserGroups); err != nil {
 		// The token exists and its ID is usable; the groups it joins are
 		// unknown, so none is returned.
 		result.UserGroups = nil
 		return &result, fmt.Errorf("signup token %s: %w", result.ID, unreadResult(err))
-	}
-	// An answer whose text carries the API key is not used beyond the
-	// token's ID and value (the token exists and may be valid): what it
-	// grants is unknown.
-	if err := c.checkReturnedText(result.shownTexts()...); err != nil {
-		return &SignupToken{ID: result.ID, Token: result.Token}, fmt.Errorf("signup token %s: %w", result.ID, unreadResult(err))
 	}
 	if result.Token == "" {
 		return &result, fmt.Errorf("signup token %s: %w: the response held no token value", result.ID, ErrResultUnread)

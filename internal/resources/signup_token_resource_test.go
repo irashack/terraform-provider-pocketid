@@ -769,3 +769,43 @@ func TestSignupTokenResource_UpdateIsRefused(t *testing.T) {
 	r.Update(context.Background(), resource.UpdateRequest{State: state, Plan: tfsdk.Plan{Schema: sch, Raw: state.Raw}}, resp)
 	assert.True(t, resp.Diagnostics.HasError())
 }
+
+// An answer with both an unusable group ID and the API key in its expiry is
+// treated as one that carries the key: only the token's ID and value are
+// used, the token is deleted (or kept by those alone when the deletion
+// fails), and no time from the answer reaches state or a diagnostic.
+func TestSignupTokenResource_CreateWithAnUnusableGroupAndAKeyBearingExpiry(t *testing.T) {
+	const expiry = "2030-01-02T03:04:05Z test-token"
+	body := fmt.Sprintf(`{"id":%q,"token":%q,"expiresAt":%q,"usageLimit":3,"usageCount":0,"userGroups":[{"id":"not-a-group-id","name":"g"}],"createdAt":"2026-10-02T10:00:00Z"}`, signupTestTokenID, signupTestSecret, expiry)
+	for _, failDelete := range []bool{false, true} {
+		t.Run(fmt.Sprintf("deletion fails %v", failDelete), func(t *testing.T) {
+			fake, c := newSignupFake(t)
+			fake.createBody = body
+			if failDelete {
+				fake.failDelete = &scimFailure{500, `{"error":"boom"}`}
+			}
+			r, sch := signupResource(t, c)
+
+			resp := signupCreate(t, r, sch, signupPlan(signupSet(signupTestGroupA), 3))
+			require.True(t, resp.Diagnostics.HasError())
+			mutations := fake.mutations()
+			require.Len(t, mutations, 2, "one creation and one deletion")
+			assert.Equal(t, http.MethodDelete, mutations[1].Method)
+			detail := signupDiagnosticText(resp)
+			assert.Contains(t, detail, "carried a value the provider cannot use")
+			assert.NotContains(t, detail, "test-token")
+			assert.NotContains(t, detail, "2030-01-02")
+			assert.NotContains(t, detail, signupTestSecret)
+			if !failDelete {
+				assert.True(t, resp.State.Raw.IsNull())
+				return
+			}
+			require.False(t, resp.State.Raw.IsNull())
+			var expires, createdAt types.String
+			signupAttr(t, resp.State, "expires_at", &expires)
+			signupAttr(t, resp.State, "created_at", &createdAt)
+			assert.True(t, expires.IsNull(), "no time from the answer is recorded")
+			assert.True(t, createdAt.IsNull())
+		})
+	}
+}
