@@ -221,6 +221,11 @@ work taken. [UPSTREAM-README.md](UPSTREAM-README.md) is an archived upstream REA
 not this provider's installation guide. See [CHANGELOG.md](CHANGELOG.md) for released
 changes.
 
+Some code is adapted from other projects (Pocket ID's callback-URL matching,
+go-playground/validator's e-mail pattern) and the provider links modules for URL
+patterns; [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) carries their notices and
+licenses and ships in every release archive.
+
 ## Secret and failure behavior
 
 Confidential-client creation generates one secret and keeps it in `client_secret`,

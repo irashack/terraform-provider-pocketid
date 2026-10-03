@@ -191,6 +191,27 @@ Plan and apply with a refresh for the first run after upgrading; state written b
   `client_id` rename Pocket ID ignored.
 - Users with omitted names plan the one in-place update above also without a refresh.
 
+**What 3.0.0 refuses that 2.4.104 accepted**
+
+Besides the plan-time rules above:
+
+- An answer from Pocket ID it cannot rely on: one that is not the JSON expected,
+  lacks the fields that say what the server holds (a client's, user's or group's
+  memberships, a grant's access), names another object, or contains the API key.
+  The error quotes nothing from the response; after a change Pocket ID accepted it
+  says the result could not be read and to inspect the object before trying again.
+  A proxy that rewrites Pocket ID's answers can therefore fail applies that passed
+  before.
+- An identifier or lookup value containing the provider's API key, from the
+  configuration, state or an import ID. It is refused before any request and never
+  shown.
+- Changes to a resource whose last change had an uncertain result, until that is
+  settled: `unresolved_creation` on `pocketid_user` and
+  `pocketid_group_membership`, `unresolved_user_ids` on `pocketid_group_members`,
+  and an unresolved grant on `pocketid_api_client_access`. A refreshed plan settles
+  most cases; otherwise `terraform state rm` the resource and import it again. The
+  3.0.0 changelog section "When a result is uncertain" gives the steps per resource.
+
 ## Upgrade from 2.4.103 to 2.4.104
 
 A same-address patch that adds one optional attribute,

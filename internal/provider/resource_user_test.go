@@ -579,12 +579,12 @@ func TestAccResourceUserGroup_planTimeValidation(t *testing.T) {
   username      = "reserved-claim"
   email         = "reserved-claim@example.com"
   custom_claims = { type = "x" }
-}`, `value must be none of`},
+}`, `claim\s+names\s+Pocket\s+ID\s+reserves`},
 		"empty_claim_value": {`resource "pocketid_group" "t" {
   name          = "empty-claim"
   friendly_name = "Empty claim"
   custom_claims = { team = "" }
-}`, `length must be at least 1`},
+}`, `custom\s+claim\s+value\s+must\s+not\s+be\s+empty`},
 		"group_name": {`resource "pocketid_group" "t" {
   name          = "a"
   friendly_name = "Short name"
