@@ -132,6 +132,16 @@ func readUserProfilePicture(path string) (*userProfilePictureFile, error) {
 
 // describeFileError names why a file operation failed without echoing the
 // operating system's message, which includes the path.
+// localFileError reports a failure to open or read a configured file without
+// the error Go gives, which quotes the path (configured text): it keeps only
+// the kind of failure, and errors.Is still finds fs.ErrNotExist.
+func localFileError(err error) error {
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("the file does not exist: %w", fs.ErrNotExist)
+	}
+	return fmt.Errorf("the file cannot be read (%s)", describeFileError(err))
+}
+
 func describeFileError(err error) string {
 	switch {
 	case errors.Is(err, fs.ErrPermission):

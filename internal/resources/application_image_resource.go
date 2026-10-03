@@ -192,12 +192,12 @@ func readApplicationImageSource(kind client.ApplicationImage, source string) ([]
 	}
 	file, err := os.Open(source) // #nosec G304 -- the configured file is the input
 	if err != nil {
-		return nil, "", err
+		return nil, "", localFileError(err)
 	}
 	defer func() { _ = file.Close() }()
 	content, err := io.ReadAll(io.LimitReader(file, client.MaxApplicationImageBytes+1))
 	if err != nil {
-		return nil, "", err
+		return nil, "", localFileError(err)
 	}
 	if len(content) > client.MaxApplicationImageBytes {
 		return nil, "", fmt.Errorf("the file is larger than %d bytes, the most this provider uploads", client.MaxApplicationImageBytes)

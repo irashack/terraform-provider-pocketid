@@ -462,24 +462,24 @@ func setClientLogoServedHash(ctx context.Context, private interface {
 func readClientLogoSource(source string) ([]byte, string, error) {
 	extension := clientLogoExtension(source)
 	if _, ok := client.ClientLogoMediaType(extension); !ok {
-		return nil, "", fmt.Errorf("the file name %q has no extension Pocket ID accepts for a logo (it takes the image type from the extension: %s)",
-			filepath.Base(source), strings.Join(client.ClientLogoExtensions(), ", "))
+		return nil, "", fmt.Errorf("the file name has no extension Pocket ID accepts for a logo (it takes the image type from the extension: %s); the name is not shown",
+			strings.Join(client.ClientLogoExtensions(), ", "))
 	}
 	file, err := os.Open(source)
 	if err != nil {
-		return nil, "", err
+		return nil, "", localFileError(err)
 	}
 	defer func() { _ = file.Close() }()
 	info, err := file.Stat()
 	if err != nil {
-		return nil, "", err
+		return nil, "", localFileError(err)
 	}
 	if !info.Mode().IsRegular() {
-		return nil, "", fmt.Errorf("%q is not a regular file", source)
+		return nil, "", errors.New("the source is not a regular file")
 	}
 	content, err := io.ReadAll(io.LimitReader(file, int64(client.ClientLogoMaxBytes)+1))
 	if err != nil {
-		return nil, "", err
+		return nil, "", localFileError(err)
 	}
 	if len(content) > client.ClientLogoMaxBytes {
 		return nil, "", fmt.Errorf("the file is larger than %d bytes, the most Pocket ID accepts for a logo", client.ClientLogoMaxBytes)
