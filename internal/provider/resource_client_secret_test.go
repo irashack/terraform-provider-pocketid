@@ -573,3 +573,54 @@ resource "pocketid_client_secret" "app" {
 		},
 	})
 }
+
+// A confidential client that holds no secret at all (pocketid_client with
+// generate_secret = false, or 2.17's auto-created secret revoked) gets its
+// only secret from this resource, and none once it is destroyed.
+func TestAccResourceClientSecret_clientWithoutSecrets(t *testing.T) {
+	ctx := context.Background()
+	c, err := testClient()
+	require.NoError(t, err)
+	created, err := c.CreateClient(ctx, &client.OIDCClientCreateRequest{
+		Name: "tf-acc-secret-none-" + acctest.RandString(6), CallbackURLs: []string{"https://example.invalid/callback"},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = c.DeleteClient(context.Background(), created.ID) })
+	existing, err := c.ListClientSecrets(ctx, created.ID)
+	require.NoError(t, err)
+	for _, secret := range existing {
+		require.NoError(t, c.RevokeClientSecret(ctx, created.ID, secret.ID))
+	}
+	count := func(want int) resource.TestCheckFunc {
+		return func(*terraform.State) error {
+			listed, err := testAccClientSecretResList(created.ID)
+			if err != nil {
+				return err
+			}
+			if len(listed) != want {
+				return fmt.Errorf("the client holds %d secrets, want %d", len(listed), want)
+			}
+			return nil
+		}
+	}
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				PreConfig: func() { require.NoError(t, count(0)(nil)) },
+				Config: testAccProviderConfig() + fmt.Sprintf(`
+resource "pocketid_client_secret" "app" {
+  client_id = %q
+}
+`, created.ID),
+				Check: resource.ComposeAggregateTestCheckFunc(testAccClientSecretResOnServer(), count(1)),
+			},
+			{
+				Config: testAccProviderConfig(),
+				Check:  count(0),
+			},
+		},
+	})
+}
