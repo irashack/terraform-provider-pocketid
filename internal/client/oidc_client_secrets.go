@@ -182,7 +182,7 @@ func (c *Client) GenerateClientSecret(ctx context.Context, clientID string, opts
 	}
 
 	if multiple {
-		secret, err := decodeCreatedSecret(response)
+		secret, err := c.decodeCreatedSecret(response)
 		if err != nil {
 			return nil, err
 		}
@@ -193,7 +193,7 @@ func (c *Client) GenerateClientSecret(ctx context.Context, clientID string, opts
 		Secret string `json:"secret"`
 	}
 	if err := json.Unmarshal(response, &result); err != nil {
-		return nil, fmt.Errorf("error unmarshaling secret response; result uncertain, inspect before recovery")
+		return nil, errUndecodableSecret
 	}
 	if result.Secret == "" {
 		return nil, fmt.Errorf("secret creation returned no secret; result uncertain, inspect the client before recovery")
@@ -232,7 +232,7 @@ func (c *Client) CreateClientSecret(ctx context.Context, clientID string, opts *
 	if err != nil {
 		return nil, err
 	}
-	return decodeCreatedSecret(response)
+	return c.decodeCreatedSecret(response)
 }
 
 // secretCreateBody builds OidcClientSecretCreateDto from opts, after checking
@@ -253,15 +253,22 @@ func secretCreateBody(opts *ClientSecretOptions) (any, error) {
 	}{opts.Value, opts.ExpiresAt}, nil
 }
 
+// errUndecodableSecret is a create response that cannot be decoded at all: the
+// secret may exist, so it wraps ErrResultUnread and ErrUndecodableResponse,
+// and its text is fixed.
+var errUndecodableSecret error = undecodableResultError{message: "error unmarshaling secret response; result uncertain, inspect the client's secrets before recovery"}
+
 // decodeCreatedSecret reads OidcClientSecretCreatedDto. A response without a
-// usable (UUID) ID returns no result. One with a usable ID but other fields
+// usable ID (a UUID that does not contain the API key: checkCreatedID)
+// returns no result. One with a usable ID but other fields
 // that cannot be read, or a prefix that is not exactly what Pocket ID derives
 // (empty for a value of four bytes or fewer, else the value's first four
 // bytes; with no value in the response, any prefix in the contract), returns
 // only that ID, with ErrCreatedSecretMalformed. One with an ID but no value
 // returns the metadata together with ErrCreatedSecretValueMissing. No error
-// carries any of the response.
-func decodeCreatedSecret(response []byte) (*ClientSecret, error) {
+// carries any of the response; one whose fields could not be decoded also
+// wraps ErrResultUnread and ErrUndecodableResponse.
+func (c *Client) decodeCreatedSecret(response []byte) (*ClientSecret, error) {
 	var result struct {
 		ClientSecretMetadata
 		Secret string `json:"secret"`
@@ -271,13 +278,13 @@ func decodeCreatedSecret(response []byte) (*ClientSecret, error) {
 		var head struct {
 			ID string `json:"id"`
 		}
-		if json.Unmarshal(response, &head) != nil || ValidateUUID("client secret", head.ID) != nil {
-			return nil, fmt.Errorf("error unmarshaling secret response; result uncertain, inspect before recovery")
+		if json.Unmarshal(response, &head) != nil || c.checkCreatedID("client secret", "", head.ID) != nil {
+			return nil, errUndecodableSecret
 		}
 		return &ClientSecret{ClientSecretMetadata: ClientSecretMetadata{ID: head.ID}},
-			fmt.Errorf("secret creation returned secret %s with fields that could not be read; result uncertain, inspect the client before recovery: %w", head.ID, ErrCreatedSecretMalformed)
+			fmt.Errorf("secret creation returned secret %s with fields that could not be read; result uncertain, inspect the client before recovery: %w: %w", head.ID, ErrCreatedSecretMalformed, errUndecodableSecret)
 	}
-	if err := ValidateUUID("client secret", result.ID); err != nil {
+	if err := c.checkCreatedID("client secret", "", result.ID); err != nil {
 		if result.Secret == "" {
 			return nil, fmt.Errorf("secret creation returned no secret; result uncertain, inspect the client before recovery")
 		}

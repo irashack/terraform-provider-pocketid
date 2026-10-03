@@ -88,7 +88,7 @@ type automaticSecretCleanup struct {
 // secret is answered with revokeStatus, and the confirming list with list.
 func runAutomaticSecretCleanup(t *testing.T, revokeStatus int, list string) automaticSecretCleanup {
 	t.Helper()
-	const created = `{"id":"new-fixture","name":"fixture","callbackURLs":["https://example.invalid/callback"],"pkceEnabled":true,` +
+	const created = `{"id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","name":"fixture","callbackURLs":["https://example.invalid/callback"],"pkceEnabled":true,` +
 		`"createdSecret":{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","prefix":"synt","secret":"synthetic-auto-secret"}}`
 	var outcome automaticSecretCleanup
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -99,19 +99,19 @@ func runAutomaticSecretCleanup(t *testing.T, revokeStatus int, list string) auto
 		case "POST /api/oidc/clients":
 			w.WriteHeader(http.StatusCreated)
 			_, _ = fmt.Fprint(w, created)
-		case "DELETE /api/oidc/clients/new-fixture/secrets/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa":
+		case "DELETE /api/oidc/clients/dddddddd-dddd-4ddd-8ddd-dddddddddddd/secrets/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa":
 			outcome.revokes++
 			w.WriteHeader(revokeStatus)
-		case "GET /api/oidc/clients/new-fixture/secrets":
+		case "GET /api/oidc/clients/dddddddd-dddd-4ddd-8ddd-dddddddddddd/secrets":
 			_, _ = fmt.Fprint(w, list)
-		case "POST /api/oidc/clients/new-fixture/secrets":
+		case "POST /api/oidc/clients/dddddddd-dddd-4ddd-8ddd-dddddddddddd/secrets":
 			outcome.secretPosts++
 			w.WriteHeader(http.StatusCreated)
 			_, _ = fmt.Fprint(w, `{"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","prefix":"synt","createdAt":"2026-10-02T10:00:00Z","isActive":true,"secret":"synthetic-managed-secret"}`)
-		case "DELETE /api/oidc/clients/new-fixture":
+		case "DELETE /api/oidc/clients/dddddddd-dddd-4ddd-8ddd-dddddddddddd":
 			w.WriteHeader(http.StatusNoContent)
-		case "GET /api/oidc/clients/new-fixture":
-			_, _ = fmt.Fprint(w, `{"id":"new-fixture"}`)
+		case "GET /api/oidc/clients/dddddddd-dddd-4ddd-8ddd-dddddddddddd":
+			_, _ = fmt.Fprint(w, `{"id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd"}`)
 		default:
 			t.Errorf("unexpected method/path %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusBadRequest)
