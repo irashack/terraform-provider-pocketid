@@ -76,6 +76,12 @@
   string value. Sending an empty value would have reset that setting, clearing
   a password. A response that leaves out a setting the update sent is reported
   as an error.
-- `pocketid_application_image` reads each image with a URL of its own, so a
-  cache in front of Pocket ID (which allows caching images for 15 minutes)
-  cannot hand back an older copy after an upload or during a refresh.
+- `pocketid_application_image` reads each image with a URL of its own (a
+  random `nocache` query parameter), so a cache in front of Pocket ID (which
+  allows caching images for 15 minutes, and serving them stale for a day)
+  cannot hand back an older copy after an upload or during a refresh, as long
+  as the cache keys on the whole query string, as most do by default. If your
+  cache leaves query parameters out of its key, or ignores `nocache`, exclude
+  `/api/application-images/` from caching for the address the provider uses;
+  otherwise the provider can record an older image and upload yours again
+  later.

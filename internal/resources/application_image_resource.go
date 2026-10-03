@@ -94,7 +94,10 @@ func (r *applicationImageResource) Schema(_ context.Context, _ resource.SchemaRe
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Uploads one of Pocket ID's application images (logos, e-mail logo, background, favicon or default profile picture) " +
 			"from a local file. Use one resource per image. The file is uploaded again when its content changes, and when Pocket ID " +
-			"holds a different image than the one this resource uploaded (it was replaced or removed outside Terraform).",
+			"holds a different image than the one this resource uploaded (it was replaced or removed outside Terraform). " +
+			"Each read adds a random `nocache` query parameter, so a cache in front of Pocket ID that keys on the whole URL never " +
+			"answers it; if your cache leaves query parameters out of its key, exclude `/api/application-images/` from caching, " +
+			"or the provider may compare against an older image and upload yours again.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				MarkdownDescription: "The image, the same as `kind`.",
