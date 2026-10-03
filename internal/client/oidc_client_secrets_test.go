@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -423,4 +424,158 @@ func TestClient_GenerateClientSecret_Options(t *testing.T) {
 		}
 		assert.Contains(t, fmt.Sprint(secret), secretID)
 	})
+}
+
+// CreateClientSecret always uses the several-secrets endpoint, never asks for
+// the version, and never falls back to the endpoint that replaces a client's
+// only secret.
+func TestClient_CreateClientSecret(t *testing.T) {
+	const secretID = "99999999-9999-4999-8999-999999999999"
+	const value = "caller-chosen-value-0123"
+	type seen struct {
+		requests []string
+		body     string
+	}
+	start := func(t *testing.T, status int, response string) (*client.Client, *seen) {
+		got := &seen{}
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			got.requests = append(got.requests, r.Method+" "+r.URL.Path)
+			body, _ := io.ReadAll(r.Body)
+			got.body = string(body)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_, _ = fmt.Fprint(w, response)
+		}))
+		t.Cleanup(server.Close)
+		c, err := client.NewClient(server.URL, "synthetic-token", false, 2)
+		require.NoError(t, err)
+		return c, got
+	}
+	created := `{"id":"` + secretID + `","prefix":"call","createdAt":"2026-10-02T10:00:00Z","expiresAt":null,"isActive":true,"secret":"` + value + `"}`
+
+	t.Run("created", func(t *testing.T) {
+		c, got := start(t, http.StatusCreated, created)
+		secret, err := c.CreateClientSecret(context.Background(), "c1", &client.ClientSecretOptions{Value: value})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"POST /api/oidc/clients/c1/secrets"}, got.requests, "one POST, no version read")
+		assert.JSONEq(t, `{"secret":"`+value+`"}`, got.body)
+		assert.Equal(t, secretID, secret.ID)
+		assert.Equal(t, value, secret.Value)
+		assert.True(t, secret.IsActive)
+	})
+	t.Run("generated without a body", func(t *testing.T) {
+		c, got := start(t, http.StatusCreated, created)
+		_, err := c.CreateClientSecret(context.Background(), "c1", nil)
+		require.NoError(t, err)
+		assert.Empty(t, got.body)
+	})
+	t.Run("older server: missing route, nothing created", func(t *testing.T) {
+		c, got := start(t, http.StatusNotFound, `{"error":"API endpoint not found"}`)
+		secret, err := c.CreateClientSecret(context.Background(), "c1", nil)
+		require.Error(t, err)
+		assert.Nil(t, secret)
+		var status *client.HTTPError
+		require.True(t, errors.As(err, &status))
+		assert.True(t, status.MissingEndpoint)
+		assert.True(t, client.IsDefiniteRejection(err))
+		assert.Equal(t, []string{"POST /api/oidc/clients/c1/secrets"}, got.requests, "never the single-secret endpoint")
+	})
+	t.Run("identity without value is returned with the error", func(t *testing.T) {
+		c, got := start(t, http.StatusCreated, `{"id":"`+secretID+`","prefix":"abcd","createdAt":"2026-10-02T10:00:00Z","isActive":true}`)
+		secret, err := c.CreateClientSecret(context.Background(), "c1", nil)
+		require.ErrorIs(t, err, client.ErrCreatedSecretValueMissing)
+		require.NotNil(t, secret)
+		assert.Equal(t, secretID, secret.ID)
+		assert.Empty(t, secret.Value)
+		assert.Len(t, got.requests, 1)
+	})
+	t.Run("no usable identity is uncertain and returns nothing", func(t *testing.T) {
+		for _, response := range []string{`{}`, `{"secret":"` + value + `"}`, `{"id":"../x","secret":"` + value + `"}`, `{"secret":`} {
+			c, got := start(t, http.StatusCreated, response)
+			secret, err := c.CreateClientSecret(context.Background(), "c1", nil)
+			require.ErrorContains(t, err, "result uncertain")
+			assert.NotContains(t, err.Error(), value)
+			assert.Nil(t, secret)
+			assert.Len(t, got.requests, 1)
+		}
+	})
+	t.Run("server failure is not retried", func(t *testing.T) {
+		c, got := start(t, http.StatusServiceUnavailable, `{"error":"synthetic-secret"}`)
+		_, err := c.CreateClientSecret(context.Background(), "c1", nil)
+		require.Error(t, err)
+		assert.False(t, client.IsDefiniteRejection(err))
+		assert.NotContains(t, err.Error(), "synthetic-secret")
+		assert.Len(t, got.requests, 1)
+	})
+	t.Run("bad inputs are refused before sending", func(t *testing.T) {
+		c, got := start(t, http.StatusCreated, created)
+		_, err := c.CreateClientSecret(context.Background(), "c1", &client.ClientSecretOptions{Value: "short"})
+		require.Error(t, err)
+		_, err = c.CreateClientSecret(context.Background(), "../c1", nil)
+		require.ErrorIs(t, err, client.ErrInvalidIdentifier)
+		assert.Empty(t, got.requests)
+	})
+}
+
+// RevokeClientSecret succeeds only once the secret is confirmed absent.
+func TestClient_RevokeClientSecret(t *testing.T) {
+	const secretID = "99999999-9999-4999-8999-999999999999"
+	const other = "88888888-8888-4888-8888-888888888888"
+	listed := func(ids ...string) string {
+		var items []string
+		for _, id := range ids {
+			items = append(items, `{"id":"`+id+`","prefix":"abcd","createdAt":"2026-10-02T10:00:00Z","isActive":true}`)
+		}
+		return "[" + strings.Join(items, ",") + "]"
+	}
+	for name, tc := range map[string]struct {
+		deleteStatus int
+		deleteBody   string
+		listStatus   int
+		listBody     string
+		lists        int
+		wantErr      string
+	}{
+		"revoked and confirmed":           {204, "", 200, listed(other), 1, ""},
+		"revoked but still listed":        {204, "", 200, listed(other, secretID), 1, "still listed after Pocket ID accepted"},
+		"revoked, list unreadable":        {204, "", 403, `{"error":"x"}`, 1, "could not be listed afterwards"},
+		"secret already gone":             {404, `{"error":"Client secret not found","code":"not_found","details":{"resource":"Client secret"}}`, 0, "", 0, ""},
+		"client already gone":             {404, `{"error":"OIDC client not found","code":"not_found","details":{"resource":"OIDC client"}}`, 0, "", 0, ""},
+		"bare 404, then absent":           {404, `<html>proxy</html>`, 200, listed(other), 1, ""},
+		"bare 404, still listed":          {404, `<html>proxy</html>`, 200, listed(secretID), 1, "was not revoked"},
+		"server failure, then absent":     {503, "", 200, listed(), 1, ""},
+		"server failure, still listed":    {503, "", 200, listed(secretID), 1, "was not revoked"},
+		"server failure, client gone":     {503, "", 404, `{"error":"OIDC client not found","code":"not_found","details":{"resource":"OIDC client"}}`, 1, ""},
+		"server failure, list unreadable": {503, "", 403, `{"error":"x"}`, 1, "could not confirm"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			deletes, lists := 0, 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.Method + " " + r.URL.Path {
+				case "DELETE /api/oidc/clients/c1/secrets/" + secretID:
+					deletes++
+					w.WriteHeader(tc.deleteStatus)
+					_, _ = fmt.Fprint(w, tc.deleteBody)
+				case "GET /api/oidc/clients/c1/secrets":
+					lists++
+					w.WriteHeader(tc.listStatus)
+					_, _ = fmt.Fprint(w, tc.listBody)
+				default:
+					t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+				}
+			}))
+			defer server.Close()
+			c, err := client.NewClient(server.URL, "synthetic-token", false, 2)
+			require.NoError(t, err)
+			err = c.RevokeClientSecret(context.Background(), "c1", secretID)
+			assert.Equal(t, 1, deletes, "the DELETE is sent once")
+			assert.Equal(t, tc.lists, lists)
+			if tc.wantErr == "" {
+				assert.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, tc.wantErr)
+			assert.Contains(t, err.Error(), secretID)
+		})
+	}
 }

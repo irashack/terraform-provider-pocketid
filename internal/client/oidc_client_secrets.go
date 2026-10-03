@@ -10,10 +10,26 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-// clientSecretsMinVersion is the first Pocket ID with several secrets per
-// client (POST/GET /oidc/clients/{id}/secrets); before it, POST .../secret
-// replaced the only secret and returned just its value.
-const clientSecretsMinVersion = "2.14.0"
+// ClientSecretsMinVersion is the first Pocket ID with several secrets per
+// client (POST/GET /oidc/clients/{id}/secrets and DELETE
+// .../secrets/{secretId}); before it, POST .../secret replaced the only
+// secret and returned just its value.
+const ClientSecretsMinVersion = "2.14.0"
+
+// clientSecretsMinVersion is the unexported name the version checks below use.
+const clientSecretsMinVersion = ClientSecretsMinVersion
+
+// MaxClientSecrets is the most secrets one client can hold, expired ones
+// included (model.MaxOidcClientSecrets, 20 in Pocket ID 2.14.0 to 2.17.0).
+// The server refuses another secret with HTTP 400 "validation_failed",
+// a code it shares with other refusals, so a caller that needs to tell this
+// one apart counts the client's secrets.
+const MaxClientSecrets = 20
+
+// ErrCreatedSecretValueMissing marks a create response that named the new
+// secret (a usable ID) but carried no value. The secret exists and can be
+// revoked by its ID; its value is lost.
+var ErrCreatedSecretValueMissing = errors.New("the server created a client secret but did not return its value")
 
 // ClientSecretMetadata describes one secret of an OIDC client, without its
 // value, as GET /api/oidc/clients/{id}/secrets lists it (OidcClientSecretDto,
@@ -94,17 +110,9 @@ func (c *Client) GenerateClientSecret(ctx context.Context, clientID string, opts
 	if err != nil {
 		return nil, err
 	}
-	var body any
-	if opts != nil && (opts.Value != "" || opts.ExpiresAt != nil) {
-		if opts.Value != "" {
-			if err := validateSecretValue(opts.Value); err != nil {
-				return nil, err
-			}
-		}
-		body = struct {
-			Secret    string     `json:"secret,omitempty"`
-			ExpiresAt *time.Time `json:"expiresAt,omitempty"`
-		}{opts.Value, opts.ExpiresAt}
+	body, err := secretCreateBody(opts)
+	if err != nil {
+		return nil, err
 	}
 	version, err := c.GetCurrentVersion(ctx)
 	if err != nil {
@@ -125,6 +133,83 @@ func (c *Client) GenerateClientSecret(ctx context.Context, clientID string, opts
 		return nil, err
 	}
 
+	if multiple {
+		secret, err := decodeCreatedSecret(response)
+		if err != nil {
+			return nil, err
+		}
+		return secret, nil
+	}
+
+	var result struct {
+		Secret string `json:"secret"`
+	}
+	if err := json.Unmarshal(response, &result); err != nil {
+		return nil, fmt.Errorf("error unmarshaling secret response; result uncertain, inspect before recovery")
+	}
+	if result.Secret == "" {
+		return nil, fmt.Errorf("secret creation returned no secret; result uncertain, inspect the client before recovery")
+	}
+	return &ClientSecret{Value: result.Secret}, nil
+}
+
+// CreateClientSecret adds one secret to an OIDC client through
+// POST /api/oidc/clients/{id}/secrets (Pocket ID 2.14.0+) and returns it
+// with its value. opts may be nil: the server then generates the value (32
+// alphanumerics) and the secret never expires.
+//
+// Unlike GenerateClientSecret it never falls back to the single-secret
+// endpoint of older servers, which replaces the client's only secret: on a
+// server without the route the POST is answered with the router's 404
+// (HTTPError.MissingEndpoint) and nothing is created. Callers that need a
+// clear message check the version first (VersionAtLeast with
+// ClientSecretsMinVersion).
+//
+// The POST is never retried. When the response names the new secret but
+// carries no value, the result holds the secret's metadata (so it can be
+// revoked by ID) and the error wraps ErrCreatedSecretValueMissing. Any other
+// failure after the request was sent returns no result: the outcome is
+// uncertain, so inspect the client's secrets (ListClientSecrets) before
+// trying again.
+func (c *Client) CreateClientSecret(ctx context.Context, clientID string, opts *ClientSecretOptions) (*ClientSecret, error) {
+	id, err := clientIDSegment(clientID)
+	if err != nil {
+		return nil, err
+	}
+	body, err := secretCreateBody(opts)
+	if err != nil {
+		return nil, err
+	}
+	response, err := c.doRequest(ctx, "POST", "/api/oidc/clients/"+id+"/secrets", body)
+	if err != nil {
+		return nil, err
+	}
+	return decodeCreatedSecret(response)
+}
+
+// secretCreateBody builds OidcClientSecretCreateDto from opts, after checking
+// a caller-chosen value. It returns nil (no body at all) when opts asks for
+// nothing, which the server reads as "generate a value, no expiry".
+func secretCreateBody(opts *ClientSecretOptions) (any, error) {
+	if opts == nil || (opts.Value == "" && opts.ExpiresAt == nil) {
+		return nil, nil
+	}
+	if opts.Value != "" {
+		if err := validateSecretValue(opts.Value); err != nil {
+			return nil, err
+		}
+	}
+	return struct {
+		Secret    string     `json:"secret,omitempty"`
+		ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+	}{opts.Value, opts.ExpiresAt}, nil
+}
+
+// decodeCreatedSecret reads OidcClientSecretCreatedDto. A response without a
+// usable (UUID) ID returns no result; one with an ID but no value returns the
+// metadata together with ErrCreatedSecretValueMissing. Neither error carries
+// any of the response.
+func decodeCreatedSecret(response []byte) (*ClientSecret, error) {
 	var result struct {
 		ClientSecretMetadata
 		Secret string `json:"secret"`
@@ -132,16 +217,15 @@ func (c *Client) GenerateClientSecret(ctx context.Context, clientID string, opts
 	if err := json.Unmarshal(response, &result); err != nil {
 		return nil, undecodableResultError{message: "error unmarshaling secret response; result uncertain, inspect the client's secrets before recovery"}
 	}
-
-	if result.Secret == "" {
-		return nil, fmt.Errorf("secret creation returned no secret; result uncertain, inspect the client before recovery")
-	}
-	if multiple {
-		if err := c.checkCreatedID("client secret", "", result.ID); err != nil {
-			return nil, fmt.Errorf("secret creation returned no usable secret ID; result uncertain, inspect the client's secrets before recovery: %w", err)
+	if err := ValidateUUID("client secret", result.ID); err != nil {
+		if result.Secret == "" {
+			return nil, fmt.Errorf("secret creation returned no secret; result uncertain, inspect the client before recovery")
 		}
-	} else {
-		result.ClientSecretMetadata = ClientSecretMetadata{}
+		return nil, fmt.Errorf("secret creation returned no usable secret ID; result uncertain, inspect the client's secrets before recovery: %w", err)
+	}
+	if result.Secret == "" {
+		return &ClientSecret{ClientSecretMetadata: result.ClientSecretMetadata},
+			fmt.Errorf("secret creation returned no secret for secret %s; result uncertain, inspect the client before recovery: %w", result.ID, ErrCreatedSecretValueMissing)
 	}
 	return &ClientSecret{ClientSecretMetadata: result.ClientSecretMetadata, Value: result.Secret}, nil
 }
@@ -181,4 +265,42 @@ func (c *Client) DeleteClientSecret(ctx context.Context, clientID, secretID stri
 	}
 	_, err = c.doRequest(ctx, "DELETE", "/api/oidc/clients/"+id+"/secrets/"+secret, nil)
 	return err
+}
+
+// RevokeClientSecret revokes one secret of an OIDC client and returns nil
+// only once the secret is confirmed absent: by Pocket ID's own not-found
+// error for the secret or for its client (a client's secrets live in the
+// client, so they go with it), or by a list of the client's secrets read
+// after the DELETE that no longer contains it. A successful DELETE is
+// confirmed the same way. Any other outcome is an error that names the
+// secret's ID: the secret may still be valid. The DELETE is never retried;
+// the list is a read and follows the read retry rules.
+func (c *Client) RevokeClientSecret(ctx context.Context, clientID, secretID string) error {
+	deleteErr := c.DeleteClientSecret(ctx, clientID, secretID)
+	if errors.Is(deleteErr, ErrInvalidIdentifier) {
+		return deleteErr
+	}
+	if IsNotFound(deleteErr, ResourceClientSecret) || IsNotFound(deleteErr, ResourceOIDCClient) {
+		return nil
+	}
+
+	remaining, listErr := c.ListClientSecrets(ctx, clientID)
+	if listErr != nil {
+		if IsNotFound(listErr, ResourceOIDCClient) {
+			return nil
+		}
+		if deleteErr != nil {
+			return fmt.Errorf("could not confirm that client secret %s was revoked: the request failed (%w) and the client's secrets could not be listed (%w)", secretID, deleteErr, listErr)
+		}
+		return fmt.Errorf("could not confirm that client secret %s was revoked: the client's secrets could not be listed afterwards: %w", secretID, listErr)
+	}
+	for _, secret := range remaining {
+		if secret.ID == secretID {
+			if deleteErr != nil {
+				return fmt.Errorf("client secret %s was not revoked; it is still listed and may still be valid: %w", secretID, deleteErr)
+			}
+			return fmt.Errorf("client secret %s is still listed after Pocket ID accepted its revocation; it may still be valid", secretID)
+		}
+	}
+	return nil
 }

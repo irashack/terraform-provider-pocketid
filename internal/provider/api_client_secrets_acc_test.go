@@ -65,3 +65,57 @@ func TestAccAPI_clientSecretCreation(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, client.IsDefiniteRejection(err), "a past expiry is rejected")
 }
+
+// The per-client secret limit is 20 and counts expired secrets; the refusal
+// is a definite rejection. RevokeClientSecret confirms absence, also for a
+// secret that is already gone.
+func TestAccAPI_clientSecretLimitAndRevoke(t *testing.T) {
+	testAccPreCheck(t)
+	ctx := context.Background()
+	c, err := testClient()
+	require.NoError(t, err)
+
+	created, err := c.CreateClient(ctx, &client.OIDCClientCreateRequest{
+		Name: "tf-acc-secret-limit-" + acctest.RandString(6), CallbackURLs: []string{"https://example.com/callback"},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = c.DeleteClient(context.Background(), created.ID) })
+
+	kept, err := c.CreateClientSecret(ctx, created.ID, nil)
+	require.NoError(t, err)
+	listed, err := c.ListClientSecrets(ctx, created.ID)
+	require.NoError(t, err)
+	expires := time.Now().Add(4 * time.Second)
+	for i := len(listed); i < client.MaxClientSecrets; i++ {
+		_, err := c.CreateClientSecret(ctx, created.ID, &client.ClientSecretOptions{ExpiresAt: &expires})
+		require.NoError(t, err)
+	}
+	time.Sleep(time.Until(expires.Add(time.Second)))
+	listed, err = c.ListClientSecrets(ctx, created.ID)
+	require.NoError(t, err)
+	require.Len(t, listed, client.MaxClientSecrets)
+	expired := 0
+	for _, secret := range listed {
+		if !secret.IsActive {
+			expired++
+		}
+	}
+	require.Greater(t, expired, 0, "some secrets have expired")
+
+	_, err = c.CreateClientSecret(ctx, created.ID, nil)
+	require.Error(t, err, "expired secrets count toward the limit")
+	assert.True(t, client.IsDefiniteRejection(err))
+	after, err := c.ListClientSecrets(ctx, created.ID)
+	require.NoError(t, err)
+	assert.Len(t, after, client.MaxClientSecrets, "the refused request created nothing")
+
+	require.NoError(t, c.RevokeClientSecret(ctx, created.ID, kept.ID))
+	after, err = c.ListClientSecrets(ctx, created.ID)
+	require.NoError(t, err)
+	for _, secret := range after {
+		assert.NotEqual(t, kept.ID, secret.ID)
+	}
+	require.NoError(t, c.RevokeClientSecret(ctx, created.ID, kept.ID), "an absent secret is confirmed absent")
+	_, err = c.CreateClientSecret(ctx, created.ID, nil)
+	require.NoError(t, err, "below the limit again")
+}
