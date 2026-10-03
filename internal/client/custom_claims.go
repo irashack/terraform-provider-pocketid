@@ -26,7 +26,7 @@ func (c *Client) UpdateUserCustomClaims(ctx context.Context, userID string, clai
 	}
 
 	var result []CustomClaim
-	if err := decodeResponse(body, &result); err != nil {
+	if err := decodeResult(body, &result); err != nil {
 		return nil, err
 	}
 
@@ -49,7 +49,7 @@ func (c *Client) UpdateGroupCustomClaims(ctx context.Context, groupID string, cl
 	}
 
 	var result []CustomClaim
-	if err := decodeResponse(body, &result); err != nil {
+	if err := decodeResult(body, &result); err != nil {
 		return nil, err
 	}
 

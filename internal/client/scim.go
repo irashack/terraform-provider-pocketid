@@ -40,7 +40,7 @@ func (c *Client) CreateScimServiceProvider(ctx context.Context, req *ScimService
 	}
 
 	var result ScimServiceProvider
-	if err := decodeResponse(body, &result); err != nil {
+	if err := decodeResult(body, &result); err != nil {
 		return nil, err
 	}
 	if err := c.checkCreatedID("SCIM service provider", "", result.ID); err != nil {
@@ -82,7 +82,7 @@ func (c *Client) UpdateScimServiceProvider(ctx context.Context, id string, req *
 	}
 
 	var result ScimServiceProvider
-	if err := decodeResponse(body, &result); err != nil {
+	if err := decodeResult(body, &result); err != nil {
 		return nil, err
 	}
 

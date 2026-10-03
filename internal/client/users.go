@@ -51,7 +51,7 @@ func (c *Client) CreateUser(ctx context.Context, user *UserCreateRequest) (*User
 	}
 
 	var result User
-	if err := decodeResponse(body, &result); err != nil {
+	if err := decodeResult(body, &result); err != nil {
 		return nil, err
 	}
 	// The request carries no ID yet, so the server chose it.
@@ -93,7 +93,7 @@ func (c *Client) UpdateUser(ctx context.Context, userID string, user *UserCreate
 	}
 
 	var result User
-	if err := decodeResponse(body, &result); err != nil {
+	if err := decodeResult(body, &result); err != nil {
 		return nil, err
 	}
 

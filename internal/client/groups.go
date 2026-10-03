@@ -31,7 +31,7 @@ func (c *Client) CreateUserGroup(ctx context.Context, group *UserGroupCreateRequ
 	}
 
 	var result UserGroup
-	if err := decodeResponse(body, &result); err != nil {
+	if err := decodeResult(body, &result); err != nil {
 		return nil, err
 	}
 	if err := c.checkCreatedID("user group", "", result.ID); err != nil {
@@ -72,7 +72,7 @@ func (c *Client) UpdateUserGroup(ctx context.Context, groupID string, group *Use
 	}
 
 	var result UserGroup
-	if err := decodeResponse(body, &result); err != nil {
+	if err := decodeResult(body, &result); err != nil {
 		return nil, err
 	}
 

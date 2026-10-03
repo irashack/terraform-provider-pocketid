@@ -144,7 +144,7 @@ func (c *Client) UpdateApplicationConfig(ctx context.Context, cfg *ApplicationCo
 	}
 
 	var vars []AppConfigVariable
-	if err := decodeResponse(body, &vars); err != nil {
+	if err := decodeResult(body, &vars); err != nil {
 		return nil, err
 	}
 

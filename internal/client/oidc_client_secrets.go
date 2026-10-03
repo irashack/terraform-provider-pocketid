@@ -130,7 +130,7 @@ func (c *Client) GenerateClientSecret(ctx context.Context, clientID string, opts
 		Secret string `json:"secret"`
 	}
 	if err := json.Unmarshal(response, &result); err != nil {
-		return nil, fmt.Errorf("error unmarshaling secret response; result uncertain, inspect before recovery")
+		return nil, undecodableResultError{message: "error unmarshaling secret response; result uncertain, inspect the client's secrets before recovery"}
 	}
 
 	if result.Secret == "" {

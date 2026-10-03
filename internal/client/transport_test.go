@@ -3,6 +3,7 @@ package client_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -646,61 +647,152 @@ func TestClient_RetryDeadlineLeavesFastReadsAndMutationsAlone(t *testing.T) {
 
 // A response the decoder rejects never reaches the error text: the decoder's
 // own message can quote a literal from the response (here a number too large
-// for its field, which a server can make as long as it likes), so the
-// methods return ErrUndecodableResponse alone.
+// for its field, which a server can make as long as it likes). A read returns
+// ErrUndecodableResponse alone. A mutation's 2xx means the server made the
+// change, so its error also wraps ErrResultUnread and says to inspect before
+// trying again; it still wraps nothing that could carry the literal.
 func TestClient_DecodeErrorsNeverQuoteTheResponse(t *testing.T) {
 	const literal = "98765432109876543210987654321098765432109876543210"
-	cases := map[string]struct {
+	ctx := context.Background()
+	reads := map[string]struct {
 		body string
 		call func(c *client.Client) error
 	}{
 		"client": {`{"id":"c1","accessTokenDurationMinutes":` + literal + `}`, func(c *client.Client) error {
-			_, err := c.GetClient(context.Background(), "c1")
+			_, err := c.GetClient(ctx, "c1")
 			return err
 		}},
 		"client list page": {`{"data":[{"id":"c1","accessTokenDurationMinutes":` + literal + `}],"pagination":{"totalPages":1,"totalItems":1,"currentPage":1}}`, func(c *client.Client) error {
-			_, err := c.ListClients(context.Background())
+			_, err := c.ListClients(ctx)
 			return err
 		}},
 		"pagination block": {`{"data":[],"pagination":{"totalPages":` + literal + `}}`, func(c *client.Client) error {
-			_, err := c.ListUserGroups(context.Background())
+			_, err := c.ListUserGroups(ctx)
 			return err
 		}},
 		"group": {`{"id":"g","userCount":` + literal + `}`, func(c *client.Client) error {
-			_, err := c.GetUserGroup(context.Background(), validUUID)
+			_, err := c.GetUserGroup(ctx, validUUID)
 			return err
 		}},
 		"user": {`{"id":"u","isAdmin":` + literal + `}`, func(c *client.Client) error {
-			_, err := c.GetUser(context.Background(), validUUID)
+			_, err := c.GetUser(ctx, validUUID)
 			return err
 		}},
 		"application config": {`[{"key":"appName","value":` + literal + `}]`, func(c *client.Client) error {
-			_, err := c.GetApplicationConfig(context.Background())
-			return err
-		}},
-		"custom claims": {`[{"key":"k","value":` + literal + `}]`, func(c *client.Client) error {
-			_, err := c.UpdateUserCustomClaims(context.Background(), validUUID, nil)
+			_, err := c.GetApplicationConfig(ctx)
 			return err
 		}},
 		"SCIM": {`{"id":"s","endpoint":` + literal + `}`, func(c *client.Client) error {
-			_, err := c.GetClientScimServiceProvider(context.Background(), "c1")
+			_, err := c.GetClientScimServiceProvider(ctx, "c1")
 			return err
 		}},
 	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = fmt.Fprint(w, tc.body)
-			}))
-			defer server.Close()
-			c, err := client.NewClient(server.URL, "test-token", false, 30)
-			require.NoError(t, err)
-
-			err = tc.call(c)
+	mutations := map[string]struct {
+		body string
+		call func(c *client.Client) error
+	}{
+		"create client": {`{"id":"` + validUUID + `","accessTokenDurationMinutes":` + literal + `}`, func(c *client.Client) error {
+			_, err := c.CreateClient(ctx, &client.OIDCClientCreateRequest{Name: "n"})
+			return err
+		}},
+		"update client": {`{"id":"c1","accessTokenDurationMinutes":` + literal + `}`, func(c *client.Client) error {
+			_, err := c.UpdateClient(ctx, "c1", &client.OIDCClientCreateRequest{Name: "n"})
+			return err
+		}},
+		"create user": {`{"id":"` + validUUID + `","isAdmin":` + literal + `}`, func(c *client.Client) error {
+			_, err := c.CreateUser(ctx, &client.UserCreateRequest{Username: "u"})
+			return err
+		}},
+		"update user": {`{"id":"` + validUUID + `","isAdmin":` + literal + `}`, func(c *client.Client) error {
+			_, err := c.UpdateUser(ctx, validUUID, &client.UserCreateRequest{Username: "u"})
+			return err
+		}},
+		"create group": {`{"id":"` + validUUID + `","userCount":` + literal + `}`, func(c *client.Client) error {
+			_, err := c.CreateUserGroup(ctx, &client.UserGroupCreateRequest{Name: "g"})
+			return err
+		}},
+		"update group": {`{"id":"` + validUUID + `","userCount":` + literal + `}`, func(c *client.Client) error {
+			_, err := c.UpdateUserGroup(ctx, validUUID, &client.UserGroupCreateRequest{Name: "g"})
+			return err
+		}},
+		"user claims": {`[{"key":"k","value":` + literal + `}]`, func(c *client.Client) error {
+			_, err := c.UpdateUserCustomClaims(ctx, validUUID, nil)
+			return err
+		}},
+		"group claims": {`[{"key":"k","value":` + literal + `}]`, func(c *client.Client) error {
+			_, err := c.UpdateGroupCustomClaims(ctx, validUUID, nil)
+			return err
+		}},
+		"application config": {`[{"key":"appName","value":` + literal + `}]`, func(c *client.Client) error {
+			_, err := c.UpdateApplicationConfig(ctx, &client.ApplicationConfig{})
+			return err
+		}},
+		"create SCIM": {`{"id":"` + validUUID + `","endpoint":` + literal + `}`, func(c *client.Client) error {
+			_, err := c.CreateScimServiceProvider(ctx, &client.ScimServiceProviderCreateRequest{})
+			return err
+		}},
+		"update SCIM": {`{"id":"s","endpoint":` + literal + `}`, func(c *client.Client) error {
+			_, err := c.UpdateScimServiceProvider(ctx, validUUID, &client.ScimServiceProviderCreateRequest{})
+			return err
+		}},
+		"generate secret": {`{"id":"` + validUUID + `","secret":` + literal + `}`, func(c *client.Client) error {
+			_, err := c.GenerateClientSecret(ctx, "c1", nil)
+			return err
+		}},
+	}
+	serve := func(t *testing.T, body string) *client.Client {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if r.URL.Path == "/api/version/current" {
+				_, _ = fmt.Fprint(w, `{"currentVersion":"2.17.0"}`)
+				return
+			}
+			_, _ = fmt.Fprint(w, body)
+		}))
+		t.Cleanup(server.Close)
+		c, err := client.NewClient(server.URL, "test-token", false, 30)
+		require.NoError(t, err)
+		return c
+	}
+	for name, tc := range reads {
+		t.Run("read "+name, func(t *testing.T) {
+			err := tc.call(serve(t, tc.body))
 			require.Error(t, err)
 			assert.Equal(t, client.ErrUndecodableResponse, err, "the sentinel alone, wrapping nothing")
-			assert.NotContains(t, err.Error(), literal[:12])
+			assert.False(t, errors.Is(err, client.ErrResultUnread), "a read changed nothing")
 		})
 	}
+	for name, tc := range mutations {
+		t.Run("mutation "+name, func(t *testing.T) {
+			err := tc.call(serve(t, tc.body))
+			require.Error(t, err)
+			assert.ErrorIs(t, err, client.ErrResultUnread)
+			assert.ErrorIs(t, err, client.ErrUndecodableResponse)
+			assert.Contains(t, err.Error(), "inspect")
+			for _, wrapped := range treeOf(err) {
+				assert.NotContains(t, wrapped.Error(), literal[:12])
+				var syntax *json.SyntaxError
+				var typeErr *json.UnmarshalTypeError
+				assert.False(t, errors.As(wrapped, &syntax) || errors.As(wrapped, &typeErr), "no decoder error is kept")
+			}
+		})
+	}
+}
+
+// treeOf lists err and every error it wraps, through Unwrap() error and
+// Unwrap() []error.
+func treeOf(err error) []error {
+	if err == nil {
+		return nil
+	}
+	all := []error{err}
+	switch wrapped := err.(type) {
+	case interface{ Unwrap() []error }:
+		for _, inner := range wrapped.Unwrap() {
+			all = append(all, treeOf(inner)...)
+		}
+	case interface{ Unwrap() error }:
+		all = append(all, treeOf(wrapped.Unwrap())...)
+	}
+	return all
 }

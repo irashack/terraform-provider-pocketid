@@ -340,6 +340,33 @@ const (
 // response limit allows.
 var ErrUndecodableResponse = errors.New("error unmarshaling response: the response is not the JSON this provider expects")
 
+// undecodableResultError is a 2xx answer to a mutation whose body is not the
+// JSON expected: the server made the change and only its result is unknown,
+// so it wraps ErrResultUnread as well as ErrUndecodableResponse. Like those,
+// it carries fixed text only, never the decoder's error.
+type undecodableResultError struct{ message string }
+
+func (e undecodableResultError) Error() string { return e.message }
+
+func (undecodableResultError) Unwrap() []error {
+	return []error{ErrResultUnread, ErrUndecodableResponse}
+}
+
+var errUndecodableResult error = undecodableResultError{
+	message: "error unmarshaling response: the server accepted the change, but its response is not the JSON this provider expects; inspect the object before trying again",
+}
+
+// decodeResult decodes the body of a 2xx answer to a mutation into v. When it
+// cannot, the change was made but its result is unknown: the error wraps
+// ErrResultUnread and ErrUndecodableResponse, and nothing else. Reads use
+// decodeResponse.
+func decodeResult(body []byte, v any) error {
+	if err := json.Unmarshal(body, v); err != nil {
+		return errUndecodableResult
+	}
+	return nil
+}
+
 // decodeResponse decodes a JSON response body into v, returning
 // ErrUndecodableResponse, and nothing else, when it cannot.
 func decodeResponse(body []byte, v any) error {

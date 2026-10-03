@@ -117,7 +117,7 @@ func (c *Client) CreateClient(ctx context.Context, createReq *OIDCClientCreateRe
 	}
 
 	var result OIDCClient
-	if err := decodeResponse(body, &result); err != nil {
+	if err := decodeResult(body, &result); err != nil {
 		return nil, err
 	}
 
@@ -171,7 +171,7 @@ func (c *Client) UpdateClient(ctx context.Context, clientID string, updateReq *O
 	}
 
 	var result OIDCClient
-	if err := decodeResponse(body, &result); err != nil {
+	if err := decodeResult(body, &result); err != nil {
 		return nil, err
 	}
 
