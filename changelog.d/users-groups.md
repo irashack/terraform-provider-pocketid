@@ -66,3 +66,9 @@
   user that already has that ID is not taken over: import it instead. Changing
   `id` later is a plan-time error rather than a replacement, because replacing
   a user deletes their passkeys. Leaving `id` unset works as before.
+- `pocketid_one_time_access_token`: when Pocket ID answers without a token,
+  or creation fails without a definite answer (a server error or a lost
+  connection), the error now says a token may have been created, that it
+  stays valid until used or expired, and that nothing was recorded or
+  repeated. A token resource is never stored without a token. A missing user
+  is reported as such.

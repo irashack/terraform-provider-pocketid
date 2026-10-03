@@ -2,6 +2,7 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -52,7 +53,8 @@ func (r *OneTimeAccessTokenResource) Metadata(ctx context.Context, req resource.
 func (r *OneTimeAccessTokenResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Manages a one-time access token for a user in Pocket-ID. These tokens let a user authenticate when they don't have access to their passkey. " +
-			"The token value is returned only once on creation and cannot be read back (pocket-id exposes no read endpoint), so it is stored in Terraform state as a sensitive value.",
+			"The token value is returned only once on creation and cannot be read back (pocket-id exposes no read endpoint), so it is stored in Terraform state as a sensitive value. " +
+			"If creation fails without a definite answer, or Pocket ID answers without a token, nothing is recorded and the request is not repeated; a token may then exist that stays valid until it is used or expires, since Pocket ID cannot revoke it.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				MarkdownDescription: "The unique identifier of the one-time access token (same as user_id).",
@@ -134,12 +136,33 @@ func (r *OneTimeAccessTokenResource) Create(ctx context.Context, req resource.Cr
 		"ttl":     ttlStr,
 	})
 
-	token, err := r.client.CreateOneTimeAccessToken(ctx, data.UserID.ValueString(), &client.OneTimeAccessTokenRequest{TTL: ttlStr})
+	userID := data.UserID.ValueString()
+	token, err := r.client.CreateOneTimeAccessToken(ctx, userID, &client.OneTimeAccessTokenRequest{TTL: ttlStr})
+	if err == nil && token.Token == "" {
+		err = fmt.Errorf("one-time access token for user %s: %w: the response held no token", userID, client.ErrResultUnread)
+	}
 	if err != nil {
-		resp.Diagnostics.AddError(
-			"Error creating one-time access token",
-			fmt.Sprintf("Could not create one-time access token for user %s: %s", data.UserID.ValueString(), err),
-		)
+		// Nothing is recorded without a token. When the request may have
+		// created one, say so: it cannot be read back or revoked, and the
+		// request is not repeated.
+		switch {
+		case errors.Is(err, client.ErrResultUnread):
+			resp.Diagnostics.AddError("One-time access token creation result uncertain",
+				fmt.Sprintf("Pocket ID accepted the request for user %s, but its response held no usable token. A token may have been created; "+
+					"it stays valid until it is used or expires (ttl %s), and Pocket ID offers no way to read it back or revoke it. "+
+					"Nothing was recorded in state and the request was not repeated. Details: %s", userID, ttlStr, err))
+		case client.IsNotFound(err, client.ResourceUser):
+			resp.Diagnostics.AddAttributeError(path.Root("user_id"), "Error creating one-time access token",
+				fmt.Sprintf("Pocket ID reports that user %s does not exist; no token was created.", userID))
+		case !client.IsDefiniteRejection(err):
+			resp.Diagnostics.AddError("One-time access token creation result uncertain",
+				fmt.Sprintf("Creating a one-time access token for user %s failed without a definite answer (%s). A token may have been created; "+
+					"it stays valid until it is used or expires (ttl %s), and Pocket ID offers no way to read it back or revoke it. "+
+					"Nothing was recorded in state and the request was not repeated.", userID, err, ttlStr))
+		default:
+			resp.Diagnostics.AddError("Error creating one-time access token",
+				fmt.Sprintf("Could not create one-time access token for user %s: %s", userID, err))
+		}
 		return
 	}
 

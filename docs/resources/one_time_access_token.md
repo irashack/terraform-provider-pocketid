@@ -3,12 +3,12 @@
 page_title: "pocketid_one_time_access_token Resource - terraform-provider-pocketid"
 subcategory: ""
 description: |-
-  Manages a one-time access token for a user in Pocket-ID. These tokens let a user authenticate when they don't have access to their passkey. The token value is returned only once on creation and cannot be read back (pocket-id exposes no read endpoint), so it is stored in Terraform state as a sensitive value.
+  Manages a one-time access token for a user in Pocket-ID. These tokens let a user authenticate when they don't have access to their passkey. The token value is returned only once on creation and cannot be read back (pocket-id exposes no read endpoint), so it is stored in Terraform state as a sensitive value. If creation fails without a definite answer, or Pocket ID answers without a token, nothing is recorded and the request is not repeated; a token may then exist that stays valid until it is used or expires, since Pocket ID cannot revoke it.
 ---
 
 # pocketid_one_time_access_token (Resource)
 
-Manages a one-time access token for a user in Pocket-ID. These tokens let a user authenticate when they don't have access to their passkey. The token value is returned only once on creation and cannot be read back (pocket-id exposes no read endpoint), so it is stored in Terraform state as a sensitive value.
+Manages a one-time access token for a user in Pocket-ID. These tokens let a user authenticate when they don't have access to their passkey. The token value is returned only once on creation and cannot be read back (pocket-id exposes no read endpoint), so it is stored in Terraform state as a sensitive value. If creation fails without a definite answer, or Pocket ID answers without a token, nothing is recorded and the request is not repeated; a token may then exist that stays valid until it is used or expires, since Pocket ID cannot revoke it.
 
 ## Example Usage
 
