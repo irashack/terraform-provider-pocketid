@@ -115,10 +115,32 @@ func (c *Client) CreateAPI(ctx context.Context, req *APICreateRequest) (*API, er
 	if err != nil {
 		return nil, fmt.Errorf("API creation returned an unreadable response; the API may exist: inspect before recovery: %w", err)
 	}
-	if err := ValidateUUID(apiKind, result.ID); err != nil {
+	if err := c.apiCheckCreatedID(apiKind, "", result.ID); err != nil {
 		return nil, fmt.Errorf("API creation returned no usable ID, so no follow-up request uses it; the API may exist: inspect before recovery: %w", err)
 	}
 	return result, nil
+}
+
+// apiCheckCreatedID has the signature and rules of the foundation's
+// checkCreatedID (added after this branch's base) and is replaced by it at
+// integration: an ID the server chose must be a UUID, an ID the caller
+// supplied must come back exactly, and no ID may contain the API key this
+// client sends (Pocket ID accepts any static key of 16 or more characters,
+// so a key can look like a UUID). The error never includes the value.
+func (c *Client) apiCheckCreatedID(kind, requested, returned string) error {
+	if c.apiToken != "" && strings.Contains(returned, c.apiToken) {
+		return fmt.Errorf("%w: the %s ID in the create response contains the API key this provider sent", ErrInvalidIdentifier, kind)
+	}
+	if requested != "" {
+		if returned != requested {
+			return fmt.Errorf("%w: the %s ID in the create response is not the one requested", ErrInvalidIdentifier, kind)
+		}
+		return nil
+	}
+	if !uuidPattern.MatchString(returned) {
+		return fmt.Errorf("%w: the %s ID in the create response is not a UUID", ErrInvalidIdentifier, kind)
+	}
+	return nil
 }
 
 // GetAPI reads an API with its permissions. A missing API is reported as

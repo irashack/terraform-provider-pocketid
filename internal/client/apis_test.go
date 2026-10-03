@@ -73,6 +73,23 @@ func TestClient_CreateAPI_UnusableID(t *testing.T) {
 	}
 }
 
+// A server that returns the API key as the new API's ID is refused, without
+// the key reaching the error.
+func TestClient_CreateAPI_IDReflectingKey(t *testing.T) {
+	const key = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = fmt.Fprintf(w, `{"id":%q,"name":"Inventory"}`, key)
+	}))
+	t.Cleanup(server.Close)
+	c, err := client.NewClient(server.URL, key, false, 5)
+	require.NoError(t, err)
+	_, err = c.CreateAPI(context.Background(), &client.APICreateRequest{Name: "Inventory", Resource: "urn:x"})
+	require.ErrorIs(t, err, client.ErrInvalidIdentifier)
+	assert.Contains(t, err.Error(), "contains the API key")
+	assert.NotContains(t, err.Error(), key)
+}
+
 func TestClient_GetAPI_NotFound(t *testing.T) {
 	c := apiTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/apis/"+apiTestAPIID, r.URL.Path)
