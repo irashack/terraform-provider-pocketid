@@ -159,7 +159,7 @@ func (d *apiDataSource) Read(ctx context.Context, req datasource.ReadRequest, re
 			}
 			return
 		}
-		if api.ID != id {
+		if !client.SameUUID(api.ID, id) {
 			resp.Diagnostics.AddError("Unexpected API response", fmt.Sprintf("Reading API %s returned a different or no API.", id))
 			return
 		}

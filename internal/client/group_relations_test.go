@@ -46,13 +46,13 @@ func TestClient_AllowedClientIDsByGroup_RecognizesAListWithoutGroups(t *testing.
 
 	newer := groupRelationsClient(t, groupRelationsPage(
 		map[string]any{"id": "a", "allowedUserGroups": nil},
-		map[string]any{"id": "b", "allowedUserGroups": []any{map[string]any{"id": "g1"}, map[string]any{"id": "g2"}}},
-		map[string]any{"id": "c", "allowedUserGroups": []any{map[string]any{"id": "g1"}}},
+		map[string]any{"id": "b", "allowedUserGroups": []any{map[string]any{"id": "bbbbbbbb-0000-4000-8000-000000000001"}, map[string]any{"id": "bbbbbbbb-0000-4000-8000-000000000002"}}},
+		map[string]any{"id": "c", "allowedUserGroups": []any{map[string]any{"id": "bbbbbbbb-0000-4000-8000-000000000001"}}},
 	))
 	byGroup, ok, err := newer.AllowedClientIDsByGroup(ctx)
 	require.NoError(t, err)
 	assert.True(t, ok)
-	assert.Equal(t, map[string][]string{"g1": {"b", "c"}, "g2": {"b"}}, byGroup)
+	assert.Equal(t, map[string][]string{"bbbbbbbb-0000-4000-8000-000000000001": {"b", "c"}, "bbbbbbbb-0000-4000-8000-000000000002": {"b"}}, byGroup)
 
 	none := groupRelationsClient(t, groupRelationsPage())
 	byGroup, ok, err = none.AllowedClientIDsByGroup(ctx)
@@ -63,13 +63,13 @@ func TestClient_AllowedClientIDsByGroup_RecognizesAListWithoutGroups(t *testing.
 
 func TestClient_GroupMemberIDs_InvertsTheUserList(t *testing.T) {
 	c := groupRelationsClient(t, groupRelationsPage(
-		map[string]any{"id": "u1", "userGroups": []any{map[string]any{"id": "g1"}, map[string]any{"id": "g2"}}},
-		map[string]any{"id": "u2", "userGroups": nil},
-		map[string]any{"id": "u3", "userGroups": []any{map[string]any{"id": "g1"}}},
+		map[string]any{"id": "dddddddd-0000-4000-8000-000000000001", "userGroups": []any{map[string]any{"id": "bbbbbbbb-0000-4000-8000-000000000001"}, map[string]any{"id": "bbbbbbbb-0000-4000-8000-000000000002"}}},
+		map[string]any{"id": "dddddddd-0000-4000-8000-000000000002", "userGroups": nil},
+		map[string]any{"id": "dddddddd-0000-4000-8000-000000000003", "userGroups": []any{map[string]any{"id": "bbbbbbbb-0000-4000-8000-000000000001"}}},
 	))
 	members, err := c.GroupMemberIDs(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, map[string][]string{"g1": {"u1", "u3"}, "g2": {"u1"}}, members)
+	assert.Equal(t, map[string][]string{"bbbbbbbb-0000-4000-8000-000000000001": {"dddddddd-0000-4000-8000-000000000001", "dddddddd-0000-4000-8000-000000000003"}, "bbbbbbbb-0000-4000-8000-000000000002": {"dddddddd-0000-4000-8000-000000000001"}}, members)
 }
 
 func TestClient_GetUserGroupDetail_RefusesANonUUID(t *testing.T) {
@@ -122,8 +122,8 @@ func TestClient_GetUserGroupDetail_RequiresACompleteRecordOfTheGroupAsked(t *tes
 	assert.Empty(t, detail.MemberIDs)
 	assert.Empty(t, detail.AllowedClientIDs)
 
-	c = groupRelationsClient(t, `{"id":"`+asked+`","customClaims":[],"users":[{"id":"u1"},{"id":"u1"},{"id":"u2"}],"allowedOidcClients":[]}`)
+	c = groupRelationsClient(t, `{"id":"`+asked+`","customClaims":[],"users":[{"id":"dddddddd-0000-4000-8000-000000000001"},{"id":"dddddddd-0000-4000-8000-000000000001"},{"id":"dddddddd-0000-4000-8000-000000000002"}],"allowedOidcClients":[]}`)
 	detail, err = c.GetUserGroupDetail(context.Background(), asked)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"u1", "u2"}, detail.MemberIDs, "a repeated ID counts once")
+	assert.Equal(t, []string{"dddddddd-0000-4000-8000-000000000001", "dddddddd-0000-4000-8000-000000000002"}, detail.MemberIDs, "a repeated ID counts once")
 }

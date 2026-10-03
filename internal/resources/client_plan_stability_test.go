@@ -34,11 +34,11 @@ func TestClientReadKeepsEmptyValues(t *testing.T) {
 		}},
 		"server values replace empty": {emptyList, emptySet, types.StringValue(""), func(c *fakeClient) {
 			c.LogoutCallbacks = []string{"https://example.invalid/logout"}
-			c.Allowed = []string{"g2", "g1"}
+			c.Allowed = []string{"bbbbbbbb-0000-4000-8000-000000000002", "bbbbbbbb-0000-4000-8000-000000000001"}
 			c.LaunchURL = "https://example.invalid/"
 		}, func(t *testing.T, m clientResourceModel) {
 			assert.Equal(t, types.ListValueMust(types.StringType, []attr.Value{types.StringValue("https://example.invalid/logout")}), m.LogoutCallbackURLs)
-			assert.True(t, stringSet("g1", "g2").Equal(m.AllowedUserGroups), "%v", m.AllowedUserGroups)
+			assert.True(t, stringSet("bbbbbbbb-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002").Equal(m.AllowedUserGroups), "%v", m.AllowedUserGroups)
 			assert.Equal(t, "https://example.invalid/", m.LaunchURL.ValueString())
 		}},
 		"stale values cleared": {types.ListValueMust(types.StringType, []attr.Value{types.StringValue("https://old.invalid/")}), stringSet("g9"), types.StringValue("https://old.invalid/"), nil, func(t *testing.T, m clientResourceModel) {

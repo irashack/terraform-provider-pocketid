@@ -37,6 +37,12 @@ func (c *Client) CreateUserGroup(ctx context.Context, group *UserGroupCreateRequ
 	if err := c.checkCreatedID("user group", "", result.ID); err != nil {
 		return nil, fmt.Errorf("user group creation returned no usable ID, so no follow-up request uses it; the user group may exist: inspect before recovery: %w", err)
 	}
+	// A new group has no members yet. Members the response lists that fail
+	// the ID check are dropped rather than failing a create whose own ID is
+	// usable.
+	if c.checkUsers(result.Users) != nil {
+		result.Users = nil
+	}
 
 	return &result, nil
 }
@@ -54,6 +60,9 @@ func (c *Client) GetUserGroup(ctx context.Context, groupID string) (*UserGroup, 
 
 	var result UserGroup
 	if err := decodeResponse(body, &result); err != nil {
+		return nil, err
+	}
+	if err := c.checkUserGroup(groupID, &result); err != nil {
 		return nil, err
 	}
 
@@ -75,6 +84,9 @@ func (c *Client) UpdateUserGroup(ctx context.Context, groupID string, group *Use
 	if err := decodeResult(body, &result); err != nil {
 		return nil, err
 	}
+	if err := c.checkUserGroup(groupID, &result); err != nil {
+		return nil, unreadResult(err)
+	}
 
 	return &result, nil
 }
@@ -92,5 +104,12 @@ func (c *Client) DeleteUserGroup(ctx context.Context, groupID string) error {
 // ListUserGroups returns every user group, following all pages of
 // GET /api/user-groups (see listAll).
 func (c *Client) ListUserGroups(ctx context.Context) ([]UserGroup, error) {
-	return listAll(ctx, c, "user groups", "/api/user-groups", nil, func(group UserGroup) string { return group.ID })
+	groups, err := listAll(ctx, c, "user groups", "/api/user-groups", nil, func(group UserGroup) string { return group.ID })
+	if err != nil {
+		return nil, err
+	}
+	if err := c.checkUserGroups(groups); err != nil {
+		return nil, err
+	}
+	return groups, nil
 }

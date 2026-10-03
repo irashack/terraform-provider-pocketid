@@ -71,6 +71,12 @@ func (c *Client) CreateUser(ctx context.Context, user *UserCreateRequest) (*User
 	if err := c.checkCreatedID("user", "", result.ID); err != nil {
 		return nil, fmt.Errorf("user creation returned no usable ID, so no follow-up request uses it; the user may exist: inspect before recovery: %w", err)
 	}
+	// A new user's groups are set with a separate request. Groups the
+	// response lists that fail the ID check are dropped rather than failing a
+	// create whose own ID is usable.
+	if c.checkGroupIDs(result.UserGroups) != nil {
+		result.UserGroups = nil
+	}
 
 	return &result, nil
 }
@@ -88,6 +94,9 @@ func (c *Client) GetUser(ctx context.Context, userID string) (*User, error) {
 
 	var result User
 	if err := decodeResponse(body, &result); err != nil {
+		return nil, err
+	}
+	if err := c.checkUser(userID, &result); err != nil {
 		return nil, err
 	}
 
@@ -108,6 +117,9 @@ func (c *Client) UpdateUser(ctx context.Context, userID string, user *UserCreate
 	var result User
 	if err := decodeResult(body, &result); err != nil {
 		return nil, err
+	}
+	if err := c.checkUser(userID, &result); err != nil {
+		return nil, unreadResult(err)
 	}
 
 	return &result, nil
@@ -142,7 +154,14 @@ func (c *Client) ListUsersPage(ctx context.Context, page, limit int, search stri
 	if search != "" {
 		query.Set("search", search)
 	}
-	return getPage[User](ctx, c, "/api/users", query, page, limit)
+	result, err := getPage[User](ctx, c, "/api/users", query, page, limit)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.checkUsers(result.Data); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // ListAllUsers returns every user, optionally narrowed by the server's
@@ -154,7 +173,14 @@ func (c *Client) ListAllUsers(ctx context.Context, search string) ([]User, error
 	if search != "" {
 		query.Set("search", search)
 	}
-	return listAll(ctx, c, "users", "/api/users", query, func(user User) string { return user.ID })
+	users, err := listAll(ctx, c, "users", "/api/users", query, func(user User) string { return user.ID })
+	if err != nil {
+		return nil, err
+	}
+	if err := c.checkUsers(users); err != nil {
+		return nil, err
+	}
+	return users, nil
 }
 
 // UpdateUserGroups replaces the groups a user belongs to and returns the IDs
@@ -185,7 +211,7 @@ func (c *Client) UpdateUserGroups(ctx context.Context, userID string, groupIDs [
 	// The response is evidence of the result only when it shows the user's
 	// groups, by the same rule as a read of the user (decodeUserGroupIDs);
 	// anything else leaves the result unknown, and the caller reads it back.
-	ids, err := decodeUserGroupIDs(body, userID)
+	_, ids, err := c.decodeUserGroupIDs(body, userID)
 	if err != nil {
 		return nil, fmt.Errorf("groups of user %s: %w: %w", userID, ErrResultUnread, err)
 	}
@@ -217,27 +243,33 @@ func (e *UserGroupsMismatchError) Error() string {
 }
 
 // diffGroupIDs returns the IDs in want but not in held, and in held but not
-// in want, each sorted.
+// in want, each sorted. Group IDs are UUIDs and compare as UUIDs, without
+// regard to case (see SameUUID); each is reported in its own spelling.
 func diffGroupIDs(want, held []string) (missing, unexpected []string) {
 	inHeld := make(map[string]bool, len(held))
 	for _, id := range held {
-		inHeld[id] = true
+		inHeld[strings.ToLower(id)] = true
 	}
 	inWant := make(map[string]bool, len(want))
 	for _, id := range want {
-		inWant[id] = true
-		if !inHeld[id] {
+		inWant[strings.ToLower(id)] = true
+		if !inHeld[strings.ToLower(id)] {
 			missing = append(missing, id)
 		}
 	}
-	for id := range inHeld {
-		if !inWant[id] {
+	for _, id := range held {
+		if !inWant[strings.ToLower(id)] {
 			unexpected = append(unexpected, id)
 		}
 	}
 	sort.Strings(missing)
 	sort.Strings(unexpected)
 	return missing, unexpected
+}
+
+// containsUUID reports whether ids holds id as a UUID (see SameUUID).
+func containsUUID(ids []string, id string) bool {
+	return slices.ContainsFunc(ids, func(held string) bool { return sameUUID(held, id) })
 }
 
 // writeUserGroups replaces the user's groups with groupIDs and returns the
@@ -252,7 +284,7 @@ func (c *Client) writeUserGroups(ctx context.Context, userID string, groupIDs []
 	if !errors.Is(err, ErrResultUnread) {
 		return nil, err
 	}
-	held, readErr := c.readUserGroupIDs(ctx, userID)
+	_, held, readErr := c.readUserGroupIDs(ctx, userID)
 	if readErr != nil {
 		return nil, fmt.Errorf("groups of user %s: %w; reading them back failed: %w", userID, ErrResultUnread, readErr)
 	}
@@ -263,56 +295,63 @@ func (c *Client) writeUserGroups(ctx context.Context, userID string, groupIDs []
 // the user is in.
 var errUserGroupsUnlisted = errors.New("the response did not list the user's groups")
 
-// decodeUserGroupIDs returns the IDs of the groups a user response lists. It
-// is the one rule for evidence of a user's groups, shared by the read of the
-// user and by the response to the PUT that replaces them: the body must be a
-// JSON object that names the requested user (its id) and holds a decodable
-// userGroups field whose elements each carry an ID. An explicit null means no
-// groups (UserDto has no omitempty). An absent field, {}, null, another
-// user's record or a group without an ID is no evidence of anything and gives
-// an error wrapping errUserGroupsUnlisted; the body is never echoed.
-func decodeUserGroupIDs(body []byte, userID string) ([]string, error) {
+// decodeUserGroupIDs returns the user's ID as the response gives it and the
+// IDs of the groups the response lists. It is the one rule for evidence of a
+// user's groups, shared by the read of the user and by the response to the
+// PUT that replaces them: the body must be a JSON object that names the
+// requested user (its id, checked by checkReturnedID: the same UUID, without
+// the API key) and holds a decodable userGroups field whose elements each
+// carry an ID that passes checkReturnedID. An explicit null means no groups
+// (UserDto has no omitempty). An absent field, {}, null, another user's
+// record or a group without a usable ID is no evidence of anything and gives
+// an error wrapping errUserGroupsUnlisted; the body is never echoed. A caller
+// that writes the user's groups afterwards addresses the returned ID.
+func (c *Client) decodeUserGroupIDs(body []byte, userID string) (string, []string, error) {
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(body, &fields) != nil || fields == nil {
-		return nil, errUserGroupsUnlisted
+		return "", nil, errUserGroupsUnlisted
 	}
 	var gotID string
-	if raw, ok := fields["id"]; !ok || json.Unmarshal(raw, &gotID) != nil || gotID != userID {
-		return nil, fmt.Errorf("%w: it did not name the user", errUserGroupsUnlisted)
+	if raw, ok := fields["id"]; !ok || json.Unmarshal(raw, &gotID) != nil {
+		return "", nil, fmt.Errorf("%w: it did not name the user", errUserGroupsUnlisted)
+	}
+	if err := c.checkReturnedID("user", userID, gotID); err != nil {
+		return "", nil, fmt.Errorf("%w: it did not name the user: %w", errUserGroupsUnlisted, err)
 	}
 	raw, ok := fields["userGroups"]
 	var groups []UserGroup
 	if !ok || json.Unmarshal(raw, &groups) != nil {
-		return nil, errUserGroupsUnlisted
+		return "", nil, errUserGroupsUnlisted
 	}
 	ids := make([]string, 0, len(groups))
 	for _, group := range groups {
-		if group.ID == "" {
-			return nil, fmt.Errorf("%w: a group had no ID", errUserGroupsUnlisted)
+		if err := c.checkReturnedID("user group", "", group.ID); err != nil {
+			return "", nil, fmt.Errorf("%w: a group had no usable ID: %w", errUserGroupsUnlisted, err)
 		}
 		ids = append(ids, group.ID)
 	}
-	return ids, nil
+	return gotID, ids, nil
 }
 
-// readUserGroupIDs reads the groups a user is in. Unlike GetUser it accepts
-// only a response that shows them (see decodeUserGroupIDs); anything else
-// gives an error wrapping errUserGroupsUnlisted. Errors from the request
-// itself are returned unchanged, so IsUserNotFound still applies to them.
-func (c *Client) readUserGroupIDs(ctx context.Context, userID string) ([]string, error) {
+// readUserGroupIDs reads the groups a user is in, and returns them with the
+// user's ID as the server gave it. Unlike GetUser it accepts only a response
+// that shows them (see decodeUserGroupIDs); anything else gives an error
+// wrapping errUserGroupsUnlisted. Errors from the request itself are returned
+// unchanged, so IsUserNotFound still applies to them.
+func (c *Client) readUserGroupIDs(ctx context.Context, userID string) (string, []string, error) {
 	id, err := uuidSegment("user", userID)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	body, err := c.doRequest(ctx, "GET", "/api/users/"+id, nil)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
-	ids, err := decodeUserGroupIDs(body, userID)
+	gotID, ids, err := c.decodeUserGroupIDs(body, userID)
 	if err != nil {
-		return nil, fmt.Errorf("user %s: %w", userID, err)
+		return "", nil, fmt.Errorf("user %s: %w", userID, err)
 	}
-	return ids, nil
+	return gotID, ids, nil
 }
 
 // CheckUserGroups compares the groups a user is in (held) with the ones
@@ -380,21 +419,23 @@ func notAttempted(err error) error {
 func (c *Client) AddUserToGroup(ctx context.Context, userID, groupID string) error {
 	// The write replaces the whole list, so it is built only from a response
 	// that shows the user's groups (an empty one would drop them all).
-	current, err := c.readUserGroupIDs(ctx, userID)
+	heldID, current, err := c.readUserGroupIDs(ctx, userID)
 	if err != nil {
 		return notAttempted(err)
 	}
-	if slices.Contains(current, groupID) {
+	if containsUUID(current, groupID) {
 		// Already a member; nothing to do.
 		return nil
 	}
 	groupIDs := append(current, groupID)
 
-	held, err := c.writeUserGroups(ctx, userID, groupIDs)
+	// The write addresses the user the read described, in the server's own
+	// spelling of its ID.
+	held, err := c.writeUserGroups(ctx, heldID, groupIDs)
 	if err != nil {
 		return err
 	}
-	if !slices.Contains(held, groupID) {
+	if !containsUUID(held, groupID) {
 		return &UserGroupsMismatchError{UserID: userID, Missing: []string{groupID}}
 	}
 	return nil
@@ -411,7 +452,7 @@ func (c *Client) AddUserToGroup(ctx context.Context, userID, groupID string) err
 // race window it leaves. A failure of the first read, before anything is
 // written, wraps ErrWriteNotAttempted.
 func (c *Client) RemoveUserFromGroup(ctx context.Context, userID, groupID string) error {
-	current, err := c.readUserGroupIDs(ctx, userID)
+	heldID, current, err := c.readUserGroupIDs(ctx, userID)
 	if err != nil {
 		if IsUserNotFound(err) {
 			return nil
@@ -422,7 +463,7 @@ func (c *Client) RemoveUserFromGroup(ctx context.Context, userID, groupID string
 	found := false
 	groupIDs := make([]string, 0, len(current))
 	for _, id := range current {
-		if id == groupID {
+		if sameUUID(id, groupID) {
 			found = true
 			continue
 		}
@@ -433,7 +474,7 @@ func (c *Client) RemoveUserFromGroup(ctx context.Context, userID, groupID string
 		return nil
 	}
 
-	held, err := c.writeUserGroups(ctx, userID, groupIDs)
+	held, err := c.writeUserGroups(ctx, heldID, groupIDs)
 	if err != nil {
 		// A 404 from this PUT does not by itself prove the user is gone: it
 		// could be a wrong path or a proxy's generic not-found response.
@@ -447,7 +488,7 @@ func (c *Client) RemoveUserFromGroup(ctx context.Context, userID, groupID string
 		}
 		return err
 	}
-	if slices.Contains(held, groupID) {
+	if containsUUID(held, groupID) {
 		return &UserGroupsMismatchError{UserID: userID, Unexpected: []string{groupID}}
 	}
 	return nil
@@ -460,9 +501,9 @@ func (c *Client) RemoveUserFromGroup(ctx context.Context, userID, groupID string
 // confirmed-missing user from any other error (including a merely-generic
 // 404) and from the user simply not belonging to the group.
 func (c *Client) UserHasGroupMembership(ctx context.Context, userID, groupID string) (bool, error) {
-	current, err := c.readUserGroupIDs(ctx, userID)
+	_, current, err := c.readUserGroupIDs(ctx, userID)
 	if err != nil {
 		return false, err
 	}
-	return slices.Contains(current, groupID), nil
+	return containsUUID(current, groupID), nil
 }

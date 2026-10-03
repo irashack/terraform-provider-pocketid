@@ -51,5 +51,19 @@ func (c *Client) SetGroupMembers(ctx context.Context, groupID string, userIDs []
 	if !present || json.Unmarshal(raw, &users) != nil {
 		return nil, fmt.Errorf("members of group %s: %w: the response did not list them", groupID, ErrResultUnread)
 	}
+	// The response must describe this group, and every member it lists must
+	// pass the ID check, before the members are taken as the result.
+	var gotID string
+	if rawID, ok := fields["id"]; ok && json.Unmarshal(rawID, &gotID) != nil {
+		gotID = ""
+	}
+	if err := c.checkReturnedID("user group", groupID, gotID); err != nil {
+		return nil, fmt.Errorf("members of group %s: %w", groupID, unreadResult(err))
+	}
+	for _, user := range users {
+		if err := c.checkReturnedID("user", "", user.ID); err != nil {
+			return nil, fmt.Errorf("members of group %s: %w", groupID, unreadResult(err))
+		}
+	}
 	return groupRelationIDs(users), nil
 }

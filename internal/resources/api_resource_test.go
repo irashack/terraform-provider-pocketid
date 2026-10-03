@@ -676,6 +676,50 @@ func TestAPIResourceUpdate_FailedStepRecordsServer(t *testing.T) {
 	assert.Empty(t, apiTestPermissions(t, state))
 }
 
+// An API ID held in another case than the server's is the same API
+// (PostgreSQL answers with its own lower-case spelling): Read keeps it, and
+// Update's writes address the server's spelling, which state then records.
+func TestAPIResourceUpdate_AddressesTheServersSpellingOfTheID(t *testing.T) {
+	const lower = "abcdef01-2345-4678-89ab-cdef01234567"
+	var writes []string
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/version/current":
+			_, _ = fmt.Fprint(w, `{"currentVersion":"2.17.0"}`)
+			return
+		case r.Method != http.MethodGet:
+			writes = append(writes, r.Method+" "+r.URL.Path)
+		}
+		name := "Inventory"
+		if r.Method == http.MethodPut {
+			name = "Renamed"
+		}
+		_, _ = fmt.Fprintf(w, `{"id":%q,"name":%q,"resource":"https://inventory.example","createdAt":"2026-01-01T00:00:00Z","permissions":[],"allowCimdClients":false}`, lower, name)
+	}))
+	defer s.Close()
+	c, _ := client.NewClient(s.URL, "synthetic-token", false, 2)
+
+	prior := apiTestModel(strings.ToUpper(lower), "Inventory", "https://inventory.example", false, nil)
+	plan := prior
+	plan.Name = types.StringValue("Renamed")
+	resp, state := apiTestUpdate(t, c, prior, plan)
+	require.False(t, resp.Diagnostics.HasError(), apiTestUpdateDiag(resp))
+	assert.Equal(t, []string{"PUT /api/apis/" + lower}, writes)
+	assert.Equal(t, lower, state.ID.ValueString())
+
+	ctx := context.Background()
+	sr := apiTestSchema(t)
+	st := tfsdk.State{Schema: sr.Schema}
+	require.False(t, st.Set(ctx, &prior).HasError())
+	read := resource.ReadResponse{State: tfsdk.State{Schema: sr.Schema, Raw: st.Raw.Copy()}}
+	(&apiResource{client: c}).Read(ctx, resource.ReadRequest{State: st}, &read)
+	require.False(t, read.Diagnostics.HasError(), "%v", read.Diagnostics)
+	var got apiResourceModel
+	require.False(t, read.State.Get(ctx, &got).HasError())
+	assert.Equal(t, lower, got.ID.ValueString())
+}
+
 // Read drops the API only on Pocket ID's own not-found error for an API.
 func TestAPIResourceRead_ConfirmedAbsence(t *testing.T) {
 	for name, tc := range map[string]struct {

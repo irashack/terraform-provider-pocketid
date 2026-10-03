@@ -49,7 +49,7 @@ func TestClient_SetGroupMembers_EmptyIsSentAsAnEmptyList(t *testing.T) {
 		var m map[string]json.RawMessage
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&m))
 		raw = string(m["userIds"])
-		_, _ = w.Write([]byte(`{"users":null}`))
+		_, _ = w.Write([]byte(`{"id":"` + groupMembersGroup + `","users":null}`))
 	}))
 	defer server.Close()
 	c, err := client.NewClient(server.URL, "test-token", false, 30)

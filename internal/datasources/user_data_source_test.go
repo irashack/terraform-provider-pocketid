@@ -236,8 +236,8 @@ func stringOrNull(v string) tftypes.Value {
 func TestUserDataSource_Read_ByEmail(t *testing.T) {
 	ctx := context.Background()
 	c := usersListServer(t, []client.User{
-		{ID: "user-1", Username: "alice", Email: "alice@example.com", DisplayName: "Alice"},
-		{ID: "user-2", Username: "bob", Email: "bob@example.com", DisplayName: "Bob"},
+		{ID: "00000000-0000-4000-8000-000000000001", Username: "alice", Email: "alice@example.com", DisplayName: "Alice"},
+		{ID: "00000000-0000-4000-8000-000000000002", Username: "bob", Email: "bob@example.com", DisplayName: "Bob"},
 	})
 	ds := configureUserDataSource(t, c)
 	sch := userDataSourceSchema(t, ds)
@@ -251,7 +251,7 @@ func TestUserDataSource_Read_ByEmail(t *testing.T) {
 	var id, username string
 	require.False(t, readResp.State.GetAttribute(ctx, path.Root("id"), &id).HasError())
 	require.False(t, readResp.State.GetAttribute(ctx, path.Root("username"), &username).HasError())
-	assert.Equal(t, "user-2", id)
+	assert.Equal(t, "00000000-0000-4000-8000-000000000002", id)
 	assert.Equal(t, "bob", username)
 }
 
@@ -265,7 +265,7 @@ func TestUserDataSource_Read_ByEmail_UserOnPageTwo(t *testing.T) {
 	users := make([]client.User, 150)
 	for i := range users {
 		users[i] = client.User{
-			ID:       fmt.Sprintf("user-%d", i),
+			ID:       fmt.Sprintf("00000000-0000-4000-8000-%012d", i),
 			Username: fmt.Sprintf("user%d", i),
 			Email:    fmt.Sprintf("user%d@example.com", i),
 		}
@@ -286,14 +286,14 @@ func TestUserDataSource_Read_ByEmail_UserOnPageTwo(t *testing.T) {
 	var id, username string
 	require.False(t, readResp.State.GetAttribute(ctx, path.Root("id"), &id).HasError())
 	require.False(t, readResp.State.GetAttribute(ctx, path.Root("username"), &username).HasError())
-	assert.Equal(t, "user-149", id)
+	assert.Equal(t, "00000000-0000-4000-8000-000000000149", id)
 	assert.Equal(t, "user149", username)
 }
 
 func TestUserDataSource_Read_ByEmail_NotFound(t *testing.T) {
 	ctx := context.Background()
 	c := usersListServer(t, []client.User{
-		{ID: "user-1", Username: "alice", Email: "alice@example.com"},
+		{ID: "00000000-0000-4000-8000-000000000001", Username: "alice", Email: "alice@example.com"},
 	})
 	ds := configureUserDataSource(t, c)
 	sch := userDataSourceSchema(t, ds)
@@ -352,12 +352,12 @@ func TestUserDataSource_ConfigValidators(t *testing.T) {
 		expectError         bool
 	}{
 		{name: "none", expectError: true},
-		{name: "id_only", id: "user-1", expectError: false},
+		{name: "id_only", id: "00000000-0000-4000-8000-000000000001", expectError: false},
 		{name: "username_only", username: "alice", expectError: false},
 		{name: "email_only", email: "alice@example.com", expectError: false},
-		{name: "id_and_username", id: "user-1", username: "alice", expectError: true},
-		{name: "id_and_email", id: "user-1", email: "alice@example.com", expectError: true},
-		{name: "all_three", id: "user-1", username: "alice", email: "alice@example.com", expectError: true},
+		{name: "id_and_username", id: "00000000-0000-4000-8000-000000000001", username: "alice", expectError: true},
+		{name: "id_and_email", id: "00000000-0000-4000-8000-000000000001", email: "alice@example.com", expectError: true},
+		{name: "all_three", id: "00000000-0000-4000-8000-000000000001", username: "alice", email: "alice@example.com", expectError: true},
 	}
 
 	for _, tc := range testCases {

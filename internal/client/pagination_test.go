@@ -91,7 +91,7 @@ func (s *pagedServer) start(t *testing.T, path string) *client.Client {
 func makeIDs(n int) []string {
 	ids := make([]string, n)
 	for i := range ids {
-		ids[i] = fmt.Sprintf("id-%04d", i)
+		ids[i] = fmt.Sprintf("00000000-0000-4000-8000-%012d", i)
 	}
 	return ids
 }
@@ -176,7 +176,7 @@ func TestListAll_MalformedPaginationIsError(t *testing.T) {
 func TestListAll_ChangedListIsReadAgainThenRefused(t *testing.T) {
 	duplicateSecondPage := func(page int, resp map[string]any) {
 		if page == 2 {
-			resp["data"].([]map[string]string)[0]["id"] = "id-0000"
+			resp["data"].([]map[string]string)[0]["id"] = "00000000-0000-4000-8000-000000000000"
 		}
 	}
 	t.Run("changed once", func(t *testing.T) {

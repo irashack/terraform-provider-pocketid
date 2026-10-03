@@ -57,6 +57,9 @@ func (c *Client) ListUserPasskeys(ctx context.Context, userID string) ([]Passkey
 	}
 	passkeys := make([]Passkey, 0, len(wire))
 	for _, item := range wire {
+		if err := c.checkReturnedID("passkey", "", item.ID); err != nil {
+			return nil, err
+		}
 		passkeys = append(passkeys, Passkey{
 			ID: item.ID, Name: item.Name, CreatedAt: item.CreatedAt,
 			BackupEligible: item.BackupEligible, BackupState: item.BackupState,

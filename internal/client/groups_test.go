@@ -168,17 +168,17 @@ func TestClient_DeleteUserGroup_InUse(t *testing.T) {
 func TestClient_ListUserGroups(t *testing.T) {
 	expectedGroups := []client.UserGroup{
 		{
-			ID:           "group1",
+			ID:           "cccccccc-0000-4000-8000-000000000001",
 			Name:         "admins",
 			FriendlyName: "Administrators",
 		},
 		{
-			ID:           "group2",
+			ID:           "cccccccc-0000-4000-8000-000000000002",
 			Name:         "users",
 			FriendlyName: "Regular Users",
 		},
 		{
-			ID:           "group3",
+			ID:           "cccccccc-0000-4000-8000-000000000003",
 			Name:         "developers",
 			FriendlyName: "Developers",
 		},

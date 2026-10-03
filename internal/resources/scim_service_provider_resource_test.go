@@ -732,28 +732,30 @@ func scimLetterState(id string) map[string]any {
 	return state
 }
 
-// SQLite stores a SCIM service provider's ID as case-sensitive text and the
-// PUT addresses the row by the spelling in state, so a read whose ID differs
-// only in case may name another row (or none). The keep-token path accepts
-// only the exact ID, sends nothing otherwise, and addresses the PUT with the
-// server's own spelling.
-func TestScimServiceProviderResource_KeepTokenRequiresTheExactProviderID(t *testing.T) {
+// A read whose provider ID differs from the one in state only in case names
+// the same UUID (PostgreSQL answers with its own lower-case spelling). SQLite
+// stores the ID as case-sensitive text, so the PUT that sends the token back
+// addresses the row the read described, in the server's own spelling, never
+// the spelling in state; state then records the server's spelling. Another
+// provider's ID is refused before anything is sent (see
+// TestScimServiceProviderResource_UpdateWithoutAVersionBumpRefusesAnUnusableRead).
+func TestScimServiceProviderResource_KeepTokenAddressesTheServersProviderID(t *testing.T) {
 	cases := []struct {
-		name       string
-		stateID    string // the ID in state, which the PUT addresses
-		answerID   string // the ID in the read's answer
-		wantUpdate bool
+		name     string
+		stateID  string // the ID in state
+		answerID string // the ID in the read's answer: the row the server holds
 	}{
-		{"the same lower-case spelling", scimLetterProviderID, scimLetterProviderID, true},
-		{"the same upper-case spelling", scimUpperLetterProviderID, scimUpperLetterProviderID, true},
-		{"the answer in upper case, the state in lower case", scimLetterProviderID, scimUpperLetterProviderID, false},
-		{"the answer in lower case, the state in upper case", scimUpperLetterProviderID, scimLetterProviderID, false},
+		{"the same lower-case spelling", scimLetterProviderID, scimLetterProviderID},
+		{"the same upper-case spelling", scimUpperLetterProviderID, scimUpperLetterProviderID},
+		{"the answer in upper case, the state in lower case", scimLetterProviderID, scimUpperLetterProviderID},
+		{"the answer in lower case, the state in upper case", scimUpperLetterProviderID, scimLetterProviderID},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// The fake addresses the row by the spelling in state, as SQLite does.
+			// The fake holds the row under the answer's spelling and, as
+			// SQLite does, finds it only by that exact spelling.
 			fake, c := newScimFake(t)
-			fake.providerID = tc.stateID
+			fake.providerID = tc.answerID
 			fake.token = "token-held-by-the-server"
 			body := fmt.Sprintf(`{"id":%q,"token":"token-held-by-the-server"}`, tc.answerID)
 			fake.getBody = &body
@@ -768,19 +770,12 @@ func TestScimServiceProviderResource_KeepTokenRequiresTheExactProviderID(t *test
 			}
 			resp := scimUpdate(t, r, sch, scimLetterState(tc.stateID), plan, config)
 
-			if !tc.wantUpdate {
-				require.True(t, resp.Diagnostics.HasError())
-				assert.Empty(t, fake.mutations(), "a casing mismatch must not become a PUT")
-				assert.Equal(t, "token-held-by-the-server", fake.token)
-				assert.Contains(t, resp.Diagnostics.Errors()[0].Detail(), "was not this SCIM service provider with its token")
-				return
-			}
 			require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
 			mutations := fake.mutations()
 			require.Len(t, mutations, 1)
-			assert.Equal(t, "/api/scim/service-provider/"+tc.stateID, mutations[0].Path, "the PUT uses the spelling the server holds")
+			assert.Equal(t, "/api/scim/service-provider/"+tc.answerID, mutations[0].Path, "the PUT uses the spelling the server holds")
 			assert.Equal(t, "token-held-by-the-server", mutations[0].Body["token"])
-			assert.Equal(t, types.StringValue(tc.stateID), scimStateString(t, resp.State, "id"))
+			assert.Equal(t, types.StringValue(tc.answerID), scimStateString(t, resp.State, "id"))
 		})
 	}
 }

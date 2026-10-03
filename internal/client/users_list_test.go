@@ -78,7 +78,7 @@ func makeUsers(n int) []client.User {
 	users := make([]client.User, n)
 	for i := range users {
 		users[i] = client.User{
-			ID:       fmt.Sprintf("user-%d", i),
+			ID:       fmt.Sprintf("00000000-0000-4000-8000-%012d", i),
 			Username: fmt.Sprintf("user%d", i),
 			Email:    fmt.Sprintf("user%d@example.com", i),
 		}
@@ -146,7 +146,7 @@ func TestClient_ListAllUsers_FindsUserOnPageTwo(t *testing.T) {
 		}
 	}
 	require.NotNil(t, found, "user149 (page 2) must be present in ListAllUsers' result")
-	assert.Equal(t, "user-149", found.ID)
+	assert.Equal(t, "00000000-0000-4000-8000-000000000149", found.ID)
 }
 
 func TestClient_ListAllUsers_EmptyResult(t *testing.T) {

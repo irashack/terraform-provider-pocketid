@@ -224,7 +224,7 @@ func TestUsersDataSource_Read_ListsUsersAcrossAllPages(t *testing.T) {
 	users := make([]client.User, 150)
 	for i := range users {
 		users[i] = client.User{
-			ID:       fmt.Sprintf("user-%d", i),
+			ID:       fmt.Sprintf("00000000-0000-4000-8000-%012d", i),
 			Username: fmt.Sprintf("user%d", i),
 			Email:    fmt.Sprintf("user%d@example.com", i),
 		}
@@ -249,7 +249,7 @@ func TestUsersDataSource_Read_ListsUsersAcrossAllPages(t *testing.T) {
 	for _, u := range usersState {
 		if u.Username == "user149" {
 			found = true
-			assert.Equal(t, "user-149", u.ID)
+			assert.Equal(t, "00000000-0000-4000-8000-000000000149", u.ID)
 			break
 		}
 	}

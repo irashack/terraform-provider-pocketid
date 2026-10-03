@@ -449,6 +449,18 @@ func TestClientSecretResource_Read(t *testing.T) {
 		require.False(t, resp.Diagnostics.HasError())
 		assert.Nil(t, got)
 	})
+	t.Run("a secret listed in another case is the same secret", func(t *testing.T) {
+		// PostgreSQL answers with its own lower-case spelling. Reading the
+		// secret as gone would drop a secret that may still be valid.
+		const lower = "abcdef01-2345-4678-89ab-cdef01234567"
+		fake := clientSecretFake{listed: []string{clientSecretObject(lower, "GENE")}}
+		prior := clientSecretStored()
+		prior.ID = types.StringValue(strings.ToUpper(lower))
+		resp, got := clientSecretRead(t, fake.serve(t), prior)
+		require.False(t, resp.Diagnostics.HasError(), clientSecretDiagText(resp.Diagnostics))
+		require.NotNil(t, got, "the secret is still listed, so it stays in state")
+		assert.Equal(t, lower, got.ID.ValueString(), "state records the server's spelling")
+	})
 	t.Run("a confirmed missing client removes it", func(t *testing.T) {
 		fake := clientSecretFake{clientMissing: true}
 		resp, got := clientSecretRead(t, fake.serve(t), clientSecretStored())

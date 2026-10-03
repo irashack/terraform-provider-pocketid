@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"golang.org/x/mod/semver"
@@ -325,23 +326,25 @@ func (c *Client) ListClientSecrets(ctx context.Context, clientID string) ([]Clie
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("error unmarshaling client secret list")
 	}
-	if err := checkClientSecretList(result); err != nil {
+	if err := c.checkClientSecretList(result); err != nil {
 		return nil, err
 	}
 	return result, nil
 }
 
 // checkClientSecretList refuses, with ErrMalformedSecretList, a secret list
-// that cannot be relied on: an entry whose ID is not a UUID (such as an
-// empty object), an ID listed twice, or a prefix outside Pocket ID's
+// that cannot be relied on: an entry whose ID fails checkReturnedID (not a
+// UUID, such as an empty object's, or one carrying the API key), an ID listed
+// twice (in any case: the same UUID), or a prefix outside Pocket ID's
 // contract. An empty list is a client without secrets.
-func checkClientSecretList(secrets []ClientSecretMetadata) error {
+func (c *Client) checkClientSecretList(secrets []ClientSecretMetadata) error {
 	seen := make(map[string]bool, len(secrets))
 	for _, secret := range secrets {
-		if ValidateUUID("client secret", secret.ID) != nil || seen[secret.ID] || !validClientSecretPrefix(secret.Prefix) {
+		canonical := strings.ToLower(secret.ID)
+		if c.checkReturnedID("client secret", "", secret.ID) != nil || seen[canonical] || !validClientSecretPrefix(secret.Prefix) {
 			return ErrMalformedSecretList
 		}
-		seen[secret.ID] = true
+		seen[canonical] = true
 	}
 	return nil
 }
@@ -393,7 +396,7 @@ func (c *Client) RevokeClientSecret(ctx context.Context, clientID, secretID stri
 		return fmt.Errorf("could not confirm that client secret %s was revoked: the client's secrets could not be listed afterwards: %w", secretID, listErr)
 	}
 	for _, secret := range remaining {
-		if secret.ID == secretID {
+		if sameUUID(secret.ID, secretID) {
 			if deleteErr != nil {
 				return fmt.Errorf("client secret %s was not revoked; it is still listed and may still be valid: %w", secretID, deleteErr)
 			}

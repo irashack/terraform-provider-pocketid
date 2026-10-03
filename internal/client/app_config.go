@@ -214,7 +214,35 @@ func (c *Client) GetApplicationConfig(ctx context.Context) (*ApplicationConfig, 
 		return nil, err
 	}
 
-	return decodeApplicationConfig(body, decodeResponse)
+	cfg, err := decodeApplicationConfig(body, decodeResponse)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.checkAppConfigGroupIDs(cfg); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// checkAppConfigGroupIDs checks the user group IDs the configuration holds in
+// signupDefaultUserGroupIDs, a JSON array of IDs in a string: the string must
+// not contain the API key, and when it is such an array each ID must pass
+// checkReturnedID. A value that is not an array is left to the caller, which
+// shows it as the string it is.
+func (c *Client) checkAppConfigGroupIDs(cfg *ApplicationConfig) error {
+	if c.reflectsKey(cfg.SignupDefaultUserGroupIDs) {
+		return fmt.Errorf("%w: the signup default user group IDs in the response contain the API key this provider sent", ErrInvalidIdentifier)
+	}
+	var ids []string
+	if json.Unmarshal([]byte(cfg.SignupDefaultUserGroupIDs), &ids) != nil {
+		return nil
+	}
+	for _, id := range ids {
+		if err := c.checkReturnedID("user group", "", id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // UpdateApplicationConfig updates the application configuration via
@@ -234,6 +262,9 @@ func (c *Client) UpdateApplicationConfig(ctx context.Context, cfg *ApplicationCo
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrResultUnread, err)
+	}
+	if err := c.checkAppConfigGroupIDs(updated); err != nil {
+		return nil, unreadResult(err)
 	}
 	return updated, nil
 }

@@ -20,5 +20,8 @@ func (c *Client) GetCurrentUser(ctx context.Context) (*User, error) {
 	if err := json.Unmarshal(body, &user); err != nil {
 		return nil, fmt.Errorf("error unmarshaling response: %w", err)
 	}
+	if err := c.checkUser("", &user); err != nil {
+		return nil, err
+	}
 	return &user, nil
 }

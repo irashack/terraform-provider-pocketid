@@ -306,11 +306,18 @@ func (r *signupTokenResource) Create(ctx context.Context, req resource.CreateReq
 	// (fewer groups than requested, or groups nobody asked for), so it is
 	// deleted again rather than left to its ttl.
 	var problems []string
-	if err != nil {
+	groupsUnknown := errors.Is(err, client.ErrInvalidIdentifier)
+	switch {
+	case groupsUnknown:
+		problems = append(problems, "its answer listed a group whose ID could not be used, so the groups it joins are unknown")
+	case err != nil:
 		problems = append(problems, "its answer did not carry the token value")
 	}
-	missing := signupTokenGroupDifference(requested, granted)
-	unexpected := signupTokenGroupDifference(granted, requested)
+	var missing, unexpected []string
+	if !groupsUnknown {
+		missing = signupTokenGroupDifference(requested, granted)
+		unexpected = signupTokenGroupDifference(granted, requested)
+	}
 	if len(missing) > 0 {
 		problems = append(problems, "ignored these group IDs, which name no group: "+strings.Join(missing, ", "))
 	}
@@ -353,7 +360,7 @@ func (r *signupTokenResource) deleteSignupTokenConfirmed(ctx context.Context, id
 		return fmt.Errorf("the list that confirms it could not be read: %w", err)
 	}
 	for i := range tokens {
-		if tokens[i].ID == id {
+		if client.SameUUID(tokens[i].ID, id) {
 			return errors.New("the token is still listed after the deletion")
 		}
 	}
@@ -362,6 +369,8 @@ func (r *signupTokenResource) deleteSignupTokenConfirmed(ctx context.Context, id
 
 // applyListed copies what Pocket ID lists onto the model.
 func (r *signupTokenResource) applyListed(model *signupTokenResourceModel, listed *client.SignupToken) {
+	// Later requests address the token in the server's spelling of its ID.
+	model.ID = types.StringValue(listed.ID)
 	model.ExpiresAt = types.StringValue(listed.ExpiresAt)
 	model.CreatedAt = types.StringValue(listed.CreatedAt)
 	model.UsageLimit = types.Int64Value(int64(listed.UsageLimit))
@@ -389,7 +398,7 @@ func (r *signupTokenResource) Read(ctx context.Context, req resource.ReadRequest
 		return
 	}
 	for i := range tokens {
-		if tokens[i].ID == state.ID.ValueString() {
+		if client.SameUUID(tokens[i].ID, state.ID.ValueString()) {
 			r.applyListed(&state, &tokens[i])
 			resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 			return

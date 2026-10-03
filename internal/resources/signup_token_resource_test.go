@@ -473,6 +473,51 @@ func TestSignupTokenResource_CreateDeletesATokenWithGroupsOrALimitNobodyAskedFor
 	}
 }
 
+// A create answer whose groups fail the identifier check (here a group that
+// is not a UUID) says nothing reliable about what the token grants: the
+// token is deleted again like one with the wrong groups, and no listed group
+// reaches state or a diagnostic.
+func TestSignupTokenResource_CreateDeletesATokenWhoseGroupsAreUnusable(t *testing.T) {
+	const unusable = "not-a-group-id-from-pocket-id"
+	fake, c := newSignupFake(t)
+	fake.attachExtra = []string{unusable}
+	r, sch := signupResource(t, c)
+
+	resp := signupCreate(t, r, sch, signupPlan(signupSet(signupTestGroupA), 3))
+	require.True(t, resp.Diagnostics.HasError())
+	mutations := fake.mutations()
+	require.Len(t, mutations, 2, "one creation and one deletion")
+	assert.Equal(t, http.MethodDelete, mutations[1].Method)
+	assert.True(t, resp.State.Raw.IsNull())
+	detail := signupDiagnosticText(resp)
+	assert.Contains(t, detail, "listed a group whose ID could not be used")
+	assert.NotContains(t, detail, unusable)
+	assert.NotContains(t, detail, "did not carry the token value")
+	assert.NotContains(t, detail, signupTestSecret)
+}
+
+// A token listed under another spelling of its ID is the same token
+// (PostgreSQL answers with its own lower-case spelling); state records the
+// server's spelling.
+func TestSignupTokenResource_ReadFindsATokenListedInAnotherCase(t *testing.T) {
+	const lower = "abcdef01-2345-4678-89ab-cdef01234567"
+	fake, c := newSignupFake(t)
+	fake.addToken(lower, signupTestSecret, 2)
+	r, sch := signupResource(t, c)
+	state := scimState(t, sch, signupStored(strings.ToUpper(lower), nil, false))
+	resp := scimRead(t, r, state)
+	require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
+	var id types.String
+	var count types.Int64
+	var expired types.Bool
+	signupAttr(t, resp.State, "id", &id)
+	signupAttr(t, resp.State, "usage_count", &count)
+	signupAttr(t, resp.State, "expired", &expired)
+	assert.Equal(t, lower, id.ValueString(), "state records the server's spelling")
+	assert.EqualValues(t, 2, count.ValueInt64(), "the listed token was found")
+	assert.False(t, expired.ValueBool())
+}
+
 func signupSetStrings(t *testing.T, set types.Set) []string {
 	t.Helper()
 	var out []string

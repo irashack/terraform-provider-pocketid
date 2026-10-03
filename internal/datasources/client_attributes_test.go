@@ -28,7 +28,7 @@ const fullClientJSON = `{"id":"c1","name":"App","description":"An app","hasLogo"
 "credentials":{"federatedIdentities":[{"issuer":"https://issuer.example.invalid","subject":"s","publicKeys":[{"kty":"OKP","crv":"Ed25519","kid":"k","x":"AAAA"}],"replayProtection":true}],
 "secrets":[{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","prefix":"abcd","createdAt":"2026-01-02T03:04:05Z","expiresAt":"2027-01-02T03:04:05Z","isActive":true},
 {"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","prefix":"","createdAt":"2025-01-02T03:04:05Z","expiresAt":null,"isActive":true}]},
-"allowedUserGroups":[{"id":"g2"},{"id":"g1"}]}`
+"allowedUserGroups":[{"id":"bbbbbbbb-0000-4000-8000-000000000002"},{"id":"bbbbbbbb-0000-4000-8000-000000000001"}]}`
 
 func TestClientDataSourceReadsEveryField(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

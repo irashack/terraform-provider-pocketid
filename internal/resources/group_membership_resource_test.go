@@ -213,7 +213,7 @@ func groupMembershipSchema(t *testing.T, r resource.Resource) schema.Schema {
 func TestGroupMembershipResource_CreatePreservesOtherMembers(t *testing.T) {
 	ctx := context.Background()
 	userExists := true
-	c, puts := groupMembershipTestServer(t, "44444444-4444-4444-8444-444444444444", []string{"group-existing"}, &userExists)
+	c, puts := groupMembershipTestServer(t, "44444444-4444-4444-8444-444444444444", []string{"eeeeeeee-0000-4000-8000-000000000101"}, &userExists)
 	r := configureGroupMembership(t, c)
 	sch := groupMembershipSchema(t, r)
 
@@ -221,7 +221,7 @@ func TestGroupMembershipResource_CreatePreservesOtherMembers(t *testing.T) {
 		Schema: sch,
 		Raw: tftypes.NewValue(sch.Type().TerraformType(ctx), map[string]tftypes.Value{
 			"id":                  tftypes.NewValue(tftypes.String, nil),
-			"group_id":            tftypes.NewValue(tftypes.String, "group-new"),
+			"group_id":            tftypes.NewValue(tftypes.String, "eeeeeeee-0000-4000-8000-000000000102"),
 			"user_id":             tftypes.NewValue(tftypes.String, "44444444-4444-4444-8444-444444444444"),
 			"unresolved_creation": tftypes.NewValue(tftypes.Bool, nil),
 		}),
@@ -232,29 +232,29 @@ func TestGroupMembershipResource_CreatePreservesOtherMembers(t *testing.T) {
 	require.False(t, createResp.Diagnostics.HasError(), "%v", createResp.Diagnostics)
 
 	require.Len(t, *puts, 1)
-	assert.ElementsMatch(t, []string{"group-existing", "group-new"}, (*puts)[0].UserGroupIDs)
+	assert.ElementsMatch(t, []string{"eeeeeeee-0000-4000-8000-000000000101", "eeeeeeee-0000-4000-8000-000000000102"}, (*puts)[0].UserGroupIDs)
 
 	var id, groupID, userID string
 	require.False(t, createResp.State.GetAttribute(ctx, path.Root("id"), &id).HasError())
 	require.False(t, createResp.State.GetAttribute(ctx, path.Root("group_id"), &groupID).HasError())
 	require.False(t, createResp.State.GetAttribute(ctx, path.Root("user_id"), &userID).HasError())
-	assert.Equal(t, "group-new/44444444-4444-4444-8444-444444444444", id)
-	assert.Equal(t, "group-new", groupID)
+	assert.Equal(t, "eeeeeeee-0000-4000-8000-000000000102/44444444-4444-4444-8444-444444444444", id)
+	assert.Equal(t, "eeeeeeee-0000-4000-8000-000000000102", groupID)
 	assert.Equal(t, "44444444-4444-4444-8444-444444444444", userID)
 }
 
 func TestGroupMembershipResource_DeletePreservesOtherMembers(t *testing.T) {
 	ctx := context.Background()
 	userExists := true
-	c, puts := groupMembershipTestServer(t, "44444444-4444-4444-8444-444444444444", []string{"group-keep", "group-remove"}, &userExists)
+	c, puts := groupMembershipTestServer(t, "44444444-4444-4444-8444-444444444444", []string{"eeeeeeee-0000-4000-8000-000000000103", "eeeeeeee-0000-4000-8000-000000000104"}, &userExists)
 	r := configureGroupMembership(t, c)
 	sch := groupMembershipSchema(t, r)
 
 	state := tfsdk.State{
 		Schema: sch,
 		Raw: tftypes.NewValue(sch.Type().TerraformType(ctx), map[string]tftypes.Value{
-			"id":                  tftypes.NewValue(tftypes.String, "group-remove/44444444-4444-4444-8444-444444444444"),
-			"group_id":            tftypes.NewValue(tftypes.String, "group-remove"),
+			"id":                  tftypes.NewValue(tftypes.String, "eeeeeeee-0000-4000-8000-000000000104/44444444-4444-4444-8444-444444444444"),
+			"group_id":            tftypes.NewValue(tftypes.String, "eeeeeeee-0000-4000-8000-000000000104"),
 			"user_id":             tftypes.NewValue(tftypes.String, "44444444-4444-4444-8444-444444444444"),
 			"unresolved_creation": tftypes.NewValue(tftypes.Bool, nil),
 		}),
@@ -265,7 +265,7 @@ func TestGroupMembershipResource_DeletePreservesOtherMembers(t *testing.T) {
 	require.False(t, deleteResp.Diagnostics.HasError(), "%v", deleteResp.Diagnostics)
 
 	require.Len(t, *puts, 1)
-	assert.Equal(t, []string{"group-keep"}, (*puts)[0].UserGroupIDs)
+	assert.Equal(t, []string{"eeeeeeee-0000-4000-8000-000000000103"}, (*puts)[0].UserGroupIDs)
 }
 
 func TestGroupMembershipResource_DeleteUserAlreadyGone(t *testing.T) {
@@ -278,8 +278,8 @@ func TestGroupMembershipResource_DeleteUserAlreadyGone(t *testing.T) {
 	state := tfsdk.State{
 		Schema: sch,
 		Raw: tftypes.NewValue(sch.Type().TerraformType(ctx), map[string]tftypes.Value{
-			"id":                  tftypes.NewValue(tftypes.String, "group-remove/44444444-4444-4444-8444-444444444444"),
-			"group_id":            tftypes.NewValue(tftypes.String, "group-remove"),
+			"id":                  tftypes.NewValue(tftypes.String, "eeeeeeee-0000-4000-8000-000000000104/44444444-4444-4444-8444-444444444444"),
+			"group_id":            tftypes.NewValue(tftypes.String, "eeeeeeee-0000-4000-8000-000000000104"),
 			"user_id":             tftypes.NewValue(tftypes.String, "44444444-4444-4444-8444-444444444444"),
 			"unresolved_creation": tftypes.NewValue(tftypes.Bool, nil),
 		}),
@@ -295,15 +295,15 @@ func TestGroupMembershipResource_DeleteUserAlreadyGone(t *testing.T) {
 func TestGroupMembershipResource_ReadRemovesFromStateWhenMembershipGone(t *testing.T) {
 	ctx := context.Background()
 	userExists := true
-	c, _ := groupMembershipTestServer(t, "44444444-4444-4444-8444-444444444444", []string{"group-other"}, &userExists)
+	c, _ := groupMembershipTestServer(t, "44444444-4444-4444-8444-444444444444", []string{"eeeeeeee-0000-4000-8000-000000000105"}, &userExists)
 	r := configureGroupMembership(t, c)
 	sch := groupMembershipSchema(t, r)
 
 	state := tfsdk.State{
 		Schema: sch,
 		Raw: tftypes.NewValue(sch.Type().TerraformType(ctx), map[string]tftypes.Value{
-			"id":                  tftypes.NewValue(tftypes.String, "group-gone/44444444-4444-4444-8444-444444444444"),
-			"group_id":            tftypes.NewValue(tftypes.String, "group-gone"),
+			"id":                  tftypes.NewValue(tftypes.String, "eeeeeeee-0000-4000-8000-000000000106/44444444-4444-4444-8444-444444444444"),
+			"group_id":            tftypes.NewValue(tftypes.String, "eeeeeeee-0000-4000-8000-000000000106"),
 			"user_id":             tftypes.NewValue(tftypes.String, "44444444-4444-4444-8444-444444444444"),
 			"unresolved_creation": tftypes.NewValue(tftypes.Bool, nil),
 		}),
@@ -325,8 +325,8 @@ func TestGroupMembershipResource_ReadRemovesFromStateWhenUserGone(t *testing.T) 
 	state := tfsdk.State{
 		Schema: sch,
 		Raw: tftypes.NewValue(sch.Type().TerraformType(ctx), map[string]tftypes.Value{
-			"id":                  tftypes.NewValue(tftypes.String, "group-1/44444444-4444-4444-8444-444444444444"),
-			"group_id":            tftypes.NewValue(tftypes.String, "group-1"),
+			"id":                  tftypes.NewValue(tftypes.String, "eeeeeeee-0000-4000-8000-000000000001/44444444-4444-4444-8444-444444444444"),
+			"group_id":            tftypes.NewValue(tftypes.String, "eeeeeeee-0000-4000-8000-000000000001"),
 			"user_id":             tftypes.NewValue(tftypes.String, "44444444-4444-4444-8444-444444444444"),
 			"unresolved_creation": tftypes.NewValue(tftypes.Bool, nil),
 		}),
@@ -354,16 +354,16 @@ func TestGroupMembershipResource_ImportState(t *testing.T) {
 	importResp := &resource.ImportStateResponse{
 		State: tfsdk.State{Schema: sch, Raw: tftypes.NewValue(sch.Type().TerraformType(ctx), nil)},
 	}
-	r.(resource.ResourceWithImportState).ImportState(ctx, resource.ImportStateRequest{ID: "group-1/44444444-4444-4444-8444-444444444444"}, importResp)
+	r.(resource.ResourceWithImportState).ImportState(ctx, resource.ImportStateRequest{ID: "eeeeeeee-0000-4000-8000-000000000001/44444444-4444-4444-8444-444444444444"}, importResp)
 	require.False(t, importResp.Diagnostics.HasError(), "%v", importResp.Diagnostics)
 
 	var groupID, userID, id string
 	require.False(t, importResp.State.GetAttribute(ctx, path.Root("group_id"), &groupID).HasError())
 	require.False(t, importResp.State.GetAttribute(ctx, path.Root("user_id"), &userID).HasError())
 	require.False(t, importResp.State.GetAttribute(ctx, path.Root("id"), &id).HasError())
-	assert.Equal(t, "group-1", groupID)
+	assert.Equal(t, "eeeeeeee-0000-4000-8000-000000000001", groupID)
 	assert.Equal(t, "44444444-4444-4444-8444-444444444444", userID)
-	assert.Equal(t, "group-1/44444444-4444-4444-8444-444444444444", id)
+	assert.Equal(t, "eeeeeeee-0000-4000-8000-000000000001/44444444-4444-4444-8444-444444444444", id)
 }
 
 func TestGroupMembershipResource_ImportState_InvalidFormat(t *testing.T) {
@@ -429,7 +429,7 @@ func TestGroupMembershipResource_Create_ConcurrentAddsSameUser(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			groupID := fmt.Sprintf("group-%d", i)
+			groupID := fmt.Sprintf("eeeeeeee-0000-4000-8000-%012d", i)
 			r, err := newConfiguredGroupMembership(c)
 			if err != nil {
 				errs[i] = err
@@ -460,7 +460,7 @@ func TestGroupMembershipResource_Create_ConcurrentAddsSameUser(t *testing.T) {
 	}
 	wantGroups := make([]string, n)
 	for i := 0; i < n; i++ {
-		wantGroups[i] = fmt.Sprintf("group-%d", i)
+		wantGroups[i] = fmt.Sprintf("eeeeeeee-0000-4000-8000-%012d", i)
 	}
 	assert.ElementsMatch(t, wantGroups, gotGroups, "every concurrently created membership must survive")
 }
@@ -471,7 +471,7 @@ func TestGroupMembershipResource_Create_ConcurrentAddsSameUser(t *testing.T) {
 func TestGroupMembershipResource_ConcurrentMixedAddsAndRemoves(t *testing.T) {
 	ctx := context.Background()
 	userExists := true
-	initial := []string{"group-0", "group-1", "group-2", "group-3", "group-4"}
+	initial := []string{"eeeeeeee-0000-4000-8000-000000000000", "eeeeeeee-0000-4000-8000-000000000001", "eeeeeeee-0000-4000-8000-000000000002", "eeeeeeee-0000-4000-8000-000000000003", "eeeeeeee-0000-4000-8000-000000000004"}
 	c, _ := groupMembershipTestServer(t, "44444444-4444-4444-8444-444444444444", initial, &userExists)
 	sch := groupMembershipSchema(t, resources.NewGroupMembershipResource())
 
@@ -483,7 +483,7 @@ func TestGroupMembershipResource_ConcurrentMixedAddsAndRemoves(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			groupID := fmt.Sprintf("group-%d", i)
+			groupID := fmt.Sprintf("eeeeeeee-0000-4000-8000-%012d", i)
 			r, err := newConfiguredGroupMembership(c)
 			if err != nil {
 				errs[i] = err
@@ -500,7 +500,7 @@ func TestGroupMembershipResource_ConcurrentMixedAddsAndRemoves(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			groupID := fmt.Sprintf("group-%d", i)
+			groupID := fmt.Sprintf("eeeeeeee-0000-4000-8000-%012d", i)
 			r, err := newConfiguredGroupMembership(c)
 			if err != nil {
 				errs[i] = err
@@ -529,7 +529,7 @@ func TestGroupMembershipResource_ConcurrentMixedAddsAndRemoves(t *testing.T) {
 	for _, g := range final.UserGroups {
 		gotGroups = append(gotGroups, g.ID)
 	}
-	assert.ElementsMatch(t, []string{"group-5", "group-6", "group-7", "group-8", "group-9"}, gotGroups)
+	assert.ElementsMatch(t, []string{"eeeeeeee-0000-4000-8000-000000000005", "eeeeeeee-0000-4000-8000-000000000006", "eeeeeeee-0000-4000-8000-000000000007", "eeeeeeee-0000-4000-8000-000000000008", "eeeeeeee-0000-4000-8000-000000000009"}, gotGroups)
 }
 
 // TestGroupMembershipResource_Read_ErrorsOnMissingEndpoint proves that Read
@@ -542,7 +542,7 @@ func TestGroupMembershipResource_Read_ErrorsOnMissingEndpoint(t *testing.T) {
 	r := configureGroupMembership(t, c)
 	sch := groupMembershipSchema(t, r)
 
-	state := groupMembershipDeleteState(ctx, sch, "group-1", "44444444-4444-4444-8444-444444444444")
+	state := groupMembershipDeleteState(ctx, sch, "eeeeeeee-0000-4000-8000-000000000001", "44444444-4444-4444-8444-444444444444")
 	readResp := &resource.ReadResponse{State: state}
 	r.Read(ctx, resource.ReadRequest{State: state}, readResp)
 
@@ -558,7 +558,7 @@ func TestGroupMembershipResource_Delete_ErrorsOnMissingEndpoint(t *testing.T) {
 	r := configureGroupMembership(t, c)
 	sch := groupMembershipSchema(t, r)
 
-	state := groupMembershipDeleteState(ctx, sch, "group-1", "44444444-4444-4444-8444-444444444444")
+	state := groupMembershipDeleteState(ctx, sch, "eeeeeeee-0000-4000-8000-000000000001", "44444444-4444-4444-8444-444444444444")
 	deleteResp := &resource.DeleteResponse{}
 	r.Delete(ctx, resource.DeleteRequest{State: state}, deleteResp)
 
@@ -593,7 +593,7 @@ func TestGroupMembershipResource_Read_ErrorsOnGenericNotFound(t *testing.T) {
 	r := configureGroupMembership(t, c)
 	sch := groupMembershipSchema(t, r)
 
-	state := groupMembershipDeleteState(ctx, sch, "group-1", "44444444-4444-4444-8444-444444444444")
+	state := groupMembershipDeleteState(ctx, sch, "eeeeeeee-0000-4000-8000-000000000001", "44444444-4444-4444-8444-444444444444")
 	readResp := &resource.ReadResponse{State: state}
 	r.Read(ctx, resource.ReadRequest{State: state}, readResp)
 
@@ -612,7 +612,7 @@ func TestGroupMembershipResource_Delete_PUT404_UserStillPresent_ReturnsError(t *
 		switch r.Method {
 		case http.MethodGet:
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(usersGroupsFakeUserBody("44444444-4444-4444-8444-444444444444", []client.UserGroup{{ID: "group-1"}}))
+			_ = json.NewEncoder(w).Encode(usersGroupsFakeUserBody("44444444-4444-4444-8444-444444444444", []client.UserGroup{{ID: "eeeeeeee-0000-4000-8000-000000000001"}}))
 		case http.MethodPut:
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"error": "Not Found"}`))
@@ -626,7 +626,7 @@ func TestGroupMembershipResource_Delete_PUT404_UserStillPresent_ReturnsError(t *
 
 	r := configureGroupMembership(t, c)
 	sch := groupMembershipSchema(t, r)
-	state := groupMembershipDeleteState(ctx, sch, "group-1", "44444444-4444-4444-8444-444444444444")
+	state := groupMembershipDeleteState(ctx, sch, "eeeeeeee-0000-4000-8000-000000000001", "44444444-4444-4444-8444-444444444444")
 
 	deleteResp := &resource.DeleteResponse{}
 	r.Delete(ctx, resource.DeleteRequest{State: state}, deleteResp)
@@ -647,7 +647,7 @@ func TestGroupMembershipResource_Delete_PUT404_UserConfirmedGone_Succeeds(t *tes
 			getCount++
 			if getCount == 1 {
 				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(usersGroupsFakeUserBody("44444444-4444-4444-8444-444444444444", []client.UserGroup{{ID: "group-1"}}))
+				_ = json.NewEncoder(w).Encode(usersGroupsFakeUserBody("44444444-4444-4444-8444-444444444444", []client.UserGroup{{ID: "eeeeeeee-0000-4000-8000-000000000001"}}))
 				return
 			}
 			w.WriteHeader(http.StatusNotFound)
@@ -665,7 +665,7 @@ func TestGroupMembershipResource_Delete_PUT404_UserConfirmedGone_Succeeds(t *tes
 
 	r := configureGroupMembership(t, c)
 	sch := groupMembershipSchema(t, r)
-	state := groupMembershipDeleteState(ctx, sch, "group-1", "44444444-4444-4444-8444-444444444444")
+	state := groupMembershipDeleteState(ctx, sch, "eeeeeeee-0000-4000-8000-000000000001", "44444444-4444-4444-8444-444444444444")
 
 	deleteResp := &resource.DeleteResponse{}
 	r.Delete(ctx, resource.DeleteRequest{State: state}, deleteResp)

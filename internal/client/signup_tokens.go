@@ -51,8 +51,10 @@ type SignupTokenCreateRequest struct {
 // The POST is never retried. When the server accepted it but the answer holds
 // no usable ID, the error wraps ErrResultUnread and the result is nil: a token
 // may exist that this client cannot name. When the ID is usable but the token
-// value is missing, the error wraps ErrResultUnread and the result is
-// returned, so the caller can record the ID of the token that exists.
+// value is missing, or a group it lists fails the ID check (the error then
+// also wraps ErrInvalidIdentifier, and the result lists no groups), the error
+// wraps ErrResultUnread and the result is returned, so the caller can record
+// the ID of the token that exists.
 func (c *Client) CreateSignupToken(ctx context.Context, req *SignupTokenCreateRequest) (*SignupToken, error) {
 	body := *req
 	if body.UserGroupIDs == nil {
@@ -70,8 +72,14 @@ func (c *Client) CreateSignupToken(ctx context.Context, req *SignupTokenCreateRe
 	}
 
 	var result SignupToken
-	if err := json.Unmarshal(raw, &result); err != nil || ValidateUUID("signup token", result.ID) != nil {
+	if err := json.Unmarshal(raw, &result); err != nil || c.checkCreatedID("signup token", "", result.ID) != nil {
 		return nil, fmt.Errorf("signup token creation: %w: the response held no usable ID, so a token may have been created that this provider cannot name; it expires on its own", ErrResultUnread)
+	}
+	if err := c.checkGroupIDs(result.UserGroups); err != nil {
+		// The token exists and its ID is usable; the groups it joins are
+		// unknown, so none is returned.
+		result.UserGroups = nil
+		return &result, fmt.Errorf("signup token %s: %w", result.ID, unreadResult(err))
 	}
 	if result.Token == "" {
 		return &result, fmt.Errorf("signup token %s: %w: the response held no token value", result.ID, ErrResultUnread)
@@ -82,7 +90,19 @@ func (c *Client) CreateSignupToken(ctx context.Context, req *SignupTokenCreateRe
 // ListSignupTokens returns every signup token Pocket ID currently holds, with
 // its token value, in creation order. Expired tokens are not listed.
 func (c *Client) ListSignupTokens(ctx context.Context) ([]SignupToken, error) {
-	return listAll(ctx, c, "signup tokens", "/api/signup-tokens", url.Values{}, func(t SignupToken) string { return t.ID })
+	tokens, err := listAll(ctx, c, "signup tokens", "/api/signup-tokens", url.Values{}, func(t SignupToken) string { return t.ID })
+	if err != nil {
+		return nil, err
+	}
+	for i := range tokens {
+		if err := c.checkReturnedID("signup token", "", tokens[i].ID); err != nil {
+			return nil, err
+		}
+		if err := c.checkGroupIDs(tokens[i].UserGroups); err != nil {
+			return nil, err
+		}
+	}
+	return tokens, nil
 }
 
 // DeleteSignupToken deletes a signup token by ID. Pocket ID looks the token up

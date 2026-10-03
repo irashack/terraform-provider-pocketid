@@ -109,38 +109,38 @@ func (s *usersGroupsVerifyServer) start(t *testing.T) *client.Client {
 func TestClient_SetUserGroups_Verifies(t *testing.T) {
 	ctx := context.Background()
 	t.Run("exact", func(t *testing.T) {
-		s := &usersGroupsVerifyServer{existing: []string{"g1", "g2"}}
-		held, err := s.start(t).SetUserGroups(ctx, verifyUserID, []string{"g2", "g1"})
+		s := &usersGroupsVerifyServer{existing: []string{"bbbbbbbb-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"}}
+		held, err := s.start(t).SetUserGroups(ctx, verifyUserID, []string{"bbbbbbbb-0000-4000-8000-000000000002", "bbbbbbbb-0000-4000-8000-000000000001"})
 		require.NoError(t, err)
-		assert.ElementsMatch(t, []string{"g1", "g2"}, held)
+		assert.ElementsMatch(t, []string{"bbbbbbbb-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"}, held)
 	})
 	t.Run("empty", func(t *testing.T) {
-		s := &usersGroupsVerifyServer{existing: []string{"g1"}, current: []string{"g1"}}
+		s := &usersGroupsVerifyServer{existing: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, current: []string{"bbbbbbbb-0000-4000-8000-000000000001"}}
 		held, err := s.start(t).SetUserGroups(ctx, verifyUserID, nil)
 		require.NoError(t, err)
 		assert.Empty(t, held)
 	})
 	t.Run("missing_group_named", func(t *testing.T) {
-		s := &usersGroupsVerifyServer{existing: []string{"g1"}}
-		held, err := s.start(t).SetUserGroups(ctx, verifyUserID, []string{"g1", "gone"})
+		s := &usersGroupsVerifyServer{existing: []string{"bbbbbbbb-0000-4000-8000-000000000001"}}
+		held, err := s.start(t).SetUserGroups(ctx, verifyUserID, []string{"bbbbbbbb-0000-4000-8000-000000000001", "gone"})
 		var mismatch *client.UserGroupsMismatchError
 		require.ErrorAs(t, err, &mismatch)
 		assert.Equal(t, []string{"gone"}, mismatch.Missing)
 		assert.Empty(t, mismatch.Unexpected)
 		assert.Contains(t, err.Error(), "gone")
-		assert.Equal(t, []string{"g1"}, held, "the held set is returned with the error")
+		assert.Equal(t, []string{"bbbbbbbb-0000-4000-8000-000000000001"}, held, "the held set is returned with the error")
 		assert.False(t, errors.Is(err, client.ErrResultUnread), "the result is known")
 	})
 	t.Run("unexpected_group_named", func(t *testing.T) {
-		s := &usersGroupsVerifyServer{existing: []string{"g1"}, extraHeld: []string{"other"}}
-		_, err := s.start(t).SetUserGroups(ctx, verifyUserID, []string{"g1"})
+		s := &usersGroupsVerifyServer{existing: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, extraHeld: []string{"bbbbbbbb-0000-4000-8000-0000000000ff"}}
+		_, err := s.start(t).SetUserGroups(ctx, verifyUserID, []string{"bbbbbbbb-0000-4000-8000-000000000001"})
 		var mismatch *client.UserGroupsMismatchError
 		require.ErrorAs(t, err, &mismatch)
-		assert.Equal(t, []string{"other"}, mismatch.Unexpected)
+		assert.Equal(t, []string{"bbbbbbbb-0000-4000-8000-0000000000ff"}, mismatch.Unexpected)
 	})
 	t.Run("unreadable_response_read_back", func(t *testing.T) {
-		s := &usersGroupsVerifyServer{existing: []string{"g1"}, unreadablePut: true}
-		_, err := s.start(t).SetUserGroups(ctx, verifyUserID, []string{"g1", "gone"})
+		s := &usersGroupsVerifyServer{existing: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, unreadablePut: true}
+		_, err := s.start(t).SetUserGroups(ctx, verifyUserID, []string{"bbbbbbbb-0000-4000-8000-000000000001", "gone"})
 		var mismatch *client.UserGroupsMismatchError
 		require.ErrorAs(t, err, &mismatch, "a GET reads the result back and the comparison still runs")
 		assert.Equal(t, []string{"gone"}, mismatch.Missing)
@@ -148,8 +148,8 @@ func TestClient_SetUserGroups_Verifies(t *testing.T) {
 		assert.Equal(t, 1, s.puts, "the PUT is never repeated")
 	})
 	t.Run("unreadable_response_and_read_fails", func(t *testing.T) {
-		s := &usersGroupsVerifyServer{existing: []string{"g1"}, unreadablePut: true, readFails: true}
-		_, err := s.start(t).SetUserGroups(ctx, verifyUserID, []string{"g1"})
+		s := &usersGroupsVerifyServer{existing: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, unreadablePut: true, readFails: true}
+		_, err := s.start(t).SetUserGroups(ctx, verifyUserID, []string{"bbbbbbbb-0000-4000-8000-000000000001"})
 		require.ErrorIs(t, err, client.ErrResultUnread)
 		assert.Equal(t, 1, s.puts)
 	})
@@ -161,7 +161,7 @@ func TestClient_SetUserGroups_Verifies(t *testing.T) {
 func TestClient_GroupMembershipChangesAreVerified(t *testing.T) {
 	ctx := context.Background()
 	t.Run("add_missing_group", func(t *testing.T) {
-		s := &usersGroupsVerifyServer{existing: []string{"g1"}, current: []string{"g1"}}
+		s := &usersGroupsVerifyServer{existing: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, current: []string{"bbbbbbbb-0000-4000-8000-000000000001"}}
 		err := s.start(t).AddUserToGroup(ctx, verifyUserID, "gone")
 		var mismatch *client.UserGroupsMismatchError
 		require.ErrorAs(t, err, &mismatch)
@@ -169,7 +169,7 @@ func TestClient_GroupMembershipChangesAreVerified(t *testing.T) {
 		assert.Contains(t, err.Error(), "gone")
 	})
 	t.Run("add_missing_group_unreadable_response", func(t *testing.T) {
-		s := &usersGroupsVerifyServer{existing: []string{"g1"}, current: []string{"g1"}, unreadablePut: true}
+		s := &usersGroupsVerifyServer{existing: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, current: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, unreadablePut: true}
 		err := s.start(t).AddUserToGroup(ctx, verifyUserID, "gone")
 		var mismatch *client.UserGroupsMismatchError
 		require.ErrorAs(t, err, &mismatch)
@@ -179,27 +179,27 @@ func TestClient_GroupMembershipChangesAreVerified(t *testing.T) {
 		// was made, but whether it took cannot be confirmed. The resource
 		// keeps the membership in state then
 		// (resources.TestGroupMembershipCreateUnverifiable).
-		s := &usersGroupsVerifyServer{existing: []string{"g1", "g2"}, current: []string{"g1"}, unreadablePut: true, failGetsFrom: 2}
-		err := s.start(t).AddUserToGroup(ctx, verifyUserID, "g2")
+		s := &usersGroupsVerifyServer{existing: []string{"bbbbbbbb-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"}, current: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, unreadablePut: true, failGetsFrom: 2}
+		err := s.start(t).AddUserToGroup(ctx, verifyUserID, "bbbbbbbb-0000-4000-8000-000000000002")
 		require.ErrorIs(t, err, client.ErrResultUnread)
 		assert.Equal(t, 1, s.puts)
 	})
 	t.Run("add_existing_group", func(t *testing.T) {
-		s := &usersGroupsVerifyServer{existing: []string{"g1", "g2"}, current: []string{"g1"}}
-		require.NoError(t, s.start(t).AddUserToGroup(ctx, verifyUserID, "g2"))
-		assert.ElementsMatch(t, []string{"g1", "g2"}, s.current)
+		s := &usersGroupsVerifyServer{existing: []string{"bbbbbbbb-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"}, current: []string{"bbbbbbbb-0000-4000-8000-000000000001"}}
+		require.NoError(t, s.start(t).AddUserToGroup(ctx, verifyUserID, "bbbbbbbb-0000-4000-8000-000000000002"))
+		assert.ElementsMatch(t, []string{"bbbbbbbb-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"}, s.current)
 	})
 	t.Run("remove_not_applied", func(t *testing.T) {
-		s := &usersGroupsVerifyServer{existing: []string{"g1", "g2"}, current: []string{"g1", "g2"}, extraHeld: []string{"g2"}}
-		err := s.start(t).RemoveUserFromGroup(ctx, verifyUserID, "g2")
+		s := &usersGroupsVerifyServer{existing: []string{"bbbbbbbb-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"}, current: []string{"bbbbbbbb-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"}, extraHeld: []string{"bbbbbbbb-0000-4000-8000-000000000002"}}
+		err := s.start(t).RemoveUserFromGroup(ctx, verifyUserID, "bbbbbbbb-0000-4000-8000-000000000002")
 		var mismatch *client.UserGroupsMismatchError
 		require.ErrorAs(t, err, &mismatch)
-		assert.Equal(t, []string{"g2"}, mismatch.Unexpected)
+		assert.Equal(t, []string{"bbbbbbbb-0000-4000-8000-000000000002"}, mismatch.Unexpected)
 	})
 	t.Run("remove_applied", func(t *testing.T) {
-		s := &usersGroupsVerifyServer{existing: []string{"g1", "g2"}, current: []string{"g1", "g2"}}
-		require.NoError(t, s.start(t).RemoveUserFromGroup(ctx, verifyUserID, "g2"))
-		assert.Equal(t, []string{"g1"}, s.current)
+		s := &usersGroupsVerifyServer{existing: []string{"bbbbbbbb-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"}, current: []string{"bbbbbbbb-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"}}
+		require.NoError(t, s.start(t).RemoveUserFromGroup(ctx, verifyUserID, "bbbbbbbb-0000-4000-8000-000000000002"))
+		assert.Equal(t, []string{"bbbbbbbb-0000-4000-8000-000000000001"}, s.current)
 	})
 }
 
@@ -212,8 +212,8 @@ var usersGroupsMalformedUserBodies = map[string]string{
 	"no_user_groups":   `{"id":"` + verifyUserID + `"}`,
 	"other_user":       `{"id":"88888888-8888-4888-8888-888888888888","userGroups":[]}`,
 	"no_id":            `{"userGroups":[]}`,
-	"groups_not_list":  `{"id":"` + verifyUserID + `","userGroups":"g1"}`,
-	"group_without_id": `{"id":"` + verifyUserID + `","userGroups":[{"name":"g1"}]}`,
+	"groups_not_list":  `{"id":"` + verifyUserID + `","userGroups":"bbbbbbbb-0000-4000-8000-000000000001"}`,
+	"group_without_id": `{"id":"` + verifyUserID + `","userGroups":[{"name":"bbbbbbbb-0000-4000-8000-000000000001"}]}`,
 }
 
 // A read-back after an unreadable PUT response is evidence only when it shows
@@ -223,7 +223,7 @@ func TestClient_UserGroupsReadBackRequiresListedGroups(t *testing.T) {
 	ctx := context.Background()
 	for name, body := range usersGroupsMalformedUserBodies {
 		t.Run("set_"+name, func(t *testing.T) {
-			s := &usersGroupsVerifyServer{existing: []string{"g1"}, current: []string{"g1"}, unreadablePut: true, getBody: body}
+			s := &usersGroupsVerifyServer{existing: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, current: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, unreadablePut: true, getBody: body}
 			_, err := s.start(t).SetUserGroups(ctx, verifyUserID, nil)
 			require.ErrorIs(t, err, client.ErrResultUnread)
 			assert.Equal(t, 1, s.puts)
@@ -231,38 +231,38 @@ func TestClient_UserGroupsReadBackRequiresListedGroups(t *testing.T) {
 		t.Run("remove_"+name, func(t *testing.T) {
 			// The first GET (the snapshot) is a proper answer; the read-back
 			// after the unreadable PUT is not.
-			s := &usersGroupsVerifyServer{existing: []string{"g1"}, current: []string{"g1"}, unreadablePut: true, getBody: body, getBodyFrom: 2}
-			err := s.start(t).RemoveUserFromGroup(ctx, verifyUserID, "g1")
+			s := &usersGroupsVerifyServer{existing: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, current: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, unreadablePut: true, getBody: body, getBodyFrom: 2}
+			err := s.start(t).RemoveUserFromGroup(ctx, verifyUserID, "bbbbbbbb-0000-4000-8000-000000000001")
 			require.ErrorIs(t, err, client.ErrResultUnread, "a removal is not reported done without evidence")
 		})
 		t.Run("snapshot_"+name, func(t *testing.T) {
 			// The list written is built from the snapshot; one that does not
 			// show the groups must not become a write that drops them.
-			s := &usersGroupsVerifyServer{existing: []string{"g1", "g2"}, current: []string{"g1"}, getBody: body}
-			require.Error(t, s.start(t).AddUserToGroup(ctx, verifyUserID, "g2"))
+			s := &usersGroupsVerifyServer{existing: []string{"bbbbbbbb-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"}, current: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, getBody: body}
+			require.Error(t, s.start(t).AddUserToGroup(ctx, verifyUserID, "bbbbbbbb-0000-4000-8000-000000000002"))
 			assert.Zero(t, s.puts, "nothing is written")
-			assert.Equal(t, []string{"g1"}, s.current)
+			assert.Equal(t, []string{"bbbbbbbb-0000-4000-8000-000000000001"}, s.current)
 		})
 		t.Run("membership_read_"+name, func(t *testing.T) {
 			s := &usersGroupsVerifyServer{getBody: body}
-			_, err := s.start(t).UserHasGroupMembership(ctx, verifyUserID, "g1")
+			_, err := s.start(t).UserHasGroupMembership(ctx, verifyUserID, "bbbbbbbb-0000-4000-8000-000000000001")
 			require.Error(t, err)
 		})
 	}
 	t.Run("explicit_null_is_none", func(t *testing.T) {
-		s := &usersGroupsVerifyServer{existing: []string{"g1"}, current: []string{"g1"}, unreadablePut: true,
+		s := &usersGroupsVerifyServer{existing: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, current: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, unreadablePut: true,
 			getBody: `{"id":"` + verifyUserID + `","userGroups":null}`}
 		held, err := s.start(t).SetUserGroups(ctx, verifyUserID, nil)
 		require.NoError(t, err)
 		assert.Empty(t, held)
 	})
 	// A PUT response that does not list the groups is followed by a read.
-	for name, body := range map[string]string{"empty_object": `{}`, "groups_not_list": `{"userGroups":"g1"}`, "not_json": `<html>ok</html>`} {
+	for name, body := range map[string]string{"empty_object": `{}`, "groups_not_list": `{"userGroups":"bbbbbbbb-0000-4000-8000-000000000001"}`, "not_json": `<html>ok</html>`} {
 		t.Run("put_"+name, func(t *testing.T) {
-			s := &usersGroupsVerifyServer{existing: []string{"g1"}, putBody: body}
-			held, err := s.start(t).SetUserGroups(ctx, verifyUserID, []string{"g1"})
+			s := &usersGroupsVerifyServer{existing: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, putBody: body}
+			held, err := s.start(t).SetUserGroups(ctx, verifyUserID, []string{"bbbbbbbb-0000-4000-8000-000000000001"})
 			require.NoError(t, err)
-			assert.Equal(t, []string{"g1"}, held)
+			assert.Equal(t, []string{"bbbbbbbb-0000-4000-8000-000000000001"}, held)
 			assert.Equal(t, 1, s.gets, "the result was read back")
 		})
 	}
@@ -284,39 +284,39 @@ func TestClient_UserGroupsPutEvidenceMustNameTheUser(t *testing.T) {
 		t.Run("remove_not_applied_"+name, func(t *testing.T) {
 			// The server did not remove g2 (a concurrent writer held it), and
 			// the bogus response claims nobody is in any group.
-			s := &usersGroupsVerifyServer{existing: []string{"g1", "g2"}, current: []string{"g1", "g2"}, extraHeld: []string{"g2"}, putBody: body}
-			err := s.start(t).RemoveUserFromGroup(ctx, verifyUserID, "g2")
+			s := &usersGroupsVerifyServer{existing: []string{"bbbbbbbb-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"}, current: []string{"bbbbbbbb-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"}, extraHeld: []string{"bbbbbbbb-0000-4000-8000-000000000002"}, putBody: body}
+			err := s.start(t).RemoveUserFromGroup(ctx, verifyUserID, "bbbbbbbb-0000-4000-8000-000000000002")
 			var mismatch *client.UserGroupsMismatchError
 			require.ErrorAs(t, err, &mismatch, "the read-back, not the response, decides")
-			assert.Equal(t, []string{"g2"}, mismatch.Unexpected)
+			assert.Equal(t, []string{"bbbbbbbb-0000-4000-8000-000000000002"}, mismatch.Unexpected)
 			assert.Equal(t, 2, s.gets, "the snapshot and the read-back")
 			assert.Equal(t, 1, s.puts, "the PUT is never repeated")
 		})
 		t.Run("add_applied_"+name, func(t *testing.T) {
 			// The server added g2, and the bogus response lists nothing, which
 			// must not make a real addition look like a missing group.
-			s := &usersGroupsVerifyServer{existing: []string{"g1", "g2"}, current: []string{"g1"}, putBody: body}
-			require.NoError(t, s.start(t).AddUserToGroup(ctx, verifyUserID, "g2"))
+			s := &usersGroupsVerifyServer{existing: []string{"bbbbbbbb-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"}, current: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, putBody: body}
+			require.NoError(t, s.start(t).AddUserToGroup(ctx, verifyUserID, "bbbbbbbb-0000-4000-8000-000000000002"))
 			assert.Equal(t, 2, s.gets)
 			assert.Equal(t, 1, s.puts)
 		})
 		t.Run("set_"+name, func(t *testing.T) {
-			s := &usersGroupsVerifyServer{existing: []string{"g1"}, putBody: body}
-			held, err := s.start(t).SetUserGroups(ctx, verifyUserID, []string{"g1"})
+			s := &usersGroupsVerifyServer{existing: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, putBody: body}
+			held, err := s.start(t).SetUserGroups(ctx, verifyUserID, []string{"bbbbbbbb-0000-4000-8000-000000000001"})
 			require.NoError(t, err)
-			assert.Equal(t, []string{"g1"}, held)
+			assert.Equal(t, []string{"bbbbbbbb-0000-4000-8000-000000000001"}, held)
 			assert.Equal(t, 1, s.gets, "the result was read back")
 		})
 		t.Run("unconfirmed_when_read_back_fails_"+name, func(t *testing.T) {
-			s := &usersGroupsVerifyServer{existing: []string{"g1"}, putBody: body, failGetsFrom: 1}
-			_, err := s.start(t).SetUserGroups(ctx, verifyUserID, []string{"g1"})
+			s := &usersGroupsVerifyServer{existing: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, putBody: body, failGetsFrom: 1}
+			_, err := s.start(t).SetUserGroups(ctx, verifyUserID, []string{"bbbbbbbb-0000-4000-8000-000000000001"})
 			require.ErrorIs(t, err, client.ErrResultUnread)
 			assert.Equal(t, 1, s.puts)
 		})
 	}
 	t.Run("error_does_not_echo_the_body", func(t *testing.T) {
-		s := &usersGroupsVerifyServer{existing: []string{"g1"}, putBody: `{"id":"` + other + `","userGroups":[{"id":"","name":"canary-text"}]}`, failGetsFrom: 1}
-		_, err := s.start(t).SetUserGroups(ctx, verifyUserID, []string{"g1"})
+		s := &usersGroupsVerifyServer{existing: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, putBody: `{"id":"` + other + `","userGroups":[{"id":"","name":"canary-text"}]}`, failGetsFrom: 1}
+		_, err := s.start(t).SetUserGroups(ctx, verifyUserID, []string{"bbbbbbbb-0000-4000-8000-000000000001"})
 		require.Error(t, err)
 		assert.NotContains(t, err.Error(), "canary-text")
 	})
@@ -333,18 +333,22 @@ func TestClient_GroupMembershipChangeReportsWhetherTheWriteWasAttempted(t *testi
 		run  func(*client.Client) error
 	}
 	changes := []change{
-		{"add", func(c *client.Client) error { return c.AddUserToGroup(ctx, verifyUserID, "g2") }},
-		{"remove", func(c *client.Client) error { return c.RemoveUserFromGroup(ctx, verifyUserID, "g1") }},
+		{"add", func(c *client.Client) error {
+			return c.AddUserToGroup(ctx, verifyUserID, "bbbbbbbb-0000-4000-8000-000000000002")
+		}},
+		{"remove", func(c *client.Client) error {
+			return c.RemoveUserFromGroup(ctx, verifyUserID, "bbbbbbbb-0000-4000-8000-000000000001")
+		}},
 	}
 	for _, ch := range changes {
 		t.Run(ch.name+"_preflight_failures", func(t *testing.T) {
 			for name, s := range map[string]*usersGroupsVerifyServer{
-				"forbidden":    {existing: []string{"g1", "g2"}, current: []string{"g1"}, readFails: true},
-				"server_error": {existing: []string{"g1", "g2"}, current: []string{"g1"}, readFails: true, getStatus: http.StatusBadGateway},
-				"empty_object": {existing: []string{"g1", "g2"}, current: []string{"g1"}, getBody: `{}`},
-				"other_user":   {existing: []string{"g1", "g2"}, current: []string{"g1"}, getBody: `{"id":"88888888-8888-4888-8888-888888888888","userGroups":[]}`},
-				"not_json":     {existing: []string{"g1", "g2"}, current: []string{"g1"}, getBody: `<html>ok</html>`},
-				"group_no_id":  {existing: []string{"g1", "g2"}, current: []string{"g1"}, getBody: `{"id":"` + verifyUserID + `","userGroups":[{}]}`},
+				"forbidden":    {existing: []string{"bbbbbbbb-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"}, current: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, readFails: true},
+				"server_error": {existing: []string{"bbbbbbbb-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"}, current: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, readFails: true, getStatus: http.StatusBadGateway},
+				"empty_object": {existing: []string{"bbbbbbbb-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"}, current: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, getBody: `{}`},
+				"other_user":   {existing: []string{"bbbbbbbb-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"}, current: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, getBody: `{"id":"88888888-8888-4888-8888-888888888888","userGroups":[]}`},
+				"not_json":     {existing: []string{"bbbbbbbb-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"}, current: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, getBody: `<html>ok</html>`},
+				"group_no_id":  {existing: []string{"bbbbbbbb-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"}, current: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, getBody: `{"id":"` + verifyUserID + `","userGroups":[{}]}`},
 			} {
 				t.Run(name, func(t *testing.T) {
 					c := s.start(t)
@@ -360,13 +364,13 @@ func TestClient_GroupMembershipChangeReportsWhetherTheWriteWasAttempted(t *testi
 	}
 	t.Run("add_after_the_write_was_sent", func(t *testing.T) {
 		for name, s := range map[string]*usersGroupsVerifyServer{
-			"put_server_error":               {existing: []string{"g1", "g2"}, current: []string{"g1"}, putStatus: http.StatusBadGateway},
-			"put_rejected":                   {existing: []string{"g1", "g2"}, current: []string{"g1"}, putStatus: http.StatusBadRequest},
-			"unreadable_and_no_read":         {existing: []string{"g1", "g2"}, current: []string{"g1"}, unreadablePut: true, failGetsFrom: 2},
-			"unreadable_read_back_malformed": {existing: []string{"g1", "g2"}, current: []string{"g1"}, unreadablePut: true, getBody: `{}`, getBodyFrom: 2},
+			"put_server_error":               {existing: []string{"bbbbbbbb-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"}, current: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, putStatus: http.StatusBadGateway},
+			"put_rejected":                   {existing: []string{"bbbbbbbb-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"}, current: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, putStatus: http.StatusBadRequest},
+			"unreadable_and_no_read":         {existing: []string{"bbbbbbbb-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"}, current: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, unreadablePut: true, failGetsFrom: 2},
+			"unreadable_read_back_malformed": {existing: []string{"bbbbbbbb-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"}, current: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, unreadablePut: true, getBody: `{}`, getBodyFrom: 2},
 		} {
 			t.Run(name, func(t *testing.T) {
-				err := s.start(t).AddUserToGroup(ctx, verifyUserID, "g2")
+				err := s.start(t).AddUserToGroup(ctx, verifyUserID, "bbbbbbbb-0000-4000-8000-000000000002")
 				require.Error(t, err)
 				assert.NotErrorIs(t, err, client.ErrWriteNotAttempted)
 				assert.Equal(t, 1, s.puts)
@@ -374,8 +378,8 @@ func TestClient_GroupMembershipChangeReportsWhetherTheWriteWasAttempted(t *testi
 		}
 	})
 	t.Run("remove_after_the_write_was_sent", func(t *testing.T) {
-		s := &usersGroupsVerifyServer{existing: []string{"g1"}, current: []string{"g1"}, putStatus: http.StatusBadGateway}
-		err := s.start(t).RemoveUserFromGroup(ctx, verifyUserID, "g1")
+		s := &usersGroupsVerifyServer{existing: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, current: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, putStatus: http.StatusBadGateway}
+		err := s.start(t).RemoveUserFromGroup(ctx, verifyUserID, "bbbbbbbb-0000-4000-8000-000000000001")
 		require.Error(t, err)
 		assert.NotErrorIs(t, err, client.ErrWriteNotAttempted)
 		assert.Equal(t, 1, s.puts)
@@ -388,15 +392,15 @@ func TestClient_GroupMembershipChangeReportsWhetherTheWriteWasAttempted(t *testi
 		defer server.Close()
 		c, err := client.NewClient(server.URL, "test-token", false, 5)
 		require.NoError(t, err)
-		err = c.AddUserToGroup(ctx, verifyUserID, "g1")
+		err = c.AddUserToGroup(ctx, verifyUserID, "bbbbbbbb-0000-4000-8000-000000000001")
 		require.Error(t, err)
 		assert.ErrorIs(t, err, client.ErrWriteNotAttempted)
 		assert.True(t, client.IsUserNotFound(err), "the cause is still visible")
-		assert.NoError(t, c.RemoveUserFromGroup(ctx, verifyUserID, "g1"), "removing from a missing user is already done")
+		assert.NoError(t, c.RemoveUserFromGroup(ctx, verifyUserID, "bbbbbbbb-0000-4000-8000-000000000001"), "removing from a missing user is already done")
 	})
 	t.Run("nothing_to_write_is_no_error", func(t *testing.T) {
-		s := &usersGroupsVerifyServer{existing: []string{"g1"}, current: []string{"g1"}}
-		require.NoError(t, s.start(t).AddUserToGroup(ctx, verifyUserID, "g1"))
+		s := &usersGroupsVerifyServer{existing: []string{"bbbbbbbb-0000-4000-8000-000000000001"}, current: []string{"bbbbbbbb-0000-4000-8000-000000000001"}}
+		require.NoError(t, s.start(t).AddUserToGroup(ctx, verifyUserID, "bbbbbbbb-0000-4000-8000-000000000001"))
 		assert.Zero(t, s.puts)
 	})
 }

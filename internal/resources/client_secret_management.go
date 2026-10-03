@@ -231,7 +231,7 @@ func (r *clientResource) revokeClientSecret(ctx context.Context, clientID, secre
 	if remaining, listErr := r.client.ListClientSecrets(ctx, clientID); listErr == nil {
 		present := false
 		for _, secret := range remaining {
-			if secret.ID == secretID {
+			if client.SameUUID(secret.ID, secretID) {
 				present = true
 				break
 			}
@@ -391,7 +391,7 @@ func (r *clientResource) checkUncertainGeneration(ctx context.Context, clientID 
 	}
 	var unaccounted []client.ClientSecretMetadata
 	for _, secret := range secrets {
-		if !slices.Contains(marker.KnownSecrets, secret.ID) {
+		if !slices.ContainsFunc(marker.KnownSecrets, func(known string) bool { return client.SameUUID(known, secret.ID) }) {
 			unaccounted = append(unaccounted, secret)
 		}
 	}
@@ -461,7 +461,7 @@ func (r *clientResource) heldSecretPresent(ctx context.Context, state clientReso
 	}
 	if id := state.ClientSecretID; !id.IsNull() && !id.IsUnknown() && id.ValueString() != "" {
 		for _, secret := range secrets {
-			if secret.ID == id.ValueString() {
+			if client.SameUUID(secret.ID, id.ValueString()) {
 				return true, nil
 			}
 		}

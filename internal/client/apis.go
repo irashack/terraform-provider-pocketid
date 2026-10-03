@@ -128,11 +128,11 @@ func (c *Client) CreateAPI(ctx context.Context, req *APICreateRequest) (*API, er
 // containsKey reports whether any value contains the API key this client
 // sends. It is false for a nil client or one without a key.
 func (c *Client) containsKey(values ...string) bool {
-	if c == nil || c.apiToken == "" {
+	if c == nil {
 		return false
 	}
 	for _, value := range values {
-		if strings.Contains(value, c.apiToken) {
+		if c.reflectsKey(value) {
 			return true
 		}
 	}
@@ -152,19 +152,13 @@ func (c *Client) ContainsAPIKey(values ...string) bool {
 // a diagnostic: a UUID that does not contain the API key this client sends.
 // The error is fixed text and never includes the value.
 func (c *Client) CheckAPIIdentifier(id string) error {
-	if c.containsKey(id) {
-		return fmt.Errorf("%w: the API ID contains the API key this provider sends", ErrInvalidIdentifier)
-	}
-	return ValidateUUID(apiKind, id)
+	return c.ValidateIdentifier(apiKind, id)
 }
 
 // CheckClientIdentifier is CheckAPIIdentifier for an OIDC client ID, which
 // must also follow Pocket ID's rule for client IDs (ValidateClientID).
 func (c *Client) CheckClientIdentifier(id string) error {
-	if c.containsKey(id) {
-		return fmt.Errorf("%w: the OIDC client ID contains the API key this provider sends", ErrInvalidIdentifier)
-	}
-	return ValidateClientID(id)
+	return c.ValidateIdentifier(kindOIDCClient, id)
 }
 
 // apiSegment returns an API ID escaped for use as one path segment after
@@ -184,43 +178,19 @@ func (c *Client) clientSegment(id string) (string, error) {
 	return url.PathEscape(id), nil
 }
 
-// apiCheckReturnedID checks an identifier that came back in a response before
-// anything uses it, in a path, a diagnostic or state: it must not contain the
-// API key this client sends (a server or proxy that reflects the credential
-// must not see it spread; Pocket ID accepts static keys of 16 or more
-// characters, so a key can look like a UUID), it must be the addressed ID when
-// the request addressed one, and otherwise a UUID. The errors are fixed text:
-// the value is never included. It has the rules of the foundation's
-// checkReturnedID and is replaced by it at integration.
-func (c *Client) apiCheckReturnedID(kind, addressed, returned string) error {
-	if c.containsKey(returned) {
-		return fmt.Errorf("%w: an %s ID in the response contains the API key this provider sent", ErrInvalidIdentifier, kind)
-	}
-	if addressed != "" {
-		if returned != addressed {
-			return fmt.Errorf("%w: the %s ID in the response is not the one requested", ErrInvalidIdentifier, kind)
-		}
-		return nil
-	}
-	if !uuidPattern.MatchString(returned) {
-		return fmt.Errorf("%w: an %s ID in the response is not a UUID", ErrInvalidIdentifier, kind)
-	}
-	return nil
-}
-
 // apiCheckResponse checks an API the server returned: every identifier (its
 // own ID, equal to addressed when the request addressed it, and its
 // permissions' IDs) and every string field that reaches non-sensitive state or
 // a diagnostic (name, resource identifier, creation time, and each permission's
 // key, name and description) must not contain the API key.
 func (c *Client) apiCheckResponse(api *API, addressed string) error {
-	if err := c.apiCheckReturnedID(apiKind, addressed, api.ID); err != nil {
+	if err := c.checkReturnedID(apiKind, addressed, api.ID); err != nil {
 		return err
 	}
 	texts := []string{api.Name, api.Resource, api.CreatedAt}
 	for i := range api.Permissions {
 		p := &api.Permissions[i]
-		if err := c.apiCheckReturnedID("API permission", "", p.ID); err != nil {
+		if err := c.checkReturnedID("API permission", "", p.ID); err != nil {
 			return err
 		}
 		texts = append(texts, p.Key, p.Name)
@@ -238,7 +208,7 @@ func (c *Client) apiCheckResponse(api *API, addressed string) error {
 func (c *Client) apiCheckPermissionIDs(lists ...[]string) error {
 	for _, ids := range lists {
 		for _, id := range ids {
-			if err := c.apiCheckReturnedID("API permission", "", id); err != nil {
+			if err := c.checkReturnedID("API permission", "", id); err != nil {
 				return err
 			}
 		}
@@ -475,7 +445,7 @@ func (c *Client) FindClientAPIGrant(ctx context.Context, clientID, apiID string)
 		return nil, err
 	}
 	for i := range grants {
-		if grants[i].API.ID == apiID && !grants[i].IsEmpty() {
+		if sameUUID(grants[i].API.ID, apiID) && !grants[i].IsEmpty() {
 			return &grants[i], nil
 		}
 	}

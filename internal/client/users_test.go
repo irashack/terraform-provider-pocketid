@@ -71,8 +71,8 @@ func TestClient_GetUser(t *testing.T) {
 		Disabled:  false,
 		Locale:    stringPtr("en"),
 		UserGroups: []client.UserGroup{
-			{ID: "group1", Name: "Group 1"},
-			{ID: "group2", Name: "Group 2"},
+			{ID: "cccccccc-0000-4000-8000-000000000001", Name: "Group 1"},
+			{ID: "cccccccc-0000-4000-8000-000000000002", Name: "Group 2"},
 		},
 	}
 
@@ -195,7 +195,7 @@ func TestClient_DeleteUser_Error(t *testing.T) {
 func TestClient_ListUsers(t *testing.T) {
 	expectedUsers := []client.User{
 		{
-			ID:        "user1",
+			ID:        "dddddddd-0000-4000-8000-000000000001",
 			Username:  "testuser1",
 			Email:     "test1@example.com",
 			FirstName: "Test",
@@ -204,7 +204,7 @@ func TestClient_ListUsers(t *testing.T) {
 			Disabled:  false,
 		},
 		{
-			ID:        "user2",
+			ID:        "dddddddd-0000-4000-8000-000000000002",
 			Username:  "testuser2",
 			Email:     "test2@example.com",
 			FirstName: "Test",

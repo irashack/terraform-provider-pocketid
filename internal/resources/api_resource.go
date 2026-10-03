@@ -418,7 +418,7 @@ func apiWriteStep(id string, write func() (*client.API, error)) (*client.API, er
 	if err != nil {
 		return nil, err
 	}
-	if api.ID != id {
+	if !client.SameUUID(api.ID, id) {
 		return nil, fmt.Errorf("%w: the response did not describe API %s", client.ErrResultUnread, id)
 	}
 	return api, nil
@@ -554,7 +554,7 @@ func (r *apiResource) apiReportUncertainCreate(ctx context.Context, resourceID s
 func (r *apiResource) apiFailedCreateStep(ctx context.Context, last *client.API, step string, cause error, resp *resource.CreateResponse) {
 	api := last
 	readNote := ""
-	if read, err := r.client.GetAPI(ctx, last.ID); err == nil && read.ID == last.ID {
+	if read, err := r.client.GetAPI(ctx, last.ID); err == nil && client.SameUUID(read.ID, last.ID) {
 		api = read
 	} else if err != nil {
 		readNote = " Its current settings could not be read back (" + err.Error() + "), so state shows what was last confirmed."
@@ -588,7 +588,7 @@ func (r *apiResource) Read(ctx context.Context, req resource.ReadRequest, resp *
 		resp.Diagnostics.AddError("Error reading API", fmt.Sprintf("Could not read API %s: %s", id, err))
 		return
 	}
-	if api.ID != id {
+	if !client.SameUUID(api.ID, id) {
 		resp.Diagnostics.AddError("Unexpected API response", fmt.Sprintf("Reading API %s returned a different or no API.", id))
 		return
 	}
@@ -637,10 +637,13 @@ func (r *apiResource) Update(ctx context.Context, req resource.UpdateRequest, re
 		resp.Diagnostics.AddError("Cannot update API", fmt.Sprintf("Could not read API %s before updating it: %s. No change was made.", id, err))
 		return
 	}
-	if api.ID != id {
+	if !client.SameUUID(api.ID, id) {
 		resp.Diagnostics.AddError("Cannot update API", fmt.Sprintf("Reading API %s before updating it returned a different or no API. No change was made.", id))
 		return
 	}
+	// The writes address the API the read described, in the server's own
+	// spelling of its ID.
+	id = api.ID
 
 	if api.Name != desired.Name {
 		api, err = apiWriteStep(id, func() (*client.API, error) {
@@ -689,7 +692,7 @@ func (r *apiResource) Update(ctx context.Context, req resource.UpdateRequest, re
 func (r *apiResource) apiFailedUpdateStep(ctx context.Context, id, step string, cause error, resp *resource.UpdateResponse) {
 	detail := fmt.Sprintf("Updating API %s failed while %s: %s.", id, step, cause)
 	read, err := r.client.GetAPI(ctx, id)
-	if err == nil && read.ID == id {
+	if err == nil && client.SameUUID(read.ID, id) {
 		model, diags := apiModelFromServer(read)
 		resp.Diagnostics.Append(diags...)
 		if !diags.HasError() {

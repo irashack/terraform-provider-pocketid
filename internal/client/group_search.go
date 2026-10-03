@@ -28,5 +28,12 @@ func (c *Client) SearchUserGroups(ctx context.Context, name string) ([]UserGroup
 	if name != "" {
 		query.Set("search", name)
 	}
-	return listAll(ctx, c, "user groups", "/api/user-groups", query, func(group UserGroup) string { return group.ID })
+	groups, err := listAll(ctx, c, "user groups", "/api/user-groups", query, func(group UserGroup) string { return group.ID })
+	if err != nil {
+		return nil, err
+	}
+	if err := c.checkUserGroups(groups); err != nil {
+		return nil, err
+	}
+	return groups, nil
 }

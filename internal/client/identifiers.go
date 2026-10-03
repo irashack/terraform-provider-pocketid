@@ -303,7 +303,8 @@ func isCIMDClientID(id string) bool {
 }
 
 // reflectsKey reports whether value contains the API key this client sends,
-// in the form the server receives it (see normalizeAPIKey).
+// in the form the server receives it (see normalizeAPIKey). It is false for a
+// nil client or one without a key.
 func (c *Client) reflectsKey(value string) bool {
-	return c.apiToken != "" && strings.Contains(value, c.apiToken)
+	return c != nil && c.apiToken != "" && strings.Contains(value, c.apiToken)
 }

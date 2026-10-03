@@ -151,6 +151,12 @@ func (c *Client) CreateClient(ctx context.Context, createReq *OIDCClientCreateRe
 	if result.CreatedSecret != nil && c.checkCreatedID("client secret", "", result.CreatedSecret.ID) != nil {
 		result.CreatedSecret.ID = ""
 	}
+	// A new client has no allowed groups yet, and callers set them with a
+	// separate request. Groups the response lists that fail the ID check are
+	// dropped rather than failing a create whose own ID is usable.
+	if c.checkGroupIDs(result.AllowedUserGroups) != nil {
+		result.AllowedUserGroups = nil
+	}
 	return &result, nil
 }
 
@@ -167,6 +173,9 @@ func (c *Client) GetClient(ctx context.Context, clientID string) (*OIDCClient, e
 
 	var result OIDCClient
 	if err := decodeResponse(body, &result); err != nil {
+		return nil, err
+	}
+	if err := c.checkOIDCClient(clientID, &result); err != nil {
 		return nil, err
 	}
 
@@ -188,6 +197,9 @@ func (c *Client) UpdateClient(ctx context.Context, clientID string, updateReq *O
 	if err := decodeResult(body, &result); err != nil {
 		return nil, err
 	}
+	if err := c.checkOIDCClient(clientID, &result); err != nil {
+		return nil, unreadResult(err)
+	}
 
 	return &result, nil
 }
@@ -205,7 +217,16 @@ func (c *Client) DeleteClient(ctx context.Context, clientID string) error {
 // ListClients returns every OIDC client, following all pages of
 // GET /api/oidc/clients (see listAll).
 func (c *Client) ListClients(ctx context.Context) ([]OIDCClient, error) {
-	return listAll(ctx, c, "OIDC clients", "/api/oidc/clients", nil, func(client OIDCClient) string { return client.ID })
+	clients, err := listAll(ctx, c, "OIDC clients", "/api/oidc/clients", nil, func(client OIDCClient) string { return client.ID })
+	if err != nil {
+		return nil, err
+	}
+	for i := range clients {
+		if err := c.checkOIDCClient("", &clients[i]); err != nil {
+			return nil, err
+		}
+	}
+	return clients, nil
 }
 
 // UpdateClientAllowedUserGroups replaces the user groups allowed to use an
@@ -246,6 +267,18 @@ func (c *Client) UpdateClientAllowedUserGroups(ctx context.Context, clientID str
 	}
 	if !present || json.Unmarshal(raw, &groups) != nil {
 		return nil, fmt.Errorf("allowed user groups of client %s: %w: the response did not list them", clientID, ErrResultUnread)
+	}
+	// The read-back must describe this client, and every group it lists must
+	// pass the ID check, before its groups are taken as the result.
+	var gotID string
+	if rawID, ok := fields["id"]; ok && json.Unmarshal(rawID, &gotID) != nil {
+		gotID = ""
+	}
+	if err := c.checkReturnedID(kindOIDCClient, clientID, gotID); err != nil {
+		return nil, fmt.Errorf("allowed user groups of client %s: %w", clientID, unreadResult(err))
+	}
+	if err := c.checkGroupIDs(groups); err != nil {
+		return nil, fmt.Errorf("allowed user groups of client %s: %w", clientID, unreadResult(err))
 	}
 	return userGroupIDs(groups), nil
 }

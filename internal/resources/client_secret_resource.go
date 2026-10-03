@@ -417,7 +417,7 @@ func (r *clientSecretResource) reportFailedCreate(ctx context.Context, clientID 
 // clientSecretListed reports whether a secret with this ID is in the list.
 func clientSecretListed(secrets []client.ClientSecretMetadata, id string) bool {
 	for _, secret := range secrets {
-		if secret.ID == id {
+		if client.SameUUID(secret.ID, id) {
 			return true
 		}
 	}
@@ -476,7 +476,7 @@ func (r *clientSecretResource) Read(ctx context.Context, req resource.ReadReques
 	}
 	var found *client.ClientSecretMetadata
 	for i := range secrets {
-		if secrets[i].ID == secretID {
+		if client.SameUUID(secrets[i].ID, secretID) {
 			found = &secrets[i]
 			break
 		}
@@ -487,6 +487,8 @@ func (r *clientSecretResource) Read(ctx context.Context, req resource.ReadReques
 		return
 	}
 
+	// Later requests address the secret in the server's spelling of its ID.
+	state.ID = types.StringValue(found.ID)
 	state.Prefix = types.StringValue(found.Prefix)
 	state.CreatedAt = types.StringValue(formatSecretTime(found.CreatedAt))
 	state.IsActive = types.BoolValue(found.IsActive)

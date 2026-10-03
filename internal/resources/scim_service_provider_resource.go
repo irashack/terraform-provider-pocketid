@@ -274,9 +274,10 @@ func (r *scimServiceProviderResource) Update(ctx context.Context, req resource.U
 	// token, so an update that does not send the value again must send back
 	// the token the server holds, or it would erase it.
 	token := plan.Token.ValueString()
+	providerID := state.ID.ValueString()
 	if tokenWO != nil {
 		if plan.TokenWOVer.Equal(state.TokenWOVer) {
-			current, err := r.client.GetScimServiceProviderToken(ctx, plan.ClientID.ValueString(), state.ID.ValueString())
+			current, heldID, err := r.client.GetScimServiceProviderToken(ctx, plan.ClientID.ValueString(), providerID)
 			if err != nil {
 				detail := "The update would replace the bearer token Pocket ID holds, which Terraform does not know " +
 					"(token_wo is write-only), so it must read it first. Nothing was changed. "
@@ -288,7 +289,9 @@ func (r *scimServiceProviderResource) Update(ctx context.Context, req resource.U
 				resp.Diagnostics.AddError("Error reading SCIM service provider before update", detail)
 				return
 			}
-			token = current
+			// The PUT addresses the provider whose token was read, in the
+			// server's spelling of its ID.
+			token, providerID = current, heldID
 		} else {
 			token = *tokenWO
 		}
@@ -301,12 +304,12 @@ func (r *scimServiceProviderResource) Update(ctx context.Context, req resource.U
 	}
 
 	tflog.Debug(ctx, "Updating SCIM service provider", map[string]any{
-		"id":        state.ID.ValueString(),
+		"id":        providerID,
 		"client_id": updateReq.OidcClientID,
 		"endpoint":  updateReq.Endpoint,
 	})
 
-	providerResp, err := r.client.UpdateScimServiceProvider(ctx, state.ID.ValueString(), updateReq)
+	providerResp, err := r.client.UpdateScimServiceProvider(ctx, providerID, updateReq)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Error updating SCIM service provider",

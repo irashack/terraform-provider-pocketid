@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 )
 
 // GroupDetail is a user group with everything the single-object endpoint
@@ -79,8 +78,18 @@ func (c *Client) GetUserGroupDetail(ctx context.Context, groupID string) (*Group
 	if err := json.Unmarshal(body, &wire); err != nil {
 		return nil, fmt.Errorf("error unmarshaling response: %w", err)
 	}
-	if !strings.EqualFold(wire.ID, groupID) {
-		return nil, fmt.Errorf("the answer for user group %s describes another group; refusing to use it", groupID)
+	if err := c.checkReturnedID("user group", groupID, wire.ID); err != nil {
+		return nil, fmt.Errorf("the answer for user group %s describes another group; refusing to use it: %w", groupID, err)
+	}
+	for _, user := range wire.Users {
+		if err := c.checkReturnedID("user", "", user.ID); err != nil {
+			return nil, err
+		}
+	}
+	for _, oidcClient := range wire.AllowedOidcClients {
+		if err := c.checkReturnedID(kindOIDCClient, "", oidcClient.ID); err != nil {
+			return nil, err
+		}
 	}
 	return &GroupDetail{
 		ID:               wire.ID,
@@ -124,7 +133,13 @@ func (c *Client) GroupMemberIDs(ctx context.Context) (map[string][]string, error
 	}
 	members := map[string][]string{}
 	for _, user := range users {
+		if err := c.checkReturnedID("user", "", user.ID); err != nil {
+			return nil, err
+		}
 		for _, group := range user.UserGroups {
+			if err := c.checkReturnedID("user group", "", group.ID); err != nil {
+				return nil, err
+			}
 			members[group.ID] = append(members[group.ID], user.ID)
 		}
 	}
@@ -162,6 +177,9 @@ func (c *Client) AllowedClientIDsByGroup(ctx context.Context) (clients map[strin
 			return nil, false, fmt.Errorf("error unmarshaling response: %w", err)
 		}
 		for _, group := range groups {
+			if err := c.checkReturnedID("user group", "", group.ID); err != nil {
+				return nil, false, err
+			}
 			byGroup[group.ID] = append(byGroup[group.ID], item.ID)
 		}
 	}

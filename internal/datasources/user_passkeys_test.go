@@ -60,20 +60,20 @@ func b2ReadPasskeys(t *testing.T, items []any) (rows []map[string]any, fake *b2F
 // nothing), with their backup flags and transports, and with no credential
 // material: the schema has no attribute for the credential ID.
 func TestUserPasskeysDataSource_Read(t *testing.T) {
-	newer := b2PasskeyJSON("p-new", "Phone", "2026-03-01T00:00:00Z")
-	older := b2PasskeyJSON("p-old", "Laptop", "2026-01-01T00:00:00Z")
+	newer := b2PasskeyJSON("ffffffff-0000-4000-8000-000000000002", "Phone", "2026-03-01T00:00:00Z")
+	older := b2PasskeyJSON("ffffffff-0000-4000-8000-000000000001", "Laptop", "2026-01-01T00:00:00Z")
 	older["backupState"] = true
 	rows, fake := b2ReadPasskeys(t, []any{newer, older})
 
 	require.Len(t, rows, 2)
-	assert.Equal(t, "p-old", rows[0]["id"])
+	assert.Equal(t, "ffffffff-0000-4000-8000-000000000001", rows[0]["id"])
 	assert.Equal(t, "Laptop", rows[0]["name"])
 	assert.Equal(t, "2026-01-01T00:00:00Z", rows[0]["created_at"])
 	assert.Equal(t, true, rows[0]["backup_eligible"])
 	assert.Equal(t, true, rows[0]["backup_state"])
 	assert.ElementsMatch(t, []string{"internal", "hybrid"}, rows[0]["transports"])
 	assert.Equal(t, "adce0002-35bc-c60a-648b-0b25f1f05503", rows[0]["aaguid"])
-	assert.Equal(t, "p-new", rows[1]["id"])
+	assert.Equal(t, "ffffffff-0000-4000-8000-000000000002", rows[1]["id"])
 	assert.Equal(t, false, rows[1]["backup_state"])
 	assert.Len(t, fake.log(), 1)
 
@@ -86,9 +86,9 @@ func TestUserPasskeysDataSource_Read(t *testing.T) {
 }
 
 func TestUserPasskeysDataSource_Read_NoAuthenticatorModel(t *testing.T) {
-	older := b2PasskeyJSON("p-1", "Key", "2026-01-01T00:00:00Z")
+	older := b2PasskeyJSON("ffffffff-0000-4000-8000-000000000011", "Key", "2026-01-01T00:00:00Z")
 	delete(older, "aaguid") // Pocket ID 2.14 does not report it
-	zero := b2PasskeyJSON("p-2", "Other", "2026-01-02T00:00:00Z")
+	zero := b2PasskeyJSON("ffffffff-0000-4000-8000-000000000012", "Other", "2026-01-02T00:00:00Z")
 	zero["aaguid"] = "00000000-0000-0000-0000-000000000000"
 	rows, _ := b2ReadPasskeys(t, []any{older, zero})
 	require.Len(t, rows, 2)

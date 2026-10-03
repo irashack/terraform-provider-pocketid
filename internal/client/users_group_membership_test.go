@@ -51,20 +51,20 @@ func newGroupMembershipTestServer(t *testing.T, userID string, initialGroups []s
 }
 
 func TestClient_AddUserToGroup_NewMembership(t *testing.T) {
-	c, puts := newGroupMembershipTestServer(t, "44444444-4444-4444-8444-444444444444", []string{"group-existing"})
+	c, puts := newGroupMembershipTestServer(t, "44444444-4444-4444-8444-444444444444", []string{"aaaaaaaa-0000-4000-8000-000000000005"})
 
-	err := c.AddUserToGroup(context.Background(), "44444444-4444-4444-8444-444444444444", "group-new")
+	err := c.AddUserToGroup(context.Background(), "44444444-4444-4444-8444-444444444444", "aaaaaaaa-0000-4000-8000-000000000008")
 	require.NoError(t, err)
 
 	require.Len(t, *puts, 1)
 	// The existing membership must be preserved; only the new group is added.
-	assert.ElementsMatch(t, []string{"group-existing", "group-new"}, (*puts)[0].UserGroupIDs)
+	assert.ElementsMatch(t, []string{"aaaaaaaa-0000-4000-8000-000000000005", "aaaaaaaa-0000-4000-8000-000000000008"}, (*puts)[0].UserGroupIDs)
 }
 
 func TestClient_AddUserToGroup_AlreadyMember(t *testing.T) {
-	c, puts := newGroupMembershipTestServer(t, "44444444-4444-4444-8444-444444444444", []string{"group-existing"})
+	c, puts := newGroupMembershipTestServer(t, "44444444-4444-4444-8444-444444444444", []string{"aaaaaaaa-0000-4000-8000-000000000005"})
 
-	err := c.AddUserToGroup(context.Background(), "44444444-4444-4444-8444-444444444444", "group-existing")
+	err := c.AddUserToGroup(context.Background(), "44444444-4444-4444-8444-444444444444", "aaaaaaaa-0000-4000-8000-000000000005")
 	require.NoError(t, err)
 
 	// No write should happen when the user is already a member.
@@ -83,7 +83,7 @@ func TestClient_AddUserToGroup_UserNotFound(t *testing.T) {
 
 	// Create never tolerates a missing user - unlike RemoveUserFromGroup,
 	// there is nothing sensible to add the group to.
-	err = c.AddUserToGroup(context.Background(), "55555555-5555-4555-8555-555555555555", "group-1")
+	err = c.AddUserToGroup(context.Background(), "55555555-5555-4555-8555-555555555555", "aaaaaaaa-0000-4000-8000-000000000001")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "HTTP 404")
 }
@@ -106,7 +106,7 @@ func TestClient_RemoveUserFromGroup_UserConfirmedNotFound_NoOp(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	err = c.RemoveUserFromGroup(context.Background(), "55555555-5555-4555-8555-555555555555", "group-1")
+	err = c.RemoveUserFromGroup(context.Background(), "55555555-5555-4555-8555-555555555555", "aaaaaaaa-0000-4000-8000-000000000001")
 	assert.NoError(t, err)
 	assert.False(t, putCalled, "a confirmed-missing user must not trigger any write")
 }
@@ -125,7 +125,7 @@ func TestClient_RemoveUserFromGroup_GenericNotFoundOnGet_ReturnsError(t *testing
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	err = c.RemoveUserFromGroup(context.Background(), "66666666-6666-4666-8666-666666666666", "group-1")
+	err = c.RemoveUserFromGroup(context.Background(), "66666666-6666-4666-8666-666666666666", "aaaaaaaa-0000-4000-8000-000000000001")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "HTTP 404")
 }
@@ -141,7 +141,7 @@ func TestClient_RemoveUserFromGroup_PUT404_UserStillPresent_ReturnsError(t *test
 		case http.MethodGet:
 			getCount++
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(usersGroupsFakeUser("44444444-4444-4444-8444-444444444444", []client.UserGroup{{ID: "group-remove"}}))
+			_ = json.NewEncoder(w).Encode(usersGroupsFakeUser("44444444-4444-4444-8444-444444444444", []client.UserGroup{{ID: "aaaaaaaa-0000-4000-8000-000000000010"}}))
 		case http.MethodPut:
 			// Some unrelated cause returns 404 for the update itself (for
 			// example, a load balancer's own not-found page for a transient
@@ -157,7 +157,7 @@ func TestClient_RemoveUserFromGroup_PUT404_UserStillPresent_ReturnsError(t *test
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	err = c.RemoveUserFromGroup(context.Background(), "44444444-4444-4444-8444-444444444444", "group-remove")
+	err = c.RemoveUserFromGroup(context.Background(), "44444444-4444-4444-8444-444444444444", "aaaaaaaa-0000-4000-8000-000000000010")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "HTTP 404")
 	assert.Equal(t, 2, getCount, "the PUT failure must trigger exactly one re-GET to check")
@@ -176,7 +176,7 @@ func TestClient_RemoveUserFromGroup_PUT404_UserConfirmedGoneOnReGet_ReturnsNil(t
 			getCount++
 			if getCount == 1 {
 				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(usersGroupsFakeUser("44444444-4444-4444-8444-444444444444", []client.UserGroup{{ID: "group-remove"}}))
+				_ = json.NewEncoder(w).Encode(usersGroupsFakeUser("44444444-4444-4444-8444-444444444444", []client.UserGroup{{ID: "aaaaaaaa-0000-4000-8000-000000000010"}}))
 				return
 			}
 			w.WriteHeader(http.StatusNotFound)
@@ -193,7 +193,7 @@ func TestClient_RemoveUserFromGroup_PUT404_UserConfirmedGoneOnReGet_ReturnsNil(t
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	err = c.RemoveUserFromGroup(context.Background(), "44444444-4444-4444-8444-444444444444", "group-remove")
+	err = c.RemoveUserFromGroup(context.Background(), "44444444-4444-4444-8444-444444444444", "aaaaaaaa-0000-4000-8000-000000000010")
 	assert.NoError(t, err)
 	assert.Equal(t, 2, getCount)
 }
@@ -208,7 +208,7 @@ func TestClient_RemoveUserFromGroup_PUT500_NoReGetAttempted(t *testing.T) {
 		case http.MethodGet:
 			getCount++
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(usersGroupsFakeUser("44444444-4444-4444-8444-444444444444", []client.UserGroup{{ID: "group-remove"}}))
+			_ = json.NewEncoder(w).Encode(usersGroupsFakeUser("44444444-4444-4444-8444-444444444444", []client.UserGroup{{ID: "aaaaaaaa-0000-4000-8000-000000000010"}}))
 		case http.MethodPut:
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(w, `{"error": "Internal server error"}`)
@@ -221,27 +221,27 @@ func TestClient_RemoveUserFromGroup_PUT500_NoReGetAttempted(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	err = c.RemoveUserFromGroup(context.Background(), "44444444-4444-4444-8444-444444444444", "group-remove")
+	err = c.RemoveUserFromGroup(context.Background(), "44444444-4444-4444-8444-444444444444", "aaaaaaaa-0000-4000-8000-000000000010")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "HTTP 500")
 	assert.Equal(t, 1, getCount, "a non-404 PUT failure must not trigger a re-GET")
 }
 
 func TestClient_RemoveUserFromGroup_ExistingMembership(t *testing.T) {
-	c, puts := newGroupMembershipTestServer(t, "44444444-4444-4444-8444-444444444444", []string{"group-keep", "group-remove"})
+	c, puts := newGroupMembershipTestServer(t, "44444444-4444-4444-8444-444444444444", []string{"aaaaaaaa-0000-4000-8000-000000000006", "aaaaaaaa-0000-4000-8000-000000000010"})
 
-	err := c.RemoveUserFromGroup(context.Background(), "44444444-4444-4444-8444-444444444444", "group-remove")
+	err := c.RemoveUserFromGroup(context.Background(), "44444444-4444-4444-8444-444444444444", "aaaaaaaa-0000-4000-8000-000000000010")
 	require.NoError(t, err)
 
 	require.Len(t, *puts, 1)
 	// The other membership must be preserved; only the target group is removed.
-	assert.Equal(t, []string{"group-keep"}, (*puts)[0].UserGroupIDs)
+	assert.Equal(t, []string{"aaaaaaaa-0000-4000-8000-000000000006"}, (*puts)[0].UserGroupIDs)
 }
 
 func TestClient_RemoveUserFromGroup_NotAMember(t *testing.T) {
-	c, puts := newGroupMembershipTestServer(t, "44444444-4444-4444-8444-444444444444", []string{"group-keep"})
+	c, puts := newGroupMembershipTestServer(t, "44444444-4444-4444-8444-444444444444", []string{"aaaaaaaa-0000-4000-8000-000000000006"})
 
-	err := c.RemoveUserFromGroup(context.Background(), "44444444-4444-4444-8444-444444444444", "group-absent")
+	err := c.RemoveUserFromGroup(context.Background(), "44444444-4444-4444-8444-444444444444", "aaaaaaaa-0000-4000-8000-000000000003")
 	require.NoError(t, err)
 
 	// No write should happen when the user was never a member.
@@ -249,9 +249,9 @@ func TestClient_RemoveUserFromGroup_NotAMember(t *testing.T) {
 }
 
 func TestClient_RemoveUserFromGroup_LastMembership(t *testing.T) {
-	c, puts := newGroupMembershipTestServer(t, "44444444-4444-4444-8444-444444444444", []string{"group-only"})
+	c, puts := newGroupMembershipTestServer(t, "44444444-4444-4444-8444-444444444444", []string{"aaaaaaaa-0000-4000-8000-000000000009"})
 
-	err := c.RemoveUserFromGroup(context.Background(), "44444444-4444-4444-8444-444444444444", "group-only")
+	err := c.RemoveUserFromGroup(context.Background(), "44444444-4444-4444-8444-444444444444", "aaaaaaaa-0000-4000-8000-000000000009")
 	require.NoError(t, err)
 
 	require.Len(t, *puts, 1)
@@ -259,13 +259,13 @@ func TestClient_RemoveUserFromGroup_LastMembership(t *testing.T) {
 }
 
 func TestClient_UserHasGroupMembership(t *testing.T) {
-	c, _ := newGroupMembershipTestServer(t, "44444444-4444-4444-8444-444444444444", []string{"group-a", "group-b"})
+	c, _ := newGroupMembershipTestServer(t, "44444444-4444-4444-8444-444444444444", []string{"aaaaaaaa-0000-4000-8000-000000000002", "aaaaaaaa-0000-4000-8000-000000000004"})
 
-	has, err := c.UserHasGroupMembership(context.Background(), "44444444-4444-4444-8444-444444444444", "group-a")
+	has, err := c.UserHasGroupMembership(context.Background(), "44444444-4444-4444-8444-444444444444", "aaaaaaaa-0000-4000-8000-000000000002")
 	require.NoError(t, err)
 	assert.True(t, has)
 
-	has, err = c.UserHasGroupMembership(context.Background(), "44444444-4444-4444-8444-444444444444", "group-missing")
+	has, err = c.UserHasGroupMembership(context.Background(), "44444444-4444-4444-8444-444444444444", "aaaaaaaa-0000-4000-8000-000000000007")
 	require.NoError(t, err)
 	assert.False(t, has)
 }
@@ -280,7 +280,7 @@ func TestClient_UserHasGroupMembership_UserNotFound(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	has, err := c.UserHasGroupMembership(context.Background(), "55555555-5555-4555-8555-555555555555", "group-1")
+	has, err := c.UserHasGroupMembership(context.Background(), "55555555-5555-4555-8555-555555555555", "aaaaaaaa-0000-4000-8000-000000000001")
 	assert.Error(t, err)
 	assert.False(t, has)
 
@@ -304,7 +304,7 @@ func TestClient_UserHasGroupMembership_GenericNotFound(t *testing.T) {
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
 	require.NoError(t, err)
 
-	_, err = c.UserHasGroupMembership(context.Background(), "66666666-6666-4666-8666-666666666666", "group-1")
+	_, err = c.UserHasGroupMembership(context.Background(), "66666666-6666-4666-8666-666666666666", "aaaaaaaa-0000-4000-8000-000000000001")
 	assert.Error(t, err)
 
 	var status *client.HTTPError

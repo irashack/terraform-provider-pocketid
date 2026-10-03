@@ -30,5 +30,14 @@ type APIKey struct {
 // refuse API-key authentication by design, and revoking could delete the key
 // this client authenticates with.
 func (c *Client) ListAPIKeys(ctx context.Context) ([]APIKey, error) {
-	return listAll(ctx, c, "API keys", "/api/api-keys", url.Values{}, func(k APIKey) string { return k.ID })
+	keys, err := listAll(ctx, c, "API keys", "/api/api-keys", url.Values{}, func(k APIKey) string { return k.ID })
+	if err != nil {
+		return nil, err
+	}
+	for _, key := range keys {
+		if err := c.checkReturnedID("API key", "", key.ID); err != nil {
+			return nil, err
+		}
+	}
+	return keys, nil
 }
