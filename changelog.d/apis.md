@@ -64,7 +64,8 @@
   provider never stores that credential in state or prints it, so it refuses
   the value at plan time (and again before creating or updating) with a
   message that does not show it, and nothing is sent. The `resource` lookup of
-  the `pocketid_api` data source refuses such a value too.
+  the `pocketid_api` data source refuses such a value too, and so does a
+  permission key in `pocketid_api_client_access`.
 - New data sources `pocketid_api` (look up one API by `id` or by its exact
   `resource` identifier) and `pocketid_apis` (every API, oldest first, read
   across all pages), each with the API's permissions keyed by permission key

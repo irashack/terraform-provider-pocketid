@@ -92,3 +92,18 @@ func apiModelTexts(ctx context.Context, m apiResourceModel) []string {
 	}
 	return texts
 }
+
+// apiPermissionKeysOK refuses configured permission keys that contain the API
+// key before they are sent or printed (a missing key is named in a
+// diagnostic): a fixed error, no value, and false.
+func apiPermissionKeysOK(c *client.Client, diags *diag.Diagnostics, keys ...[]string) bool {
+	for _, list := range keys {
+		if c.ContainsAPIKey(list...) {
+			diags.AddError("Value not supported",
+				"A permission key in this configuration contains the API key this provider authenticates with, which the provider never stores or "+
+					"prints. The value is not shown, and no request was made. Change the value.")
+			return false
+		}
+	}
+	return true
+}

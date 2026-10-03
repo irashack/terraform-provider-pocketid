@@ -81,6 +81,8 @@ func (r *apiClientAccessResource) Schema(_ context.Context, _ resource.SchemaReq
 			"This resource owns exactly one (API, client) pair and writes it with Pocket ID's per-pair endpoints, so it never " +
 			"touches the client's grants on other APIs or other clients' grants on this API. Do not manage the same pair with two " +
 			"resources.\n\n" +
+			"A permission key that contains the admin API key this provider authenticates with is refused (the provider never stores " +
+			"or prints that credential), before anything is sent.\n\n" +
 			"Before writing, the provider checks that every permission key exists on the API and that a client given client " +
 			"access is not public (Pocket ID silently drops both). After writing, it compares what the server stored with the " +
 			"configuration and fails, naming the difference, instead of recording access the server did not confirm.\n\n" +
@@ -418,6 +420,10 @@ func apiAccessUnresolvedDiagnostics(diags *diag.Diagnostics, apiID, clientID str
 // per-pair PUT and verifies what was stored. Errors go to diags; the outcome
 // says what to record.
 func (r *apiClientAccessResource) apiAccessWrite(ctx context.Context, apiID, clientID string, want apiAccessGrant, diags *diag.Diagnostics) apiAccessOutcome {
+	// Before any request: a missing key is named in a diagnostic below.
+	if !apiPermissionKeysOK(r.client, diags, want.UserKeys, want.ClientKeys) {
+		return apiAccessOutcome{}
+	}
 	if err := checkAPISupport(ctx, r.client); err != nil {
 		diags.AddError("Cannot grant API access", err.Error())
 		return apiAccessOutcome{}
@@ -612,7 +618,32 @@ func (r *apiClientAccessResource) Read(ctx context.Context, req resource.ReadReq
 // overwrite a grant nobody read. A read clears the marker. A plan to destroy
 // is allowed: removing the grant never widens access.
 func (r *apiClientAccessResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
-	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() {
+	if req.Plan.Raw.IsNull() {
+		return
+	}
+	var plan apiClientAccessModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	// Configured text that carries the API key is refused at plan time, for
+	// the values that are known now (see apiPermissionKeysOK).
+	var keys []string
+	for _, set := range []types.Set{plan.UserDelegatedPermissions, plan.ClientPermissions} {
+		if set.IsNull() || set.IsUnknown() {
+			continue
+		}
+		for _, element := range set.Elements() {
+			if value, ok := element.(types.String); ok && !value.IsNull() && !value.IsUnknown() {
+				keys = append(keys, value.ValueString())
+			}
+		}
+	}
+	if !apiPermissionKeysOK(r.client, &resp.Diagnostics, keys) {
+		return
+	}
+
+	if req.State.Raw.IsNull() {
 		return
 	}
 	if !apiAccessIsUnresolved(ctx, req.Private, &resp.Diagnostics) {

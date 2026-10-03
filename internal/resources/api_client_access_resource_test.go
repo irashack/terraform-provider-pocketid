@@ -56,6 +56,8 @@ type apiAccessTestPocketID struct {
 	putBody, listBody *string
 	// clientBody, when set, replaces the body of the OIDC client read.
 	clientBody *string
+	// requests counts every request received, the version check included.
+	requests int
 }
 
 func newAPIAccessTestPocketID(t *testing.T) (*apiAccessTestPocketID, *client.Client) {
@@ -73,6 +75,13 @@ func newAPIAccessTestPocketIDWithKey(t *testing.T, key string) (*apiAccessTestPo
 	return f, c
 }
 
+// received is the number of requests the server got, of any kind.
+func (f *apiAccessTestPocketID) received() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.requests
+}
+
 func (f *apiAccessTestPocketID) routes() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -88,6 +97,7 @@ func (f *apiAccessTestPocketID) api() client.API {
 func (f *apiAccessTestPocketID) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.requests++
 	w.Header().Set("Content-Type", "application/json")
 	var route string
 	switch r.URL.Path {
@@ -214,6 +224,21 @@ func apiAccessTestPlan(userAccess bool, userKeys []string, clientAccess bool, cl
 		UserDelegatedAccess: types.BoolValue(userAccess), UserDelegatedPermissions: apiAccessTestSet(userKeys...),
 		ClientAccess: types.BoolValue(clientAccess), ClientPermissions: apiAccessTestSet(clientKeys...),
 	}
+}
+
+// apiAccessTestUpdate calls Update directly, as the framework does after a
+// plan, and returns the error diagnostics as text.
+func apiAccessTestUpdate(t *testing.T, c *client.Client, prior, plan apiClientAccessModel) string {
+	t.Helper()
+	ctx := context.Background()
+	sr := apiAccessTestSchema(t)
+	p := tfsdk.Plan{Schema: sr.Schema}
+	require.False(t, p.Set(ctx, &plan).HasError())
+	s := tfsdk.State{Schema: sr.Schema}
+	require.False(t, s.Set(ctx, &prior).HasError())
+	resp := resource.UpdateResponse{State: tfsdk.State{Schema: sr.Schema, Raw: s.Raw.Copy()}}
+	(&apiClientAccessResource{client: c}).Update(ctx, resource.UpdateRequest{Plan: p, State: s}, &resp)
+	return apiAccessTestText(resp.Diagnostics.Errors())
 }
 
 func apiAccessTestCreate(t *testing.T, c *client.Client, plan apiClientAccessModel) (string, *apiClientAccessModel) {
@@ -662,6 +687,51 @@ func TestAPIClientAccessRead_IncompleteList(t *testing.T) {
 			assert.Equal(t, apiAccessSummary(t, created.state), apiAccessSummary(t, refreshed))
 		})
 	}
+}
+
+// A configured permission key that contains the API key is refused before any
+// request, with a fixed diagnostic: the API's permissions do not include it,
+// and the "has no permission" message would otherwise print the configured
+// key. Planning refuses it too, for the values that are known.
+func TestAPIClientAccess_CredentialBearingPermissionKeys(t *testing.T) {
+	const key = "synthetic-api-key-0123456789"
+	for name, tc := range map[string]struct {
+		user, client []string
+		clientAccess bool
+	}{
+		"user permission":   {[]string{"read", "x-" + key}, nil, false},
+		"client permission": {nil, []string{key}, true},
+		"both":              {[]string{"read-" + key}, []string{"write", "w-" + key}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, c := newAPIAccessTestPocketIDWithKey(t, key)
+			plan := apiAccessTestPlan(len(tc.user) > 0, tc.user, tc.clientAccess, tc.client)
+
+			errs, state := apiAccessTestCreate(t, c, plan)
+			assert.Contains(t, errs, "Value not supported")
+			assert.NotContains(t, errs, key)
+			assert.Nil(t, state)
+
+			prior := apiAccessModel(apiAccessTestAPI, apiAccessTestClient, apiAccessGrant{UserAccess: true, UserKeys: []string{"read"}})
+			updateErrs := apiAccessTestUpdate(t, c, prior, plan)
+			assert.Contains(t, updateErrs, "Value not supported")
+			assert.NotContains(t, updateErrs, key)
+			assert.Zero(t, f.received(), "no request of any kind")
+
+			h := newAPIHarness(t, c)
+			planned := apiAccessRun(t, h, nil, nil, apiAccessConfig(tc.user, tc.client))
+			planErrs := apiHarnessErrors(planned.plan.Diagnostics)
+			assert.Contains(t, planErrs, "Value not supported")
+			assert.NotContains(t, planErrs, key)
+			assert.Nil(t, planned.apply)
+			assert.Zero(t, f.received())
+		})
+	}
+
+	// The same keys without the credential still reach the server's check.
+	_, c := newAPIAccessTestPocketIDWithKey(t, key)
+	errs, _ := apiAccessTestCreate(t, c, apiAccessTestPlan(true, []string{"delete"}, false, nil))
+	assert.Contains(t, errs, `has no permission "delete"`)
 }
 
 // Identifiers that carry the API key never enter a request, a log line or a
