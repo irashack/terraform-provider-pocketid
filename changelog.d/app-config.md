@@ -32,7 +32,10 @@
   did not configure as "(known after apply)": the plan shows them unchanged.
   Settings you did not configure are still sent back with the value Pocket ID
   holds at apply time, so a change made outside Terraform since the plan is
-  kept. After an update, the provider checks that Pocket ID stored each value
+  kept. Pocket ID replaces the whole configuration on every update and offers
+  no conditional write, so a change an administrator makes in the moment
+  between the provider reading the configuration and writing it back (a
+  password rotation included) can still be overwritten. After an update, the provider checks that Pocket ID stored each value
   it changed, and fails naming the setting if it did not.
 - New write-only inputs `smtp_password_wo` / `smtp_password_wo_version` and
   `ldap_bind_password_wo` / `ldap_bind_password_wo_version` on

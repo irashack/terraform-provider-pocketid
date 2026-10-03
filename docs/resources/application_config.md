@@ -3,12 +3,12 @@
 page_title: "pocketid_application_config Resource - terraform-provider-pocketid"
 subcategory: ""
 description: |-
-  Manages the global application configuration of a Pocket-ID instance. This is a singleton resource: only one should exist per instance. Any attribute left unset inherits the current server-side value, and removing the resource from configuration leaves the live configuration untouched.
+  Manages the global application configuration of a Pocket-ID instance. This is a singleton resource: only one should exist per instance. Any attribute left unset inherits the current server-side value, and removing the resource from configuration leaves the live configuration untouched. Every update reads the current configuration and writes all of it back (Pocket ID replaces the whole configuration and offers no conditional write), so a change made by someone else between that read and that write, a password rotation included, is overwritten.
 ---
 
 # pocketid_application_config (Resource)
 
-Manages the global application configuration of a Pocket-ID instance. This is a singleton resource: only one should exist per instance. Any attribute left unset inherits the current server-side value, and removing the resource from configuration leaves the live configuration untouched.
+Manages the global application configuration of a Pocket-ID instance. This is a singleton resource: only one should exist per instance. Any attribute left unset inherits the current server-side value, and removing the resource from configuration leaves the live configuration untouched. Every update reads the current configuration and writes all of it back (Pocket ID replaces the whole configuration and offers no conditional write), so a change made by someone else between that read and that write, a password rotation included, is overwritten.
 
 ## Example Usage
 

@@ -330,9 +330,11 @@ func (r *applicationConfigResource) Schema(_ context.Context, _ resource.SchemaR
 		}
 	}
 	resp.Schema = schema.Schema{
-		Description:         "Manages the global application configuration of a Pocket-ID instance.",
-		MarkdownDescription: "Manages the global application configuration of a Pocket-ID instance. This is a singleton resource: only one should exist per instance. Any attribute left unset inherits the current server-side value, and removing the resource from configuration leaves the live configuration untouched.",
-		Attributes:          attributes,
+		Description: "Manages the global application configuration of a Pocket-ID instance.",
+		MarkdownDescription: "Manages the global application configuration of a Pocket-ID instance. This is a singleton resource: only one should exist per instance. Any attribute left unset inherits the current server-side value, and removing the resource from configuration leaves the live configuration untouched. " +
+			"Every update reads the current configuration and writes all of it back (Pocket ID replaces the whole configuration and offers no conditional write), " +
+			"so a change made by someone else between that read and that write, a password rotation included, is overwritten.",
+		Attributes: attributes,
 	}
 }
 
@@ -411,7 +413,9 @@ func (r *applicationConfigResource) ModifyPlan(ctx context.Context, req resource
 // Only attributes set in config are sent as planned. Every other key is sent
 // with the value the server holds right now, so a setting changed outside
 // Terraform after the plan was made is kept, not reverted by a change the plan
-// did not show. Such a setting's planned value (from state) stays in state
+// did not show. The GET and the PUT are still two requests and Pocket ID has
+// no conditional write: a change made between them is overwritten. Such a
+// setting's planned value (from state) stays in state
 // until the next refresh, as Terraform requires; the next refresh records the
 // server's value, without a planned change because it is not configured.
 //
