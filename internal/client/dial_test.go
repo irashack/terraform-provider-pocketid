@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/http/httptrace"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -21,50 +22,71 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// earlyBytesServer sends a response carrying key as soon as a connection is
-// established (after the TLS handshake when config is set), before the
-// request arrives, then reads the request and closes. key stands for an API
+// earlyResponse is what the early-bytes servers send before any request: a
+// complete response whose reason phrase carries key, standing for an API
 // key the server remembered from an earlier request.
-func earlyBytesServer(t *testing.T, key string, config *tls.Config) string {
+func earlyResponse(key string) string {
+	return "HTTP/1.1 200 " + key + "\r\nContent-Length: 0\r\n\r\n"
+}
+
+// earlyBytesServer accepts one connection and sends earlyResponse on it as
+// soon as it is established (after the TLS handshake when config is set),
+// before the request arrives; then it reads the request and waits for the
+// client to close the connection. written is closed once the early bytes
+// are sent, finished once the client has closed the connection.
+type earlyBytesServer struct {
+	url               string
+	written, finished chan struct{}
+}
+
+func startEarlyBytesServer(t *testing.T, key string, config *tls.Config) *earlyBytesServer {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = listener.Close() })
-	scheme := "http"
+	server := &earlyBytesServer{url: "http://", written: make(chan struct{}), finished: make(chan struct{})}
 	if config != nil {
 		listener = tls.NewListener(listener, config)
-		scheme = "https"
+		server.url = "https://"
 	}
+	server.url += listener.Addr().String()
 	go func() {
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer close(server.finished)
+		defer func() { _ = conn.Close() }()
+		if tlsConn, ok := conn.(*tls.Conn); ok {
+			if tlsConn.Handshake() != nil {
 				return
 			}
-			go func() {
-				defer func() { _ = conn.Close() }()
-				if tlsConn, ok := conn.(*tls.Conn); ok {
-					if tlsConn.Handshake() != nil {
-						return
-					}
-				}
-				_, _ = io.WriteString(conn, "HTTP/1.1 200 "+key+"\r\nContent-Length: 0\r\n\r\n")
-				if req, err := http.ReadRequest(bufio.NewReader(conn)); err == nil {
-					_, _ = io.Copy(io.Discard, req.Body)
-				}
-			}()
 		}
+		if _, err := io.WriteString(conn, earlyResponse(key)); err != nil {
+			return
+		}
+		close(server.written)
+		if req, err := http.ReadRequest(bufio.NewReader(conn)); err == nil {
+			_, _ = io.Copy(io.Discard, req.Body)
+		}
+		_, _ = io.Copy(io.Discard, conn) // until the client closes the connection
 	}()
-	return scheme + "://" + listener.Addr().String()
+	return server
 }
 
 // Go's transport starts reading a new connection before it sends the
 // request. Without the gate, bytes the server sends in that interval are
 // logged with their content through the standard logger as an "unsolicited
-// response". Holding the connection in httptrace.GotConn widens the
-// interval: the server's bytes are certainly there before the request is
-// written. With the gate they are read only once the request is going out,
-// as its response, and never reach either log.
+// response". Here, over real connections, the request waits in
+// httptrace.GotConn until the server has sent its bytes, so they are there
+// before the request is written. With the gate they are read only once the
+// request is going out, as its response, and never reach either log, which
+// are inspected once the client has closed the connection (Go logs an
+// unsolicited response before it closes the connection it came on).
+//
+// Whether the transport's reader would have looked at the bytes before the
+// request went out depends on scheduling here; the synctest tests below
+// establish that deterministically.
 func TestEarlyBytesNeverReachAnyLog(t *testing.T) {
 	const key = "remembered-api-key-0123456789abcdef"
 	serverTLS := httptest.NewUnstartedServer(http.NotFoundHandler())
@@ -74,22 +96,175 @@ func TestEarlyBytesNeverReachAnyLog(t *testing.T) {
 	for name, config := range map[string]*tls.Config{"plain": nil, "TLS": serverTLS.TLS} {
 		t.Run(name, func(t *testing.T) {
 			standard := captureStandardLog(t)
-			url := earlyBytesServer(t, key, config)
+			server := startEarlyBytesServer(t, key, config)
 			var logs bytes.Buffer
 			ctx := tflogtest.RootLogger(context.Background(), &logs)
+			sentFirst := false
 			ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
-				GotConn: func(httptrace.GotConnInfo) { time.Sleep(500 * time.Millisecond) },
+				GotConn: func(httptrace.GotConnInfo) {
+					select {
+					case <-server.written:
+						sentFirst = true
+					case <-time.After(10 * time.Second): // a failure bound, not a delay
+					}
+				},
 			})
-			c, err := NewClient(url, "test-token", true, 5)
+			c, err := NewClient(server.url, "test-token", true, 30)
 			require.NoError(t, err)
 
 			_, err = c.doRequest(ctx, http.MethodPost, "/api/x", nil)
 			require.NoError(t, err, "the early bytes are read as the request's response")
-			time.Sleep(100 * time.Millisecond) // let any transport goroutine finish logging
+			require.True(t, sentFirst, "the server sent its bytes before the request was written")
+			select {
+			case <-server.finished:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the client never closed the connection")
+			}
 			assert.NotContains(t, standard.String(), key)
 			assert.NotContains(t, logs.String(), key)
 		})
 	}
+}
+
+// instrumentedConn records the reads that reach it and the writes made on it.
+type instrumentedConn struct {
+	net.Conn
+	reads, writes atomic.Int32
+}
+
+func (c *instrumentedConn) Read(p []byte) (int, error) {
+	c.reads.Add(1)
+	return c.Conn.Read(p)
+}
+
+func (c *instrumentedConn) Write(p []byte) (int, error) {
+	c.writes.Add(1)
+	return c.Conn.Write(p)
+}
+
+// A gated connection passes no read to the connection beneath it until the
+// first write, however long the reader has been waiting and although the
+// peer's bytes are ready. In fake time (testing/synctest), synctest.Wait
+// returns only once every goroutine is blocked for good, so "the read has
+// not reached the connection" is a fact at that point, not a race.
+func TestGatedConnPassesNoReadBeforeTheFirstWrite(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		local, remote := net.Pipe()
+		defer func() { _ = remote.Close() }()
+		under := &instrumentedConn{Conn: local}
+		conn := newGatedConn(under)
+		defer func() { _ = conn.Close() }()
+
+		early := []byte("early bytes from the peer")
+		go func() { _, _ = remote.Write(early) }() // blocks until something reads it
+		received := make(chan string, 1)
+		go func() {
+			buf := make([]byte, 64)
+			n, _ := conn.Read(buf)
+			received <- string(buf[:n])
+		}()
+
+		synctest.Wait()
+		assert.Zero(t, under.reads.Load(), "no read reached the connection before a write")
+		assert.Empty(t, received)
+
+		go func() { _, _ = io.Copy(io.Discard, remote) }()
+		_, err := conn.Write([]byte("the request"))
+		require.NoError(t, err)
+		synctest.Wait()
+		assert.Equal(t, int32(1), under.writes.Load())
+		assert.Equal(t, int32(1), under.reads.Load(), "the waiting read went through once the request was written")
+		assert.Equal(t, string(early), <-received)
+	})
+}
+
+// The transport this package builds, run over in-memory connections in fake
+// time, reads nothing a server sends before the request: the server writes
+// its early bytes as soon as the connection is up (after the TLS handshake
+// for TLS), and at httptrace.GotConn, once every other goroutine (the
+// transport's reader and writer, the server) is blocked for good, nothing
+// has read them. net.Pipe has no buffer, so the server's write ends exactly
+// when something reads the bytes. They are then read as the response to the
+// request, and reach no log.
+func TestTransportReadsNothingBeforeTheRequest(t *testing.T) {
+	const key = "remembered-api-key-0123456789abcdef"
+	certificates := httptest.NewUnstartedServer(http.NotFoundHandler())
+	certificates.StartTLS()
+	serverConfig := certificates.TLS.Clone()
+	certificates.Close()
+	// A TLS 1.3 server sends session tickets after its Finished message; over
+	// a pipe with no buffer the handshake would wait for the client to read
+	// them. Tickets play no part in this test.
+	serverConfig.SessionTicketsDisabled = true
+
+	for name, config := range map[string]*tls.Config{"plain": nil, "TLS": serverConfig} {
+		t.Run(name, func(t *testing.T) {
+			standard := captureStandardLog(t)
+			synctest.Test(t, func(t *testing.T) {
+				var earlyRead, serverDone atomic.Bool
+				dialer := gatedDialer{
+					tlsConfig: &tls.Config{InsecureSkipVerify: true}, // #nosec G402 -- in-memory test server
+					connectRaw: func(context.Context, string, string) (net.Conn, error) {
+						local, remote := net.Pipe()
+						go func() {
+							defer serverDone.Store(true)
+							serveEarlyBytes(remote, config, key, &earlyRead)
+						}()
+						return local, nil
+					},
+				}
+				url := "http://pocket-id.test"
+				if config != nil {
+					url = "https://pocket-id.test"
+				}
+				c, err := NewClient(url, "test-token", true, 30)
+				require.NoError(t, err)
+				c.httpClient.Transport = dialer.transport()
+
+				var logs bytes.Buffer
+				ctx := tflogtest.RootLogger(context.Background(), &logs)
+				checked := false
+				ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+					GotConn: func(httptrace.GotConnInfo) {
+						synctest.Wait()
+						assert.False(t, earlyRead.Load(), "nothing read the server's bytes before the request was written")
+						checked = true
+					},
+				})
+
+				_, err = c.doRequest(ctx, http.MethodPost, "/api/x", nil)
+				require.NoError(t, err, "the early bytes are read as the request's response")
+				require.True(t, checked)
+				synctest.Wait()
+				assert.True(t, earlyRead.Load())
+				assert.True(t, serverDone.Load(), "the client closed the connection")
+				assert.NotContains(t, logs.String(), key)
+			})
+			assert.NotContains(t, standard.String(), key)
+		})
+	}
+}
+
+// serveEarlyBytes is the server side of TestTransportReadsNothingBeforeTheRequest.
+// It sets earlyRead once the client has read its early bytes.
+func serveEarlyBytes(raw net.Conn, config *tls.Config, key string, earlyRead *atomic.Bool) {
+	defer func() { _ = raw.Close() }()
+	conn := raw
+	if config != nil {
+		tlsConn := tls.Server(raw, config)
+		if tlsConn.Handshake() != nil {
+			return
+		}
+		conn = tlsConn
+	}
+	if _, err := io.WriteString(conn, earlyResponse(key)); err != nil {
+		return
+	}
+	earlyRead.Store(true)
+	if req, err := http.ReadRequest(bufio.NewReader(conn)); err == nil {
+		_, _ = io.Copy(io.Discard, req.Body)
+	}
+	_, _ = io.Copy(io.Discard, conn) // until the client closes the connection
 }
 
 // A read waiting at the gate ends when the connection is closed, so a

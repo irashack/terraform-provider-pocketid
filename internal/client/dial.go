@@ -36,11 +36,15 @@ import (
 // cancellation and deadline again (see withRequestContext), and under a
 // fixed limit of its own besides (connectTimeout, tlsHandshakeTimeout).
 func newTransport(config *tls.Config) *http.Transport {
-	dialer := gatedDialer{tlsConfig: config}
+	return gatedDialer{tlsConfig: config}.transport()
+}
+
+// transport is the HTTP transport that dials with d.
+func (d gatedDialer) transport() *http.Transport {
 	return &http.Transport{
-		TLSClientConfig:   config,
-		DialContext:       dialer.dial,
-		DialTLSContext:    dialer.dialTLS,
+		TLSClientConfig:   d.tlsConfig,
+		DialContext:       d.dial,
+		DialTLSContext:    d.dialTLS,
 		DisableKeepAlives: true,
 	}
 }
@@ -95,13 +99,19 @@ func stageContext(ctx context.Context, limit time.Duration) (_ context.Context, 
 
 type gatedDialer struct {
 	tlsConfig *tls.Config
+	// connectRaw, when set, replaces the network connection (tests use
+	// in-memory pipes); nil means a TCP connection through net.Dialer.
+	connectRaw func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
-// connect opens the TCP connection, within connectTimeout and the request's
-// own bounds.
+// connect opens the connection to the server, within connectTimeout and the
+// request's own bounds.
 func (d gatedDialer) connect(ctx context.Context, network, addr string) (net.Conn, error) {
 	ctx, release := stageContext(ctx, connectTimeout)
 	defer release()
+	if d.connectRaw != nil {
+		return d.connectRaw(ctx, network, addr)
+	}
 	return (&net.Dialer{}).DialContext(ctx, network, addr)
 }
 
