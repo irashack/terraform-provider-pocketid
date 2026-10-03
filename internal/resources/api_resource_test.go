@@ -98,12 +98,36 @@ func (f *apiTestPocketID) routes() []string {
 	return append([]string(nil), f.calls...)
 }
 
+// apiTestRecorder wraps a response writer and keeps the status the HTTP
+// server really sends: the first header written, or 200 for a body written
+// without one. Later WriteHeader calls are ignored by net/http, and so here.
+type apiTestRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *apiTestRecorder) WriteHeader(code int) {
+	if r.status == 0 {
+		r.status = code
+	}
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *apiTestRecorder) Write(body []byte) (int, error) {
+	if r.status == 0 {
+		r.status = http.StatusOK
+	}
+	return r.ResponseWriter.Write(body)
+}
+
 // serve answers one request. The status is decided once, after the
-// request has been applied and any configured failure looked up, and every
-// status sent is recorded in responses ("route status").
-func (f *apiTestPocketID) serve(w http.ResponseWriter, r *http.Request) {
+// request has been applied and any configured failure looked up, and the
+// status the server really sent is recorded in responses ("route status").
+func (f *apiTestPocketID) serve(rw http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	recorder := &apiTestRecorder{ResponseWriter: rw}
+	var w http.ResponseWriter = recorder
 	w.Header().Set("Content-Type", "application/json")
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/"), "/")
 	route := r.Method + " " + parts[0]
@@ -117,13 +141,11 @@ func (f *apiTestPocketID) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	if route != "GET version" {
 		f.calls = append(f.calls, route)
+		defer func() { f.responses = append(f.responses, fmt.Sprintf("%s %d", route, recorder.status)) }()
 	}
 	status, body := f.apply(route, api, r)
 	if failure, failing := f.failures[route]; failing {
 		status, body = failure.status, nil
-	}
-	if route != "GET version" {
-		f.responses = append(f.responses, fmt.Sprintf("%s %d", route, status))
 	}
 	w.WriteHeader(status)
 	_, _ = w.Write(body)
@@ -213,6 +235,13 @@ func (f *apiTestPocketID) apply(route string, api *client.API, r *http.Request) 
 	}
 	body, _ = json.Marshal(api)
 	return status, body
+}
+
+// stored is the number of APIs the server holds.
+func (f *apiTestPocketID) stored() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.apis)
 }
 
 func (f *apiTestPocketID) sent() []string {
@@ -375,15 +404,16 @@ func TestAPIResourceCreate_GuardsBeforeMutation(t *testing.T) {
 // records nothing and reads nothing.
 func TestAPIResourceCreate_UncertainResult(t *testing.T) {
 	for name, tc := range map[string]struct {
-		failure apiTestFailure
-		summary string
-		detail  []string
+		failure   apiTestFailure
+		committed bool // whether the fake server created the API
+		summary   string
+		detail    []string
 	}{
-		"committed then 503": {apiTestFailure{status: 503, afterApply: true}, "API creation result uncertain",
+		"committed then 503": {apiTestFailure{status: 503, afterApply: true}, true, "API creation result uncertain",
 			[]string{"(ID 00000000-0000-4000-8000-000000000001, name \"Inventory\")", "not recorded as managed", "import it"}},
-		"503 before commit": {apiTestFailure{status: 503}, "API creation result uncertain",
+		"503 before commit": {apiTestFailure{status: 503}, false, "API creation result uncertain",
 			[]string{"found no API", "Nothing was recorded"}},
-		"rejected": {apiTestFailure{status: 409}, "Error creating API", nil},
+		"rejected": {apiTestFailure{status: 409}, false, "Error creating API", nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f, c := newAPITestPocketID(t)
@@ -396,7 +426,13 @@ func TestAPIResourceCreate_UncertainResult(t *testing.T) {
 			for _, want := range tc.detail {
 				assert.Contains(t, apiTestCreateDiag(resp), want)
 			}
+			// The status the server really sent for the POST (recorded from the
+			// first header it wrote) is the injected one, and for the post-commit
+			// failure the API exists: a commit followed by a lost 5xx, not an
+			// empty success.
 			assert.Contains(t, f.sent(), fmt.Sprintf("POST apis %d", tc.failure.status), "the injected status is what the provider received")
+			assert.NotContains(t, f.sent(), "POST apis 201")
+			assert.Equal(t, tc.committed, f.stored() == 1, "whether the create committed")
 			assert.Nil(t, state, "nothing is recorded as owned")
 			assert.NotContains(t, f.routes(), "PUT permissions", "no follow-up write after an uncertain create")
 			assert.NotContains(t, f.routes(), "DELETE api", "nothing is cleaned up")
@@ -405,6 +441,22 @@ func TestAPIResourceCreate_UncertainResult(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The recorder keeps the status the server really sends, not the one a
+// handler meant to send: an early header wins over a later one, as in net/http.
+func TestAPITestRecorder_FirstHeaderWins(t *testing.T) {
+	inner := httptest.NewRecorder()
+	rec := &apiTestRecorder{ResponseWriter: inner}
+	rec.WriteHeader(http.StatusCreated)
+	rec.WriteHeader(http.StatusServiceUnavailable)
+	_, _ = rec.Write([]byte("x"))
+	assert.Equal(t, http.StatusCreated, rec.status)
+	assert.Equal(t, http.StatusCreated, inner.Code)
+
+	rec = &apiTestRecorder{ResponseWriter: httptest.NewRecorder()}
+	_, _ = rec.Write([]byte("x"))
+	assert.Equal(t, http.StatusOK, rec.status)
 }
 
 // An API someone else created between the provider's check and its failed
