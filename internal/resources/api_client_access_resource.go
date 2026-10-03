@@ -87,12 +87,17 @@ func (r *apiClientAccessResource) Schema(_ context.Context, _ resource.SchemaReq
 			"Refer to the API as `pocketid_api.<name>.id` so the API's permission changes are applied first. Removing a permission " +
 			"from the API deletes its grants; if it was the client's last permission of that kind, Pocket ID also removes that " +
 			"kind of access, and the next plan shows it. Deleting the API or the client removes the grant.\n\n" +
-			"If a write ends without a confirmed result (the connection failed, or the response was lost or unreadable) and the " +
+			"If an update ends without a confirmed result (the connection failed, or the response was lost or unreadable) and the " +
 			"grant cannot be read back either, the provider does not guess: state keeps the last grant it confirmed, the resource " +
 			"is marked unresolved, and plans and writes for it are refused until a read succeeds. Run `terraform plan` or " +
 			"`terraform apply` without `-refresh=false` to read it, or `terraform state rm` the resource and import it again as " +
-			"`<api_id>/<client_id>`. A grant created that way is recorded without its access flags and permissions, which are " +
-			"unknown until a refresh reads them.",
+			"`<api_id>/<client_id>`. A destroy is never refused.\n\n" +
+			"A create that ends that way records the pair without its access flags and permissions, which are unknown until a " +
+			"refresh reads them, and Terraform marks the resource tainted. The marker does not apply to that case: Terraform " +
+			"plans the replacement of a tainted resource from nothing, so the replacement's destroy revokes whatever grant the " +
+			"server holds for the pair and its create then writes the configured grant again. A refresh before that only " +
+			"shows what the server holds; to keep the grant that exists instead, `terraform untaint` the resource or " +
+			"`terraform state rm` it and import it again.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The resource ID, `<api_id>/<client_id>`.",

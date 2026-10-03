@@ -35,7 +35,10 @@
   until a read succeeds: run `terraform plan` or `terraform apply` without
   `-refresh=false`, or `terraform state rm` the resource and import it again.
   A grant whose creation ended that way is recorded without its access flags
-  and permissions until a refresh reads them. An answer from Pocket ID that
+  and permissions until a refresh reads them, and Terraform marks it tainted:
+  the marker does not apply there, because the replacement Terraform plans for
+  a tainted resource first revokes whatever grant the server holds for the pair
+  and then writes the configured grant again. An answer from Pocket ID that
   does not describe the grant (empty, `null` or missing fields) is handled
   the same way instead of being read as "no grant": a write's answer
   triggers the read-back, and a grant list with such an entry fails the
