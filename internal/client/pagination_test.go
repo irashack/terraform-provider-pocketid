@@ -223,9 +223,11 @@ func TestListAll_StopsAtPageCeiling(t *testing.T) {
 // Every listed object's ID goes through the returned-ID rules before the
 // list is returned: one ID that is not a form any Pocket ID object ID takes
 // fails the whole list, on whichever page it appears, and is not quoted.
-// IDs of every legitimate form pass, CIMD clients' URLs included.
+// IDs of every form the server can hold pass: UUIDs, client IDs its own
+// pattern accepts (".." included) and CIMD clients' URLs, spaces and
+// Unicode in the path included.
 func TestListAll_ChecksEveryID(t *testing.T) {
-	for _, bad := range []string{"", "a/b", "..", "a b", "https://client.example.com/m?x=1", "unsafeéid"} {
+	for _, bad := range []string{"", "a/b", "a b", "https://client.example.com/m?x=1", "unsafe\u00e9id", "https://client.example.com/a\u0000b"} {
 		s := &pagedServer{ids: makeIDs(150)}
 		s.ids[120] = bad
 		_, err := s.start(t, "/api/user-groups").ListUserGroups(context.Background())
@@ -238,7 +240,10 @@ func TestListAll_ChecksEveryID(t *testing.T) {
 		assert.Len(t, s.queries, 2, "the walk stops at the page that held it, and is not repeated")
 	}
 
-	s := &pagedServer{ids: []string{validUUID, "my-app", "https://client.example.com/oauth/metadata.json"}}
+	s := &pagedServer{ids: []string{
+		validUUID, "my-app", "..", "a", "https://client.example.com/oauth/metadata.json",
+		"https://client.example.com/a b/m\u00e9tadonn\u00e9es client.json",
+	}}
 	clients, err := s.start(t, "/api/oidc/clients").ListClients(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, s.ids, clientIDs(clients))

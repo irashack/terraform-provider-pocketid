@@ -25,7 +25,9 @@ var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]
 // clientIDPattern is Pocket ID's rule for a client ID chosen at creation
 // (OidcClientCreateDto: binding "client_id,min=2,max=128" with
 // validateClientIDRegex), unchanged from v2.0.0 to v2.17.0. A generated client
-// ID is a UUID, which also matches.
+// ID is a UUID, which also matches. It governs the IDs this client puts into
+// requests (ValidateClientID); an ID in a response is held to the server's
+// own, wider rules instead (isReturnedClientID).
 var clientIDPattern = regexp.MustCompile(`^[a-zA-Z0-9._-]{2,128}$`)
 
 // ValidateUUID checks that id has the UUID form Pocket ID uses for users, user
@@ -163,16 +165,11 @@ func (c *Client) checkCreatedID(kind, requested, returned string) error {
 	return nil
 }
 
-// kindOIDCClient is the kind to pass checkReturnedID for an OIDC client's ID.
-// It is the one kind whose IDs are not all UUIDs: a client ID may be chosen
-// at creation (ValidateClientID's rule), and a client registered from a
-// Client ID Metadata Document has an https URL as its ID.
+// kindOIDCClient is the kind to pass checkReturnedID (and ValidateIdentifier)
+// for an OIDC client's ID. It is the one kind whose IDs are not all UUIDs: a
+// client ID may be chosen at creation, and a client registered from a Client
+// ID Metadata Document has an https URL as its ID.
 const kindOIDCClient = "OIDC client"
-
-// maxCIMDClientIDLength bounds the https URL accepted as a CIMD client's ID.
-// Pocket ID sets no limit of its own; this one only keeps an absurd value
-// out of state.
-const maxCIMDClientIDLength = 2048
 
 // checkReturnedID decides whether an object ID that a response carries may be
 // used: kept in state, logged, compared, or put into a later request. Every
@@ -182,16 +179,23 @@ const maxCIMDClientIDLength = 2048
 // create response's own ID goes through checkCreatedID instead.
 //
 //   - No ID may contain the API key this client sends (see checkCreatedID
-//     for why a UUID-shaped key matters).
+//     for why a UUID-shaped key matters). This is checked first.
 //   - addressed is the ID the call named, in its path or as the parent the
 //     object must belong to; the returned ID must then be exactly it, not
 //     another object's and not a case variant. Pass "" when the call named
 //     none: a list item, an object looked up through its parent, a nested
 //     object.
-//   - An ID the call did not name must have its kind's form: a UUID, which
-//     Pocket ID generates for every object (model.Base.BeforeCreate), except
-//     for kindOIDCClient, whose ID is one ValidateClientID accepts (UUIDs
-//     included) or a CIMD client's https URL.
+//   - An ID the call did not name must have a form the server itself can
+//     give that kind: a UUID, which Pocket ID generates for every object
+//     (model.Base.BeforeCreate), except for kindOIDCClient, which takes any
+//     ID Pocket ID's own client-ID rules accept (see isReturnedClientID).
+//
+// These are the server's rules, not this client's rules for what it puts in
+// a request path: an ID the server legitimately holds is accepted here even
+// where this client cannot address it (ValidateClientID refuses "..", which
+// is a relative path segment, and every CIMD URL), so that a list holding
+// such a client still reads. The overall response size limit still bounds
+// every ID.
 //
 // An empty ID is refused like any other; a caller whose response may
 // legitimately omit an object checks for its presence first. kind names the
@@ -200,14 +204,15 @@ const maxCIMDClientIDLength = 2048
 func (c *Client) checkReturnedID(kind, addressed, returned string) error {
 	form := isUUID
 	if kind == kindOIDCClient {
-		form = isOIDCClientID
+		form = isReturnedClientID
 	}
 	return c.checkResponseID(kind, form, addressed, returned)
 }
 
 // checkResponseID is checkReturnedID with the form of an unaddressed ID
-// given explicitly. listAll uses it with isOIDCClientID, which accepts every
-// form a Pocket ID object ID can take, because it serves lists of every kind.
+// given explicitly. listAll uses it with isReturnedClientID, which accepts
+// every form a Pocket ID object ID can take, because it serves lists of every
+// kind.
 func (c *Client) checkResponseID(kind string, form func(string) bool, addressed, returned string) error {
 	switch {
 	case c.reflectsKey(returned):
@@ -224,30 +229,42 @@ func (c *Client) checkResponseID(kind string, form func(string) bool, addressed,
 
 func isUUID(id string) bool { return uuidPattern.MatchString(id) }
 
-// isOIDCClientID reports whether id is an ID Pocket ID can give an OIDC
-// client: one ValidateClientID accepts, or a CIMD client's URL. Every UUID is
-// one, so this is also the widest form any object ID takes.
-func isOIDCClientID(id string) bool {
-	return ValidateClientID(id) == nil || isCIMDClientID(id)
+// serverClientIDPattern is Pocket ID's own rule for an ordinary client ID:
+// validateClientIDRegex, "^[a-zA-Z0-9._-]+$", in
+// backend/internal/dto/validations.go, identical in v2.14.0 to v2.17.0. The
+// create DTO adds min=2,max=128 (OidcClientCreateDto, binding
+// "omitempty,client_id,min=2,max=128"), but the server's own ValidateClientID,
+// which also decides whether a stored ID is an ordinary one, applies the
+// pattern alone, so a response is held to the pattern alone. It accepts "."
+// and ".."; every generated client ID, a UUID, matches.
+var serverClientIDPattern = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+
+// isReturnedClientID reports whether id is an ID Pocket ID can hold for an
+// OIDC client: an ordinary one (serverClientIDPattern) or a CIMD client's URL
+// (isCIMDClientID). Every UUID is one, so this is also the widest form any
+// object ID takes.
+func isReturnedClientID(id string) bool {
+	return serverClientIDPattern.MatchString(id) || isCIMDClientID(id)
 }
 
-// isCIMDClientID applies the rules Pocket ID's OIDC library sets for a client
-// ID that is a metadata document URL (ParseCIMDURL in
-// github.com/pocket-id/fosite v1.3.0, which 2.14.0 to 2.17.0 use): https, a
-// host, a path without "." or ".." segments, and no user information, query
-// or fragment. It also requires printable ASCII without spaces and at most
-// maxCIMDClientIDLength bytes.
+// isCIMDClientID applies, exactly, the rules a CIMD client's ID passes before
+// Pocket ID stores it: ParseCIMDURL in github.com/pocket-id/fosite v1.3.0
+// (cimd.go; used by v2.14.0 to v2.17.0, which store the ID as given). The URL
+// must parse (net/url, which refuses control characters), use the https
+// scheme in any case, name a host, carry no user information, no fragment
+// (and no "#" at all), no query (and no bare "?"), and a non-empty path
+// whose decoded segments include no "." or "..". Spaces, other printable
+// characters and Unicode in the path are allowed, and there is no length
+// limit of its own.
 func isCIMDClientID(id string) bool {
-	if len(id) > maxCIMDClientIDLength || strings.ContainsAny(id, "#?") {
+	u, err := url.Parse(id)
+	if err != nil || !strings.EqualFold(u.Scheme, "https") || u.Hostname() == "" || u.User != nil {
 		return false
 	}
-	for i := 0; i < len(id); i++ {
-		if id[i] <= ' ' || id[i] > '~' {
-			return false
-		}
+	if u.Fragment != "" || u.RawFragment != "" || strings.Contains(id, "#") {
+		return false
 	}
-	u, err := url.Parse(id)
-	if err != nil || !strings.EqualFold(u.Scheme, "https") || u.Hostname() == "" || u.User != nil || u.Path == "" {
+	if u.RawQuery != "" || u.ForceQuery || u.Path == "" {
 		return false
 	}
 	for _, segment := range strings.Split(u.Path, "/") {

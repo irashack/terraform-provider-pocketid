@@ -105,9 +105,12 @@ func TestCheckReturnedID_KeyOnAnUpdate(t *testing.T) {
 	}
 }
 
-// The form an ID the call did not name must take: a UUID for every kind but
-// OIDC clients, whose IDs follow ValidateClientID or are a CIMD client's URL
-// (the rules of ParseCIMDURL in Pocket ID's OIDC library).
+// The form an ID the call did not name must take is the server's: a UUID for
+// every kind but OIDC clients, whose IDs follow Pocket ID's own client-ID
+// pattern (validateClientIDRegex, so "." and ".." and any length) or the
+// CIMD rules of its OIDC library (ParseCIMDURL: spaces and Unicode in the
+// path, no length limit). Those are wider than what this client puts in a
+// request path, which still refuses ".." and every CIMD URL.
 func TestCheckReturnedID_Forms(t *testing.T) {
 	c := newCheckingClient(t, "test-token")
 	clientIDs := map[string]bool{
@@ -115,27 +118,36 @@ func TestCheckReturnedID_Forms(t *testing.T) {
 		"my-app":                 true,
 		"a.b_c-d":                true,
 		"ab":                     true,
-		"a":                      false,
-		"..":                     false,
+		"a":                      true,
+		".":                      true,
+		"..":                     true,
+		"..my..app..":            true,
+		strings.Repeat("a", 129): true,
 		"":                       false,
 		"a/b":                    false,
 		"a b":                    false,
-		strings.Repeat("a", 129): false,
-		"https://client.example.com/oauth/metadata.json":                           true,
-		"https://client.example.com:8443/m":                                        true,
-		"HTTPS://client.example.com/m":                                             true,
-		"https://client.example.com":                                               false, // no path
-		"http://client.example.com/m":                                              false,
-		"https://user@client.example.com/m":                                        false,
-		"https://client.example.com/m?x=1":                                         false,
-		"https://client.example.com/m?":                                            false,
-		"https://client.example.com/m#f":                                           false,
-		"https://client.example.com/a/../m":                                        false,
-		"https://client.example.com/./m":                                           false,
-		"https://client.example.com/a b":                                           false,
-		"https://client.example.com/é":                                             false,
-		"https:///m":                                                               false,
-		"https://client.example.com/" + strings.Repeat("a", maxCIMDClientIDLength): false,
+		"app\u00e9":              false,
+		"https://client.example.com/oauth/metadata.json":                 true,
+		"https://client.example.com:8443/m":                              true,
+		"HTTPS://client.example.com/m":                                   true,
+		"https://client.example.com/a b/client metadata.json":            true,
+		"https://client.example.com/\u00e9t\u00e9/m\u00e9tadonn\u00e9es": true,
+		"https://client.example.com/a/.../m":                             true,
+		"https://client.example.com/" + strings.Repeat("a", 4096):        true,
+		"https://client.example.com":                                     false, // no path
+		"http://client.example.com/m":                                    false,
+		"https://user@client.example.com/m":                              false,
+		"https://client.example.com/m?x=1":                               false,
+		"https://client.example.com/m?":                                  false,
+		"https://client.example.com/m#f":                                 false,
+		"https://client.example.com/m#":                                  false,
+		"https://client.example.com/a/../m":                              false,
+		"https://client.example.com/./m":                                 false,
+		"https://client.example.com/a/%2E%2E/m":                          false, // decoded, a ".." segment
+		"https://client.example.com/a\tb":                                false, // a control character
+		"https://client.example.com/a\nb":                                false,
+		"https://cli ent.example.com/m":                                  false,
+		"https:///m":                                                     false,
 	}
 	for id, ok := range clientIDs {
 		err := c.checkReturnedID(kindOIDCClient, "", id)
@@ -146,9 +158,18 @@ func TestCheckReturnedID_Forms(t *testing.T) {
 		assertRefused(t, err, id, "is not a valid OIDC client ID")
 	}
 
+	// What the server may hold is not what this client sends: a request path
+	// still refuses a relative segment and every CIMD URL.
+	for _, id := range []string{"..", ".", "a", "https://client.example.com/a b/m"} {
+		require.NoError(t, c.checkReturnedID(kindOIDCClient, "", id))
+		assert.ErrorIs(t, c.ValidateIdentifier(kindOIDCClient, id), ErrInvalidIdentifier, "%q", id)
+		_, err := clientIDSegment(id)
+		assert.ErrorIs(t, err, ErrInvalidIdentifier, "%q", id)
+	}
+
 	for _, kind := range []string{"user", "user group", "client secret", "SCIM service provider", "API", "API key", "signup token", "passkey"} {
 		assert.NoError(t, c.checkReturnedID(kind, "", userA), kind)
-		for _, id := range []string{"my-app", "https://client.example.com/m", "", strings.ToUpper(userA) + "x"} {
+		for _, id := range []string{"my-app", "..", "https://client.example.com/m", "", strings.ToUpper(userA) + "x"} {
 			assertRefused(t, c.checkReturnedID(kind, "", id), id, "is not a valid "+kind+" ID")
 		}
 	}

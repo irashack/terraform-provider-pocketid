@@ -143,7 +143,7 @@ func walkPages[T any](ctx context.Context, c *Client, what, endpoint string, que
 			key := id(item)
 			// Every object ID goes through checkReturnedID's rules; a list
 			// can hold any kind, so any form an object ID takes is accepted.
-			if err := c.checkResponseID("object", isOIDCClientID, "", key); err != nil {
+			if err := c.checkResponseID("object", isReturnedClientID, "", key); err != nil {
 				return nil, fmt.Errorf("listing %s: %w", what, err)
 			}
 			if _, dup := seen[key]; dup {
