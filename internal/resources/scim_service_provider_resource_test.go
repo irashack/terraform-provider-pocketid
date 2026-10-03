@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"testing"
 
@@ -141,6 +140,9 @@ type scimFake struct {
 	failWith *scimFailure
 	// getBody, when set, is the 200 answer to the read by client.
 	getBody *string
+	// providerID is the ID the fake serves and addresses; scimTestProviderID
+	// unless a test needs letters in it.
+	providerID string
 }
 
 type scimRequest struct {
@@ -162,7 +164,7 @@ const (
 
 func newScimFake(t *testing.T) (*scimFake, *client.Client) {
 	t.Helper()
-	fake := &scimFake{exists: true, endpoint: "https://scim.example.com/v2"}
+	fake := &scimFake{exists: true, endpoint: "https://scim.example.com/v2", providerID: scimTestProviderID}
 	server := httptest.NewServer(http.HandlerFunc(fake.serve))
 	t.Cleanup(server.Close)
 	c, err := client.NewClient(server.URL, "test-token", false, 30)
@@ -189,7 +191,7 @@ func (f *scimFake) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	provider := func() {
 		out := map[string]any{
-			"id": scimTestProviderID, "endpoint": f.endpoint, "token": f.token,
+			"id": f.providerID, "endpoint": f.endpoint, "token": f.token,
 			"lastSyncedAt": f.synced, "createdAt": "2026-01-01T00:00:00Z",
 			"oidcClient": map[string]any{"id": scimTestClientID, "name": "SCIM client"},
 		}
@@ -213,7 +215,7 @@ func (f *scimFake) serve(w http.ResponseWriter, r *http.Request) {
 		f.token, _ = record.Body["token"].(string)
 		w.WriteHeader(http.StatusCreated)
 		provider()
-	case r.Method == http.MethodPut && r.URL.Path == "/api/scim/service-provider/"+scimTestProviderID:
+	case r.Method == http.MethodPut && r.URL.Path == "/api/scim/service-provider/"+f.providerID:
 		if !f.exists {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(scimNotFoundBody))
@@ -222,7 +224,7 @@ func (f *scimFake) serve(w http.ResponseWriter, r *http.Request) {
 		f.endpoint, _ = record.Body["endpoint"].(string)
 		f.token, _ = record.Body["token"].(string)
 		provider()
-	case r.Method == http.MethodPost && r.URL.Path == "/api/scim/service-provider/"+scimTestProviderID+"/sync":
+	case r.Method == http.MethodPost && r.URL.Path == "/api/scim/service-provider/"+f.providerID+"/sync":
 		if !f.exists {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(scimNotFoundBody))
@@ -231,7 +233,7 @@ func (f *scimFake) serve(w http.ResponseWriter, r *http.Request) {
 		now := "2026-02-01T00:00:00Z"
 		f.synced = &now
 		w.WriteHeader(http.StatusOK)
-	case r.Method == http.MethodDelete && r.URL.Path == "/api/scim/service-provider/"+scimTestProviderID:
+	case r.Method == http.MethodDelete && r.URL.Path == "/api/scim/service-provider/"+f.providerID:
 		if !f.exists {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(scimNotFoundBody))
@@ -695,7 +697,6 @@ func TestScimServiceProviderResource_UpdateWithoutAVersionBumpAcceptsAPresentTok
 	}{
 		{"an explicit empty token", fmt.Sprintf(`{"id":%q,"token":""}`, scimTestProviderID), nil},
 		{"a token", fmt.Sprintf(`{"id":%q,"token":"kept-token"}`, scimTestProviderID), "kept-token"},
-		{"an upper-case ID", fmt.Sprintf(`{"id":%q,"token":"kept-token"}`, strings.ToUpper(scimTestProviderID)), "kept-token"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -716,6 +717,70 @@ func TestScimServiceProviderResource_UpdateWithoutAVersionBumpAcceptsAPresentTok
 			mutations := fake.mutations()
 			require.Len(t, mutations, 1)
 			assert.Equal(t, tc.wantToken, mutations[0].Body["token"])
+		})
+	}
+}
+
+const (
+	scimLetterProviderID      = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+	scimUpperLetterProviderID = "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE"
+)
+
+func scimLetterState(id string) map[string]any {
+	state := scimWriteOnlyState("1")
+	state["id"] = id
+	return state
+}
+
+// SQLite stores a SCIM service provider's ID as case-sensitive text and the
+// PUT addresses the row by the spelling in state, so a read whose ID differs
+// only in case may name another row (or none). The keep-token path accepts
+// only the exact ID, sends nothing otherwise, and addresses the PUT with the
+// server's own spelling.
+func TestScimServiceProviderResource_KeepTokenRequiresTheExactProviderID(t *testing.T) {
+	cases := []struct {
+		name       string
+		stateID    string // the ID in state, which the PUT addresses
+		answerID   string // the ID in the read's answer
+		wantUpdate bool
+	}{
+		{"the same lower-case spelling", scimLetterProviderID, scimLetterProviderID, true},
+		{"the same upper-case spelling", scimUpperLetterProviderID, scimUpperLetterProviderID, true},
+		{"the answer in upper case, the state in lower case", scimLetterProviderID, scimUpperLetterProviderID, false},
+		{"the answer in lower case, the state in upper case", scimUpperLetterProviderID, scimLetterProviderID, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// The fake addresses the row by the spelling in state, as SQLite does.
+			fake, c := newScimFake(t)
+			fake.providerID = tc.stateID
+			fake.token = "token-held-by-the-server"
+			body := fmt.Sprintf(`{"id":%q,"token":"token-held-by-the-server"}`, tc.answerID)
+			fake.getBody = &body
+			r := scimResource(t, c)
+			sch := scimSchema(t, r)
+
+			plan := scimLetterState(tc.stateID)
+			plan["endpoint"] = "https://scim.example.com/v3"
+			config := map[string]any{
+				"client_id": scimTestClientID, "endpoint": "https://scim.example.com/v3",
+				"token_wo": "token-in-the-configuration", "token_wo_version": "1",
+			}
+			resp := scimUpdate(t, r, sch, scimLetterState(tc.stateID), plan, config)
+
+			if !tc.wantUpdate {
+				require.True(t, resp.Diagnostics.HasError())
+				assert.Empty(t, fake.mutations(), "a casing mismatch must not become a PUT")
+				assert.Equal(t, "token-held-by-the-server", fake.token)
+				assert.Contains(t, resp.Diagnostics.Errors()[0].Detail(), "was not this SCIM service provider with its token")
+				return
+			}
+			require.False(t, resp.Diagnostics.HasError(), "%v", resp.Diagnostics)
+			mutations := fake.mutations()
+			require.Len(t, mutations, 1)
+			assert.Equal(t, "/api/scim/service-provider/"+tc.stateID, mutations[0].Path, "the PUT uses the spelling the server holds")
+			assert.Equal(t, "token-held-by-the-server", mutations[0].Body["token"])
+			assert.Equal(t, types.StringValue(tc.stateID), scimStateString(t, resp.State, "id"))
 		})
 	}
 }

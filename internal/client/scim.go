@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 )
 
 // ScimServiceProvider represents a SCIM service provider configuration attached
@@ -134,8 +133,10 @@ var ErrUnexpectedAnswer = errors.New("the answer was not the expected object")
 // Pocket ID always includes the token field (decrypted; "" when none is
 // configured), and a PUT that carries "" clears the token. An answer that
 // merely decodes to "" is therefore not enough: the object must name
-// providerID and hold a present, non-null string token ("" is a valid token
-// meaning none). Anything else is ErrUnexpectedAnswer, so a malformed answer
+// providerID exactly (not merely case-insensitively: SQLite stores the ID as
+// case-sensitive text and the PUT addresses the row by the caller's spelling,
+// so another spelling can name another row or none) and hold a present,
+// non-null string token ("" is a valid token meaning none). Anything else is ErrUnexpectedAnswer, so a malformed answer
 // (an empty object, null, a missing or null token, another provider) can never
 // turn into a request that erases the credential.
 func (c *Client) GetScimServiceProviderToken(ctx context.Context, clientID, providerID string) (string, error) {
@@ -155,7 +156,7 @@ func (c *Client) GetScimServiceProviderToken(ctx context.Context, clientID, prov
 		ID    *string `json:"id"`
 		Token *string `json:"token"`
 	}
-	if err := json.Unmarshal(body, &answer); err != nil || answer.ID == nil || answer.Token == nil || !strings.EqualFold(*answer.ID, providerID) {
+	if err := json.Unmarshal(body, &answer); err != nil || answer.ID == nil || answer.Token == nil || *answer.ID != providerID {
 		return "", ErrUnexpectedAnswer
 	}
 	return *answer.Token, nil

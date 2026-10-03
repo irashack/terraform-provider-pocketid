@@ -192,23 +192,30 @@ func TestClient_SyncScimServiceProviderRefusesAnInvalidID(t *testing.T) {
 }
 
 func TestClient_GetScimServiceProviderToken(t *testing.T) {
-	const id = "33333333-3333-4333-8333-333333333333"
+	// The IDs contain letters, so their case matters.
+	const (
+		id      = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+		upperID = "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE"
+	)
 	cases := []struct {
-		name    string
-		body    string
-		want    string
-		wantErr error
+		name     string
+		lookupID string // the ID the caller holds; id when empty
+		body     string
+		want     string
+		wantErr  error
 	}{
-		{"a token", `{"id":"` + id + `","token":"held"}`, "held", nil},
-		{"an explicit empty token", `{"id":"` + id + `","token":""}`, "", nil},
-		{"an upper-case ID", `{"id":"33333333-3333-4333-8333-333333333333","token":"held"}`, "held", nil},
-		{"an empty object", `{}`, "", client.ErrUnexpectedAnswer},
-		{"JSON null", `null`, "", client.ErrUnexpectedAnswer},
-		{"a missing token", `{"id":"` + id + `"}`, "", client.ErrUnexpectedAnswer},
-		{"a null token", `{"id":"` + id + `","token":null}`, "", client.ErrUnexpectedAnswer},
-		{"a missing ID", `{"token":"held"}`, "", client.ErrUnexpectedAnswer},
-		{"another ID", `{"id":"44444444-4444-4444-8444-444444444444","token":"held"}`, "", client.ErrUnexpectedAnswer},
-		{"not JSON", `held`, "", client.ErrUnexpectedAnswer},
+		{"a token", "", `{"id":"` + id + `","token":"held"}`, "held", nil},
+		{"an explicit empty token", "", `{"id":"` + id + `","token":""}`, "", nil},
+		{"an upper-case ID the caller holds in upper case", upperID, `{"id":"` + upperID + `","token":"held"}`, "held", nil},
+		{"an ID that differs only in case (answer upper)", "", `{"id":"` + upperID + `","token":"held"}`, "", client.ErrUnexpectedAnswer},
+		{"an ID that differs only in case (answer lower)", upperID, `{"id":"` + id + `","token":"held"}`, "", client.ErrUnexpectedAnswer},
+		{"an empty object", "", `{}`, "", client.ErrUnexpectedAnswer},
+		{"JSON null", "", `null`, "", client.ErrUnexpectedAnswer},
+		{"a missing token", "", `{"id":"` + id + `"}`, "", client.ErrUnexpectedAnswer},
+		{"a null token", "", `{"id":"` + id + `","token":null}`, "", client.ErrUnexpectedAnswer},
+		{"a missing ID", "", `{"token":"held"}`, "", client.ErrUnexpectedAnswer},
+		{"another ID", "", `{"id":"44444444-4444-4444-8444-444444444444","token":"held"}`, "", client.ErrUnexpectedAnswer},
+		{"not JSON", "", `held`, "", client.ErrUnexpectedAnswer},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -220,7 +227,11 @@ func TestClient_GetScimServiceProviderToken(t *testing.T) {
 			c, err := client.NewClient(server.URL, "test-token", false, 30)
 			require.NoError(t, err)
 
-			got, err := c.GetScimServiceProviderToken(context.Background(), "client-123", id)
+			lookup := tc.lookupID
+			if lookup == "" {
+				lookup = id
+			}
+			got, err := c.GetScimServiceProviderToken(context.Background(), "client-123", lookup)
 			if tc.wantErr != nil {
 				require.ErrorIs(t, err, tc.wantErr)
 				assert.NotContains(t, err.Error(), "held")
