@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -463,4 +464,59 @@ func TestGroupMembersResource_ImportThenRead(t *testing.T) {
 	r.Read(ctx, resource.ReadRequest{State: imported.State}, read)
 	require.False(t, read.Diagnostics.HasError(), "%v", read.Diagnostics)
 	assert.Equal(t, []string{gmUUID(101), gmUUID(102)}, gmStateIDs(t, read.State))
+}
+
+// Every write holds the provider-wide lock for user-group relations, from its
+// first read to its last check, so that it cannot interleave with another
+// resource's read-modify-write of the same relations (a pocketid_user or
+// pocketid_group_membership read of a user's groups, say, followed by a write
+// of its stale list). While another writer holds the lock, no request is made.
+func TestGroupMembersResource_WritesWaitForTheSharedMembershipLock(t *testing.T) {
+	operations := map[string]func(r resource.Resource, sch schema.Schema, groupID string){
+		"create": func(r resource.Resource, sch schema.Schema, groupID string) {
+			gmCreate(t, r, sch, groupID, []string{gmUUID(101)})
+		},
+		"update": func(r resource.Resource, sch schema.Schema, groupID string) {
+			gmUpdate(t, r, sch, groupID, nil, []string{gmUUID(101)})
+		},
+		"delete": func(r resource.Resource, sch schema.Schema, groupID string) {
+			gmDelete(t, r, sch, groupID, []string{gmUUID(101)})
+		},
+	}
+	for name, operation := range operations {
+		t.Run(name, func(t *testing.T) {
+			s, c := newGMServer(t, gmUUID(101))
+			r, sch := gmResource(t, c)
+
+			unlock := resources.LockMembershipWritesForTest()
+			var once sync.Once
+			release := func() { once.Do(unlock) }
+			t.Cleanup(release) // a failed assertion must not leave the lock held for the next test
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				operation(r, sch, s.groupID)
+			}()
+
+			select {
+			case <-done:
+				t.Fatal("the write finished while another writer held the lock")
+			case <-time.After(150 * time.Millisecond):
+			}
+			s.mu.Lock()
+			during := len(s.log)
+			s.mu.Unlock()
+			assert.Zero(t, during, "no request is made while the lock is held")
+
+			release()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the write did not proceed once the lock was released")
+			}
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			assert.NotEmpty(t, s.log)
+		})
+	}
 }

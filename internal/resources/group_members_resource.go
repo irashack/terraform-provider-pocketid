@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"sync"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/setvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
@@ -50,25 +49,6 @@ type groupMembersResourceModel struct {
 
 var groupMembersUUIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
-// groupMembersLocks serializes the writes to one group's membership within a
-// provider process: Create, Update and Delete each read the membership and
-// then replace it, and two of them interleaving could lose a change.
-var (
-	groupMembersLocksMu sync.Mutex
-	groupMembersLocks   = map[string]*sync.Mutex{}
-)
-
-func groupMembersLockFor(groupID string) *sync.Mutex {
-	groupMembersLocksMu.Lock()
-	defer groupMembersLocksMu.Unlock()
-	lock, ok := groupMembersLocks[groupID]
-	if !ok {
-		lock = &sync.Mutex{}
-		groupMembersLocks[groupID] = lock
-	}
-	return lock
-}
-
 // Metadata returns the resource type name.
 func (r *groupMembersResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_group_members"
@@ -89,6 +69,8 @@ func (r *groupMembersResource) Schema(_ context.Context, _ resource.SchemaReques
 			"Import the group first (`terraform import pocketid_group_members.<name> <group_id>`), so the plan shows each member that would be removed, or list every current member.\n\n" +
 			"~> **Removing members can end sessions (Pocket ID 2.17)** When a user stops being a member, Pocket ID 2.17 can sign that user out of group-restricted OIDC clients that have a back-channel logout URL, if the group was what let them in. " +
 			"Removing a user from `user_ids` and destroying this resource both remove members.\n\n" +
+			"~> **Concurrent changes by others** Pocket ID can only replace a group's whole member list, so a change to this group's members made by something else (the Pocket ID admin interface, another Terraform run, an onboarding service) in the instant between this provider reading the members and writing them is overwritten, and no check can prevent it. " +
+			"Within one Terraform run the provider serializes every write of user-group relations, so this resource, `pocketid_group_membership` and `pocketid_user` do not overwrite each other.\n\n" +
 			"~> **LDAP groups** A group synchronized from LDAP gets its membership rewritten by the next LDAP synchronization. Do not manage its members with this resource.\n\n" +
 			"**Destroying** the resource removes the users in `user_ids` from the group. Members added outside Terraform since the last refresh stay. The group itself is not deleted.",
 		Attributes: map[string]schema.Attribute{
@@ -254,9 +236,9 @@ func (r *groupMembersResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 
-	lock := groupMembersLockFor(groupID)
-	lock.Lock()
-	defer lock.Unlock()
+	// The shared lock, held across the whole read, write and verify sequence;
+	// see lockMembershipWrites.
+	defer lockMembershipWrites()()
 
 	// A new resource knows of no member: every current member must be one of
 	// want.
@@ -321,9 +303,9 @@ func (r *groupMembersResource) Update(ctx context.Context, req resource.UpdateRe
 		return
 	}
 
-	lock := groupMembersLockFor(groupID)
-	lock.Lock()
-	defer lock.Unlock()
+	// The shared lock, held across the whole read, write and verify sequence;
+	// see lockMembershipWrites.
+	defer lockMembershipWrites()()
 
 	if !r.write(ctx, groupID, known, want, &resp.Diagnostics) {
 		return
@@ -347,9 +329,9 @@ func (r *groupMembersResource) Delete(ctx context.Context, req resource.DeleteRe
 		return
 	}
 
-	lock := groupMembersLockFor(groupID)
-	lock.Lock()
-	defer lock.Unlock()
+	// The shared lock, held across the whole read, write and verify sequence;
+	// see lockMembershipWrites.
+	defer lockMembershipWrites()()
 
 	current, err := r.client.GetUserGroupDetail(ctx, groupID)
 	if err != nil {
