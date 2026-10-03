@@ -34,11 +34,15 @@ type groupDataSource struct {
 
 // groupDataSourceModel describes the data source data model.
 type groupDataSourceModel struct {
-	ID           types.String `tfsdk:"id"`
-	Name         types.String `tfsdk:"name"`
-	FriendlyName types.String `tfsdk:"friendly_name"`
-	LdapID       types.String `tfsdk:"ldap_id"`
-	CreatedAt    types.String `tfsdk:"created_at"`
+	ID               types.String `tfsdk:"id"`
+	Name             types.String `tfsdk:"name"`
+	FriendlyName     types.String `tfsdk:"friendly_name"`
+	LdapID           types.String `tfsdk:"ldap_id"`
+	CreatedAt        types.String `tfsdk:"created_at"`
+	CustomClaims     types.Map    `tfsdk:"custom_claims"`
+	MemberIDs        types.Set    `tfsdk:"member_ids"`
+	AllowedClientIDs types.Set    `tfsdk:"allowed_client_ids"`
+	UserCount        types.Int64  `tfsdk:"user_count"`
 }
 
 // Metadata returns the data source type name.
@@ -72,6 +76,25 @@ func (d *groupDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, 
 			},
 			"created_at": schema.StringAttribute{
 				Description: "The creation time of the group in RFC3339 format.",
+				Computed:    true,
+			},
+			"custom_claims": schema.MapAttribute{
+				Description: "The group's custom claims, by claim key. Empty when the group has none.",
+				Computed:    true,
+				ElementType: types.StringType,
+			},
+			"member_ids": schema.SetAttribute{
+				Description: "The IDs of the users in the group. Empty when the group has no members.",
+				Computed:    true,
+				ElementType: types.StringType,
+			},
+			"allowed_client_ids": schema.SetAttribute{
+				Description: "The IDs of the OIDC clients that list this group as allowed. Empty when there are none. A client that is not group-restricted admits every user, whatever this lists.",
+				Computed:    true,
+				ElementType: types.StringType,
+			},
+			"user_count": schema.Int64Attribute{
+				Description: "The number of users in the group.",
 				Computed:    true,
 			},
 		},
@@ -142,6 +165,17 @@ func (d *groupDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 	} else {
 		data.CreatedAt = types.StringNull()
 	}
+	var diags diag.Diagnostics
+	data.CustomClaims, diags = ugClaimsMapValue(ctx, foundGroup.CustomClaims)
+	resp.Diagnostics.Append(diags...)
+	data.MemberIDs, diags = ugIDSetValue(ctx, foundGroup.MemberIDs)
+	resp.Diagnostics.Append(diags...)
+	data.AllowedClientIDs, diags = ugIDSetValue(ctx, foundGroup.AllowedClientIDs)
+	resp.Diagnostics.Append(diags...)
+	data.UserCount = types.Int64Value(int64(len(foundGroup.MemberIDs)))
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
@@ -153,14 +187,16 @@ func (d *groupDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 // An ID is resolved with the single-object endpoint, never by scanning a list:
 // a list is paginated, and a group beyond its first page would read as "not
 // found". A name is resolved with the server's search, which can only return a
-// superset of the exact match, followed by an exact comparison over every page.
-// When both are set they must name the same group.
-func (d *groupDataSource) lookup(ctx context.Context, data groupDataSourceModel, diags *diag.Diagnostics) *client.UserGroup {
+// superset of the exact match, followed by an exact comparison over every page,
+// and then the single-object endpoint for the group found (the list carries
+// neither members nor allowed clients). When both are set they must name the
+// same group.
+func (d *groupDataSource) lookup(ctx context.Context, data groupDataSourceModel, diags *diag.Diagnostics) *client.GroupDetail {
 	hasID, hasName := !data.ID.IsNull(), !data.Name.IsNull()
 
-	var found *client.UserGroup
+	var found *client.GroupDetail
 	if hasID {
-		group, err := d.client.GetUserGroup(ctx, data.ID.ValueString())
+		group, err := d.client.GetUserGroupDetail(ctx, data.ID.ValueString())
 		switch {
 		case err == nil:
 			found = group
@@ -190,9 +226,21 @@ func (d *groupDataSource) lookup(ctx context.Context, data groupDataSourceModel,
 		return nil
 	}
 	for i := range groups {
-		if groups[i].Name == data.Name.ValueString() {
-			return &groups[i]
+		if groups[i].Name != data.Name.ValueString() {
+			continue
 		}
+		// The search result is the list endpoint's view of the group, which
+		// has no members or allowed clients: read the group itself.
+		group, err := d.client.GetUserGroupDetail(ctx, groups[i].ID)
+		switch {
+		case err == nil:
+			return group
+		case client.IsNotFound(err, client.ResourceUserGroup):
+			diags.AddError("Group Not Found", fmt.Sprintf("The group named '%s' was deleted while it was being read", data.Name.ValueString()))
+		default:
+			diags.AddError("Unable to Read Group", err.Error())
+		}
+		return nil
 	}
 	diags.AddError("Group Not Found", fmt.Sprintf("No group found with name '%s'", data.Name.ValueString()))
 	return nil

@@ -77,9 +77,10 @@ output "john_doe_email" {
 
 Read-Only:
 
+- `custom_claims` (Map of String) The user's custom claims, by claim key. Empty when the user has none.
 - `disabled` (Boolean) Whether the user account is disabled.
 - `display_name` (String) The display name of the user.
-- `email` (String) The email address of the user.
+- `email` (String) The email address of the user. Null for a user without one.
 - `email_verified` (Boolean) Whether the user's email address is verified.
 - `first_name` (String) The first name of the user.
 - `groups` (Set of String) List of group IDs the user belongs to.

@@ -46,3 +46,11 @@ output "total_groups" {
 output "group_names" {
   value = [for g in data.pocketid_groups.all.groups : g.name]
 }
+
+# Members per group, without a request per group
+output "members_by_group" {
+  value = {
+    for group in data.pocketid_groups.all.groups :
+    group.name => group.member_ids
+  }
+}

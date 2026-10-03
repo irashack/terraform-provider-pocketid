@@ -29,17 +29,24 @@ type b2Fake struct {
 	t        *testing.T
 	mu       sync.Mutex
 	handlers map[string]http.HandlerFunc
+	prefixes map[string]http.HandlerFunc
 	requests []string
 }
 
 func newB2Fake(t *testing.T) *b2Fake {
 	t.Helper()
-	return &b2Fake{t: t, handlers: map[string]http.HandlerFunc{}}
+	return &b2Fake{t: t, handlers: map[string]http.HandlerFunc{}, prefixes: map[string]http.HandlerFunc{}}
 }
 
 // handle registers a handler for "METHOD /path" (no query).
 func (f *b2Fake) handle(pattern string, h http.HandlerFunc) {
 	f.handlers[pattern] = h
+}
+
+// handlePrefix registers a handler for every "METHOD /path/..." under a prefix
+// ("GET /api/user-groups/") that has no handler of its own.
+func (f *b2Fake) handlePrefix(pattern string, h http.HandlerFunc) {
+	f.prefixes[pattern] = h
 }
 
 // client starts the server and returns a client for it.
@@ -50,6 +57,14 @@ func (f *b2Fake) client() *client.Client {
 		f.requests = append(f.requests, r.Method+" "+r.URL.RequestURI())
 		f.mu.Unlock()
 		h, ok := f.handlers[r.Method+" "+r.URL.Path]
+		if !ok {
+			for prefix, candidate := range f.prefixes {
+				if strings.HasPrefix(r.Method+" "+r.URL.Path, prefix) {
+					h, ok = candidate, true
+					break
+				}
+			}
+		}
 		if !ok {
 			f.t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 			b2JSON(w, http.StatusNotFound, map[string]any{"error": "API endpoint not found"})

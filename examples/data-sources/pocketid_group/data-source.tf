@@ -28,3 +28,13 @@ output "developers_group_info" {
     friendly_name = data.pocketid_group.developers.friendly_name
   }
 }
+
+# Who is in the group, which clients allow it, and its claims
+output "developers_group_details" {
+  value = {
+    member_ids         = data.pocketid_group.developers.member_ids
+    allowed_client_ids = data.pocketid_group.developers.allowed_client_ids
+    user_count         = data.pocketid_group.developers.user_count
+    custom_claims      = data.pocketid_group.developers.custom_claims
+  }
+}

@@ -6,6 +6,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
@@ -37,11 +38,15 @@ type groupsDataSourceModel struct {
 
 // groupModel describes the group data model.
 type groupModel struct {
-	ID           types.String `tfsdk:"id"`
-	Name         types.String `tfsdk:"name"`
-	FriendlyName types.String `tfsdk:"friendly_name"`
-	LdapID       types.String `tfsdk:"ldap_id"`
-	CreatedAt    types.String `tfsdk:"created_at"`
+	ID               types.String `tfsdk:"id"`
+	Name             types.String `tfsdk:"name"`
+	FriendlyName     types.String `tfsdk:"friendly_name"`
+	LdapID           types.String `tfsdk:"ldap_id"`
+	CreatedAt        types.String `tfsdk:"created_at"`
+	CustomClaims     types.Map    `tfsdk:"custom_claims"`
+	MemberIDs        types.Set    `tfsdk:"member_ids"`
+	AllowedClientIDs types.Set    `tfsdk:"allowed_client_ids"`
+	UserCount        types.Int64  `tfsdk:"user_count"`
 }
 
 // Metadata returns the data source type name.
@@ -52,7 +57,7 @@ func (d *groupsDataSource) Metadata(_ context.Context, req datasource.MetadataRe
 // Schema defines the schema for the data source.
 func (d *groupsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Retrieves information about all Pocket-ID groups.",
+		Description: "Retrieves information about all Pocket-ID groups. Each group's members are built from one pass over the user list and its allowed clients from one pass over the client list, so the cost grows with the number of users and clients, not with one request per group (except against Pocket ID 2.14, whose client list does not carry groups: there the allowed clients cost one request per group).",
 
 		Attributes: map[string]schema.Attribute{
 			"groups": schema.ListNestedAttribute{
@@ -78,6 +83,25 @@ func (d *groupsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 						},
 						"created_at": schema.StringAttribute{
 							Description: "The creation time of the group in RFC3339 format.",
+							Computed:    true,
+						},
+						"custom_claims": schema.MapAttribute{
+							Description: "The group's custom claims, by claim key. Empty when the group has none.",
+							Computed:    true,
+							ElementType: types.StringType,
+						},
+						"member_ids": schema.SetAttribute{
+							Description: "The IDs of the users in the group. Empty when the group has no members.",
+							Computed:    true,
+							ElementType: types.StringType,
+						},
+						"allowed_client_ids": schema.SetAttribute{
+							Description: "The IDs of the OIDC clients that list this group as allowed. Empty when there are none. A client that is not group-restricted admits every user, whatever this lists.",
+							Computed:    true,
+							ElementType: types.StringType,
+						},
+						"user_count": schema.Int64Attribute{
+							Description: "The number of users in the group.",
 							Computed:    true,
 						},
 					},
@@ -131,6 +155,17 @@ func (d *groupsDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 		"count": len(groupsResp),
 	})
 
+	members, err := d.client.GroupMemberIDs(ctx)
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to Read Group Members", err.Error())
+		return
+	}
+	allowedClients, ok, err := d.client.AllowedClientIDsByGroup(ctx)
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to Read Group Clients", err.Error())
+		return
+	}
+
 	// Map response body to model
 	data.Groups = make([]groupModel, len(groupsResp))
 	for i, group := range groupsResp {
@@ -140,6 +175,7 @@ func (d *groupsDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 			FriendlyName: types.StringValue(group.FriendlyName),
 			LdapID:       types.StringNull(),
 			CreatedAt:    types.StringNull(),
+			UserCount:    types.Int64Value(int64(group.UserCount)),
 		}
 		if group.LdapID != nil && *group.LdapID != "" {
 			gm.LdapID = types.StringValue(*group.LdapID)
@@ -147,7 +183,29 @@ func (d *groupsDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 		if group.CreatedAt != "" {
 			gm.CreatedAt = types.StringValue(group.CreatedAt)
 		}
+
+		clientIDs := allowedClients[group.ID]
+		if !ok {
+			// Pocket ID 2.14: the client list has no groups.
+			detail, err := d.client.GetUserGroupDetail(ctx, group.ID)
+			if err != nil {
+				resp.Diagnostics.AddError("Unable to Read Group", fmt.Sprintf("Could not read group %s: %s", group.ID, err))
+				return
+			}
+			clientIDs = detail.AllowedClientIDs
+		}
+
+		var diags diag.Diagnostics
+		gm.CustomClaims, diags = ugClaimsMapValue(ctx, group.CustomClaims)
+		resp.Diagnostics.Append(diags...)
+		gm.MemberIDs, diags = ugIDSetValue(ctx, members[group.ID])
+		resp.Diagnostics.Append(diags...)
+		gm.AllowedClientIDs, diags = ugIDSetValue(ctx, clientIDs)
+		resp.Diagnostics.Append(diags...)
 		data.Groups[i] = gm
+	}
+	if resp.Diagnostics.HasError() {
+		return
 	}
 
 	// Save data into Terraform state

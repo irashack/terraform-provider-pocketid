@@ -47,6 +47,7 @@ type userDataSourceModel struct {
 	Disabled      types.Bool   `tfsdk:"disabled"`
 	LdapID        types.String `tfsdk:"ldap_id"`
 	Groups        types.Set    `tfsdk:"groups"`
+	CustomClaims  types.Map    `tfsdk:"custom_claims"`
 }
 
 // Metadata returns the data source type name.
@@ -73,8 +74,8 @@ func (d *userDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, r
 				Computed:            true,
 			},
 			"email": schema.StringAttribute{
-				Description:         "The email address of the user to fetch. Exactly one of `id`, `username`, or `email` must be specified.",
-				MarkdownDescription: "The email address of the user to fetch. Exactly one of `id`, `username`, or `email` must be specified.",
+				Description:         "The email address of the user to fetch, or null for a user without one. Exactly one of `id`, `username`, or `email` must be specified.",
+				MarkdownDescription: "The email address of the user to fetch, or null for a user without one. Exactly one of `id`, `username`, or `email` must be specified.",
 				Optional:            true,
 				Computed:            true,
 			},
@@ -112,6 +113,11 @@ func (d *userDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, r
 			},
 			"groups": schema.SetAttribute{
 				Description: "List of group IDs the user belongs to.",
+				Computed:    true,
+				ElementType: types.StringType,
+			},
+			"custom_claims": schema.MapAttribute{
+				Description: ugUserClaimsDescription,
 				Computed:    true,
 				ElementType: types.StringType,
 			},
@@ -272,46 +278,13 @@ func (d *userDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 	}
 
 	// Map response to model
-	state := userDataSourceModel{
-		ID:            types.StringValue(userResp.ID),
-		Username:      types.StringValue(userResp.Username),
-		Email:         types.StringValue(userResp.Email),
-		FirstName:     types.StringValue(userResp.FirstName),
-		LastName:      types.StringValue(userResp.LastName),
-		DisplayName:   types.StringValue(userResp.DisplayName),
-		EmailVerified: types.BoolValue(userResp.EmailVerified),
-		IsAdmin:       types.BoolValue(userResp.IsAdmin),
-		Disabled:      types.BoolValue(userResp.Disabled),
-	}
-
-	// Handle locale
-	if userResp.Locale != nil && *userResp.Locale != "" {
-		state.Locale = types.StringValue(*userResp.Locale)
-	} else {
-		state.Locale = types.StringNull()
-	}
-
-	// Handle ldap_id
-	if userResp.LdapID != nil && *userResp.LdapID != "" {
-		state.LdapID = types.StringValue(*userResp.LdapID)
-	} else {
-		state.LdapID = types.StringNull()
-	}
-
-	// Map groups
-	if len(userResp.UserGroups) > 0 {
-		var groupIDs []string
-		for _, group := range userResp.UserGroups {
-			groupIDs = append(groupIDs, group.ID)
-		}
-		groups, diags := types.SetValueFrom(ctx, types.StringType, groupIDs)
-		resp.Diagnostics.Append(diags...)
-		state.Groups = groups
-	} else {
-		state.Groups = types.SetNull(types.StringType)
+	state, mapDiags := ugUserModelFromAPI(ctx, userResp)
+	resp.Diagnostics.Append(mapDiags...)
+	if resp.Diagnostics.HasError() {
+		return
 	}
 
 	// Set state
-	diags = resp.State.Set(ctx, &state)
+	diags = resp.State.Set(ctx, userDataSourceModel(state))
 	resp.Diagnostics.Append(diags...)
 }

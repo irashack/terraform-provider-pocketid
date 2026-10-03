@@ -76,12 +76,13 @@ resource "pocketid_group_membership" "owner_admins" {
 
 ### Optional
 
-- `email` (String) The email address of the user to fetch. Exactly one of `id`, `username`, or `email` must be specified.
+- `email` (String) The email address of the user to fetch, or null for a user without one. Exactly one of `id`, `username`, or `email` must be specified.
 - `id` (String) The ID of the user to fetch. Exactly one of `id`, `username`, or `email` must be specified.
 - `username` (String) The username of the user to fetch. Exactly one of `id`, `username`, or `email` must be specified.
 
 ### Read-Only
 
+- `custom_claims` (Map of String) The user's custom claims, by claim key. Empty when the user has none.
 - `disabled` (Boolean) Whether the user account is disabled.
 - `display_name` (String) The display name of the user.
 - `email_verified` (Boolean) Whether the user's email address is verified.

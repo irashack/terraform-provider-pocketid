@@ -93,6 +93,21 @@ func TestGroupDataSource_Read_ByIDMustBeUUID(t *testing.T) {
 	assert.Empty(t, fake.log())
 }
 
+// b2GroupDetailHandler serves GET /api/user-groups/{id} for a fixed set of
+// groups.
+func b2GroupDetailHandler(groups []map[string]any) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/api/user-groups/")
+		for _, g := range groups {
+			if g["id"] == id {
+				b2JSON(w, http.StatusOK, g)
+				return
+			}
+		}
+		b2NotFound(w, "User group")
+	}
+}
+
 // b2GroupSearchHandler serves GET /api/user-groups for a fixed set of groups
 // the way Pocket ID does: the search term selects groups whose name contains
 // it (case-insensitive), and the result is paginated.
@@ -120,6 +135,7 @@ func TestGroupDataSource_Read_ByNameFindsExactMatchAmongSimilarOnes(t *testing.T
 	groups = append(groups, b2GroupJSON(231, "admins-extra"), b2GroupJSON(232, "Admins"), b2GroupJSON(233, "admins"))
 	fake := newB2Fake(t)
 	fake.handle("GET /api/user-groups", b2GroupSearchHandler(groups))
+	fake.handlePrefix("GET /api/user-groups/", b2GroupDetailHandler(groups))
 	ds := b2Configure(t, datasources.NewGroupDataSource(), fake.client())
 
 	resp := b2Read(t, ds, map[string]tftypes.Value{"name": b2Str("admins")})
@@ -127,9 +143,8 @@ func TestGroupDataSource_Read_ByNameFindsExactMatchAmongSimilarOnes(t *testing.T
 	var id string
 	b2Attr(t, resp, "id", &id)
 	assert.Equal(t, b2UUID(233), id, "the group named exactly admins, not Admins or admins-extra")
-	for _, request := range fake.log() {
-		assert.Contains(t, request, "search=admins")
-	}
+	assert.Contains(t, fake.log()[0], "search=admins")
+	assert.Equal(t, "GET /api/user-groups/"+b2UUID(233), fake.log()[len(fake.log())-1], "the group found is then read itself")
 
 	// Without the exact comparison and with several pages the last group would
 	// be missed: team-230 only exists on the third page of an unfiltered list.
@@ -160,6 +175,7 @@ func TestGroupDataSource_Read_ByNameWithBackslashListsEveryGroup(t *testing.T) {
 		assert.Empty(t, r.URL.Query().Get("search"))
 		b2Paginate(w, r, []any{groups[0], groups[1]})
 	})
+	fake.handlePrefix("GET /api/user-groups/", b2GroupDetailHandler(groups))
 	ds := b2Configure(t, datasources.NewGroupDataSource(), fake.client())
 
 	resp := b2Read(t, ds, map[string]tftypes.Value{"name": b2Str(`corp\admins`)})
@@ -198,6 +214,8 @@ func TestGroupsDataSource_Read_ListsEveryPage(t *testing.T) {
 	}
 	fake := newB2Fake(t)
 	fake.handle("GET /api/user-groups", func(w http.ResponseWriter, r *http.Request) { b2Paginate(w, r, groups) })
+	fake.handle("GET /api/users", func(w http.ResponseWriter, r *http.Request) { b2Paginate(w, r, nil) })
+	fake.handle("GET /api/oidc/clients", func(w http.ResponseWriter, r *http.Request) { b2Paginate(w, r, nil) })
 	ds := b2Configure(t, datasources.NewGroupsDataSource(), fake.client())
 
 	resp := b2Read(t, ds, nil)

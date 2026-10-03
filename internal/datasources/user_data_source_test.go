@@ -221,6 +221,7 @@ func userDataSourceConfig(ctx context.Context, t *testing.T, sch schema.Schema, 
 			"disabled":       tftypes.NewValue(tftypes.Bool, nil),
 			"ldap_id":        tftypes.NewValue(tftypes.String, nil),
 			"groups":         tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, nil),
+			"custom_claims":  tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil),
 		}),
 	}
 }

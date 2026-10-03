@@ -49,6 +49,7 @@ type userModel struct {
 	Disabled      types.Bool   `tfsdk:"disabled"`
 	LdapID        types.String `tfsdk:"ldap_id"`
 	Groups        types.Set    `tfsdk:"groups"`
+	CustomClaims  types.Map    `tfsdk:"custom_claims"`
 }
 
 // Metadata returns the data source type name.
@@ -76,7 +77,7 @@ func (d *usersDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, 
 							Computed:    true,
 						},
 						"email": schema.StringAttribute{
-							Description: "The email address of the user.",
+							Description: "The email address of the user. Null for a user without one.",
 							Computed:    true,
 						},
 						"first_name": schema.StringAttribute{
@@ -113,6 +114,11 @@ func (d *usersDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, 
 						},
 						"groups": schema.SetAttribute{
 							Description: "List of group IDs the user belongs to.",
+							Computed:    true,
+							ElementType: types.StringType,
+						},
+						"custom_claims": schema.MapAttribute{
+							Description: ugUserClaimsDescription,
 							Computed:    true,
 							ElementType: types.StringType,
 						},
@@ -162,47 +168,13 @@ func (d *usersDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 	}
 
 	// Convert each user
-	for _, userResp := range users {
-		userState := userModel{
-			ID:            types.StringValue(userResp.ID),
-			Username:      types.StringValue(userResp.Username),
-			Email:         types.StringValue(userResp.Email),
-			FirstName:     types.StringValue(userResp.FirstName),
-			LastName:      types.StringValue(userResp.LastName),
-			DisplayName:   types.StringValue(userResp.DisplayName),
-			EmailVerified: types.BoolValue(userResp.EmailVerified),
-			IsAdmin:       types.BoolValue(userResp.IsAdmin),
-			Disabled:      types.BoolValue(userResp.Disabled),
-		}
-
-		// Handle locale
-		if userResp.Locale != nil && *userResp.Locale != "" {
-			userState.Locale = types.StringValue(*userResp.Locale)
-		} else {
-			userState.Locale = types.StringNull()
-		}
-
-		// Handle ldap_id
-		if userResp.LdapID != nil && *userResp.LdapID != "" {
-			userState.LdapID = types.StringValue(*userResp.LdapID)
-		} else {
-			userState.LdapID = types.StringNull()
-		}
-
-		// Map groups
-		if len(userResp.UserGroups) > 0 {
-			var groupIDs []string
-			for _, group := range userResp.UserGroups {
-				groupIDs = append(groupIDs, group.ID)
-			}
-			groups, diags := types.SetValueFrom(ctx, types.StringType, groupIDs)
-			resp.Diagnostics.Append(diags...)
-			userState.Groups = groups
-		} else {
-			userState.Groups = types.SetNull(types.StringType)
-		}
-
+	for i := range users {
+		userState, diags := ugUserModelFromAPI(ctx, &users[i])
+		resp.Diagnostics.Append(diags...)
 		state.Users = append(state.Users, userState)
+	}
+	if resp.Diagnostics.HasError() {
+		return
 	}
 
 	tflog.Debug(ctx, "Found users", map[string]any{

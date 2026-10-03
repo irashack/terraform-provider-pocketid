@@ -199,18 +199,19 @@ func usersDataSourceSchema(t *testing.T, ds datasource.DataSource) schema.Schema
 // usersDataSourceUserModel mirrors every attribute of the users_data_source
 // nested object, so reading the "users" list attribute back into it succeeds.
 type usersDataSourceUserModel struct {
-	ID            string   `tfsdk:"id"`
-	Username      string   `tfsdk:"username"`
-	Email         string   `tfsdk:"email"`
-	FirstName     string   `tfsdk:"first_name"`
-	LastName      string   `tfsdk:"last_name"`
-	DisplayName   string   `tfsdk:"display_name"`
-	EmailVerified bool     `tfsdk:"email_verified"`
-	IsAdmin       bool     `tfsdk:"is_admin"`
-	Locale        *string  `tfsdk:"locale"`
-	Disabled      bool     `tfsdk:"disabled"`
-	LdapID        *string  `tfsdk:"ldap_id"`
-	Groups        []string `tfsdk:"groups"`
+	ID            string            `tfsdk:"id"`
+	Username      string            `tfsdk:"username"`
+	Email         string            `tfsdk:"email"`
+	FirstName     string            `tfsdk:"first_name"`
+	LastName      string            `tfsdk:"last_name"`
+	DisplayName   string            `tfsdk:"display_name"`
+	EmailVerified bool              `tfsdk:"email_verified"`
+	IsAdmin       bool              `tfsdk:"is_admin"`
+	Locale        *string           `tfsdk:"locale"`
+	Disabled      bool              `tfsdk:"disabled"`
+	LdapID        *string           `tfsdk:"ldap_id"`
+	Groups        []string          `tfsdk:"groups"`
+	CustomClaims  map[string]string `tfsdk:"custom_claims"`
 }
 
 // TestUsersDataSource_Read_ListsUsersAcrossAllPages is the pocketid_users
