@@ -202,3 +202,95 @@ func TestScimServiceProvider_WriteOnlyTokenConfigurationRules(t *testing.T) {
 		})
 	}
 }
+
+// scimImportThenRead runs the provider's import and the refresh that follows it,
+// as Terraform does, and returns the refreshed state's attributes.
+func scimImportThenRead(t *testing.T, serverToken, importID string) map[string]tftypes.Value {
+	t.Helper()
+	ctx := context.Background()
+	server, objectType := scimProtocolServer(t, serverToken)
+
+	imported, err := server.ImportResourceState(ctx, &tfprotov6.ImportResourceStateRequest{TypeName: scimResourceType, ID: importID})
+	require.NoError(t, err)
+	require.Empty(t, imported.Diagnostics)
+	require.Len(t, imported.ImportedResources, 1)
+
+	read, err := server.ReadResource(ctx, &tfprotov6.ReadResourceRequest{TypeName: scimResourceType, CurrentState: imported.ImportedResources[0].State})
+	require.NoError(t, err)
+	require.Empty(t, read.Diagnostics)
+	value, err := read.NewState.Unmarshal(objectType)
+	require.NoError(t, err)
+	require.False(t, value.IsNull(), "the imported provider must exist after the refresh")
+	var attributes map[string]tftypes.Value
+	require.NoError(t, value.As(&attributes))
+	return attributes
+}
+
+func scimAttributeString(t *testing.T, attributes map[string]tftypes.Value, name string) (string, bool) {
+	t.Helper()
+	if attributes[name].IsNull() {
+		return "", false
+	}
+	var out string
+	require.NoError(t, attributes[name].As(&out))
+	return out, true
+}
+
+// The ordinary import form is for configurations that use `token`: the
+// refresh stores the token Pocket ID holds, which is documented.
+func TestScimServiceProvider_OrdinaryImportStoresTheServersToken(t *testing.T) {
+	attributes := scimImportThenRead(t, "server-token-value", "scim-client")
+
+	token, ok := scimAttributeString(t, attributes, "token")
+	require.True(t, ok)
+	assert.Equal(t, "server-token-value", token)
+	_, hasVersion := scimAttributeString(t, attributes, "token_wo_version")
+	assert.False(t, hasVersion)
+	clientID, _ := scimAttributeString(t, attributes, "client_id")
+	assert.Equal(t, "scim-client", clientID)
+}
+
+// The write-only import form seeds token_wo_version before the first Read, so
+// the refresh that follows the import never writes the token to state.
+func TestScimServiceProvider_WriteOnlyImportNeverStoresTheServersToken(t *testing.T) {
+	for _, version := range []string{"1", "2026-10", "a,b=c"} {
+		t.Run(version, func(t *testing.T) {
+			attributes := scimImportThenRead(t, "server-token-value", "scim-client,token_wo_version="+version)
+
+			_, hasToken := scimAttributeString(t, attributes, "token")
+			assert.False(t, hasToken, "the write-only import form must not store the token")
+			_, hasWriteOnly := scimAttributeString(t, attributes, "token_wo")
+			assert.False(t, hasWriteOnly)
+			got, ok := scimAttributeString(t, attributes, "token_wo_version")
+			require.True(t, ok)
+			assert.Equal(t, version, got)
+			clientID, _ := scimAttributeString(t, attributes, "client_id")
+			assert.Equal(t, "scim-client", clientID)
+			endpoint, _ := scimAttributeString(t, attributes, "endpoint")
+			assert.Equal(t, "https://scim.example.com/v2", endpoint)
+			for name, value := range attributes {
+				if !value.IsNull() {
+					var text string
+					if value.As(&text) == nil {
+						assert.NotContains(t, text, "server-token-value", "attribute %s", name)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestScimServiceProvider_ImportRefusesMalformedIDs(t *testing.T) {
+	for _, id := range []string{
+		"", "x", "../x", "scim-client,", "scim-client,token_wo_version=", "scim-client,version=1",
+		"scim-client,token_wo_version", "scim-client token_wo_version=1", ",token_wo_version=1",
+	} {
+		t.Run(id, func(t *testing.T) {
+			server, _ := scimProtocolServer(t, "server-token-value")
+			imported, err := server.ImportResourceState(context.Background(), &tfprotov6.ImportResourceStateRequest{TypeName: scimResourceType, ID: id})
+			require.NoError(t, err)
+			require.NotEmpty(t, imported.Diagnostics)
+			assert.Empty(t, imported.ImportedResources)
+		})
+	}
+}

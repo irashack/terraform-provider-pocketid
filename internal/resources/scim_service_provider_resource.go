@@ -2,7 +2,9 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -61,7 +63,12 @@ func (r *scimServiceProviderResource) Schema(_ context.Context, _ resource.Schem
 		Description: "Manages the SCIM service provider configuration for an OIDC client in Pocket-ID.",
 		MarkdownDescription: "Manages the SCIM service provider configuration for an OIDC client in Pocket-ID. " +
 			"This enables Pocket-ID to provision users and groups to an external service via SCIM. " +
-			"Each OIDC client may have a single SCIM service provider configuration.",
+			"Each OIDC client may have a single SCIM service provider configuration.\n\n" +
+			"Import with the OIDC client ID (`<client_id>`) for a configuration that uses `token`: the first refresh stores " +
+			"the bearer token Pocket-ID holds in the state, so that it can be compared with the configuration. For a " +
+			"configuration that uses `token_wo`, import with `<client_id>,token_wo_version=<version>` instead, using the " +
+			"same version as the configuration: the version is set before the first refresh, which then never stores the " +
+			"token.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "The unique identifier of the SCIM service provider configuration.",
@@ -342,9 +349,49 @@ func (r *scimServiceProviderResource) Delete(ctx context.Context, req resource.D
 	}
 }
 
-// ImportState imports an existing resource into Terraform using the OIDC client ID.
+// scimImportVersionKey introduces the write-only import form,
+// "<client_id>,token_wo_version=<version>". A client ID is 2 to 128 letters,
+// digits, '.', '_' and '-', so neither ',' nor '=' can occur in one.
+const scimImportVersionKey = "token_wo_version="
+
+// parseScimImportID splits an import ID into the OIDC client ID and, for the
+// write-only form, the token_wo_version to seed before the first Read. Nothing
+// of the ID is put in the error: it is typed by the user and the form is fixed.
+func parseScimImportID(id string) (clientID string, version types.String, err error) {
+	clientPart, rest, hasVersion := strings.Cut(id, ",")
+	if err := client.ValidateClientID(clientPart); err != nil {
+		return "", types.StringNull(), errors.New("the import ID must start with a valid OIDC client ID")
+	}
+	if !hasVersion {
+		return clientPart, types.StringNull(), nil
+	}
+	value, ok := strings.CutPrefix(rest, scimImportVersionKey)
+	if !ok || value == "" {
+		return "", types.StringNull(), errors.New("after the client ID, the import ID may only add ,token_wo_version=<version> with a non-empty version")
+	}
+	return clientPart, types.StringValue(value), nil
+}
+
+// ImportState imports an existing resource into Terraform. The import ID is
+// the OIDC client ID, which stores the token Pocket ID holds in the state on
+// the first Read (the ordinary form, for configurations that use `token`), or
+// "<client_id>,token_wo_version=<version>", which seeds token_wo_version first
+// so that the Read never stores the token (the write-only form, for
+// configurations that use `token_wo`: set the same version there).
 func (r *scimServiceProviderResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	resource.ImportStatePassthroughID(ctx, path.Root("client_id"), req, resp)
+	clientID, version, err := parseScimImportID(req.ID)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Invalid import ID",
+			err.Error()+". Use <client_id> for a configuration with `token`, or <client_id>,token_wo_version=<version> "+
+				"for one with `token_wo`.",
+		)
+		return
+	}
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("client_id"), clientID)...)
+	if !version.IsNull() {
+		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("token_wo_version"), version)...)
+	}
 }
 
 // configuredTokenWO returns the write-only token from the configuration, or

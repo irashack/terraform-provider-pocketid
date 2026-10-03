@@ -437,3 +437,59 @@ func TestAccResourceScimServiceProvider_writeOnlyConfigurationRules(t *testing.T
 		},
 	})
 }
+
+// Import for a write-only configuration seeds the version, so the refresh
+// after the import leaves the token out of the state. ImportStateVerify
+// compares the imported state with the one the apply produced, which has no
+// token either.
+func TestAccResourceScimServiceProvider_writeOnlyImport(t *testing.T) {
+	resourceName := "pocketid_scim_service_provider.test"
+	clientName := acctest.RandomWithPrefix("tf-acc-scim-wo-import")
+	endpoint := "https://scim.example.com/v2"
+	config := testAccResourceScimServiceProviderConfig_writeOnly(clientName, endpoint, "wo-import-token", "7")
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		TerraformVersionChecks:   []tfversion.TerraformVersionCheck{tfversion.SkipBelow(tfversion.Version1_11_0)},
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check:  testAccScimCheckServerToken(resourceName, "wo-import-token"),
+			},
+			{
+				ResourceName: resourceName,
+				ImportState:  true,
+				ImportStateIdFunc: func(s *terraform.State) (string, error) {
+					rs, ok := s.RootModule().Resources[resourceName]
+					if !ok {
+						return "", fmt.Errorf("Not found: %s", resourceName)
+					}
+					return rs.Primary.Attributes["client_id"] + ",token_wo_version=7", nil
+				},
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"created_at"},
+				ImportStateCheck: func(states []*terraform.InstanceState) error {
+					if len(states) != 1 {
+						return fmt.Errorf("expected one imported state, got %d", len(states))
+					}
+					for name, value := range states[0].Attributes {
+						if strings.Contains(value, "wo-import-token") {
+							return fmt.Errorf("attribute %s holds the write-only token", name)
+						}
+					}
+					if _, ok := states[0].Attributes["token"]; ok {
+						return fmt.Errorf("the imported state holds a token attribute")
+					}
+					return nil
+				},
+			},
+			{
+				// The imported state and the configuration agree: nothing to do,
+				// and the server keeps its token.
+				Config:   config,
+				PlanOnly: true,
+			},
+		},
+	})
+}

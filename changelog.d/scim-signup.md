@@ -20,6 +20,12 @@
   it again. `token_wo` conflicts with `token` and needs `token_wo_version`.
   Write-only attributes need Terraform or OpenTofu 1.11 or later; `token`
   keeps working everywhere.
+- Importing a `pocketid_scim_service_provider` that your configuration manages
+  with `token_wo`: import with `<client_id>,token_wo_version=<version>` (the
+  version your configuration uses) so the refresh after the import never writes
+  the token into the state. The ordinary import ID, `<client_id>`, is for
+  configurations that use `token`; its first refresh stores the bearer token
+  Pocket ID holds in the state, as before.
 - New resource `pocketid_scim_sync`: runs a SCIM synchronization of one
   `pocketid_scim_service_provider` during the apply, like `pocketid_ldap_sync`
   does for LDAP. It is created once, and replaced (so it syncs again) when its

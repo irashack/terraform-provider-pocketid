@@ -4,11 +4,14 @@ page_title: "pocketid_scim_service_provider Resource - terraform-provider-pocket
 subcategory: ""
 description: |-
   Manages the SCIM service provider configuration for an OIDC client in Pocket-ID. This enables Pocket-ID to provision users and groups to an external service via SCIM. Each OIDC client may have a single SCIM service provider configuration.
+  Import with the OIDC client ID (<client_id>) for a configuration that uses token: the first refresh stores the bearer token Pocket-ID holds in the state, so that it can be compared with the configuration. For a configuration that uses token_wo, import with <client_id>,token_wo_version=<version> instead, using the same version as the configuration: the version is set before the first refresh, which then never stores the token.
 ---
 
 # pocketid_scim_service_provider (Resource)
 
 Manages the SCIM service provider configuration for an OIDC client in Pocket-ID. This enables Pocket-ID to provision users and groups to an external service via SCIM. Each OIDC client may have a single SCIM service provider configuration.
+
+Import with the OIDC client ID (`<client_id>`) for a configuration that uses `token`: the first refresh stores the bearer token Pocket-ID holds in the state, so that it can be compared with the configuration. For a configuration that uses `token_wo`, import with `<client_id>,token_wo_version=<version>` instead, using the same version as the configuration: the version is set before the first refresh, which then never stores the token.
 
 ## Example Usage
 
@@ -85,3 +88,20 @@ resource "pocketid_scim_service_provider" "write_only" {
 - `created_at` (String) The timestamp when the SCIM service provider configuration was created.
 - `id` (String) The unique identifier of the SCIM service provider configuration.
 - `last_synced_at` (String) The timestamp of the last successful SCIM synchronization.
+
+## Import
+
+Import is supported using the following syntax:
+
+The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
+
+```shell
+# A SCIM service provider is imported with the ID of its OIDC client. For a
+# configuration that uses `token`, the first refresh stores the bearer token
+# Pocket-ID holds in the state (sensitive, but in plain text in the state file):
+terraform import pocketid_scim_service_provider.example "my-client-id"
+
+# For a configuration that uses `token_wo`, add the token_wo_version of that
+# configuration, so the token is never stored in the state:
+terraform import pocketid_scim_service_provider.write_only "my-client-id,token_wo_version=2026-10"
+```
