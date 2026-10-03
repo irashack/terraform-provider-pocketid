@@ -91,7 +91,7 @@ output "development_clients" {
 Read-Only:
 
 - `access_token_duration_minutes` (Number) Lifetime of the client's access tokens in minutes.
-- `allowed_user_groups` (Set of String) IDs of the user groups whose members may use this client; null when it has none.
+- `allowed_user_groups` (Set of String) IDs of the user groups whose members may use this client; null when it has none. On Pocket ID 2.14 the client list reports only how many groups a client allows, not which, so this is null there for every client; read a client with the `pocketid_client` data source to get its groups.
 - `backchannel_logout_url` (String) The OpenID Connect Back-Channel Logout URL of the client; null when it has none or the server predates Pocket ID 2.17.0.
 - `callback_urls` (List of String) List of allowed callback URLs for the OIDC client.
 - `client_type` (String) How the client was registered: `standard`, or `cimd` for a client registered from a Client ID Metadata Document (Pocket ID 2.14.0 and later).

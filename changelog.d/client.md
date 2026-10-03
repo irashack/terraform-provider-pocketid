@@ -97,3 +97,7 @@
   client that was group-restricted in the admin UI after the last refresh
   when `is_group_restricted` is not configured; the apply stops before
   changing anything and asks for a refreshed plan.
+- On Pocket ID 2.14, the `pocketid_clients` data source reports
+  `allowed_user_groups` as null for every client: that version's client list
+  gives only the number of allowed groups. Use the `pocketid_client` data
+  source for a client's groups there.

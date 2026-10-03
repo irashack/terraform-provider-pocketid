@@ -102,6 +102,11 @@ data "pocketid_clients" "all" {
 		return nil
 	}
 	ds := "data.pocketid_client.test"
+	// Pocket ID 2.14.0's client list reports group counts, not IDs.
+	listedGroups := "1"
+	if !testAccServerAtLeast(t, "2.15.0") {
+		listedGroups = ""
+	}
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
@@ -138,6 +143,7 @@ data "pocketid_clients" "all" {
 					testAccCheckListedClient("pocketid_client.test", "client_type", "standard"),
 					testAccCheckListedClient("pocketid_client.test", "secrets.#", "1"),
 					testAccCheckListedClient("pocketid_client.test", "federated_identities.#", "1"),
+					testAccCheckListedClient("pocketid_client.test", "allowed_user_groups.#", listedGroups),
 					// The managed resource picks the dark logo up on refresh.
 					resource.TestCheckResourceAttr("pocketid_client.test", "has_dark_logo", "true"),
 				),

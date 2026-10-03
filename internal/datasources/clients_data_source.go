@@ -6,6 +6,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
@@ -41,6 +42,18 @@ func (d *clientsDataSource) Metadata(_ context.Context, req datasource.MetadataR
 
 // Schema defines the schema for the data source.
 func (d *clientsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+	attributes := clientAttributes(schema.StringAttribute{
+		Description: "The ID of the OIDC client.",
+		Computed:    true,
+	})
+	// Pocket ID 2.14.0's client list (OidcClientWithAllowedGroupsCountDto)
+	// reports only how many groups a client allows; 2.15.0 and later list them.
+	attributes["allowed_user_groups"] = schema.SetAttribute{
+		Description: "IDs of the user groups whose members may use this client; null when it has none. " +
+			"On Pocket ID 2.14 the client list reports only how many groups a client allows, not which, so this is null there for every client; read a client with the `pocketid_client` data source to get its groups.",
+		Computed:    true,
+		ElementType: types.StringType,
+	}
 	resp.Schema = schema.Schema{
 		Description:         "Fetches all OIDC clients from Pocket-ID.",
 		MarkdownDescription: "Fetches all OIDC clients from Pocket-ID.",
@@ -49,10 +62,7 @@ func (d *clientsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest
 				Description: "List of all OIDC clients.",
 				Computed:    true,
 				NestedObject: schema.NestedAttributeObject{
-					Attributes: clientAttributes(schema.StringAttribute{
-						Description: "The ID of the OIDC client.",
-						Computed:    true,
-					}),
+					Attributes: attributes,
 				},
 			},
 		},
