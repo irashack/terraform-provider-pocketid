@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -148,6 +149,51 @@ func TestAPIsDataSource_ListsEveryPageInOrder(t *testing.T) {
 	assert.Equal(t, apiDataSourceTestFirst, got.APIs[0].ID.ValueString())
 	assert.Equal(t, apiDataSourceTestSecond, got.APIs[1].ID.ValueString())
 	assert.Empty(t, got.APIs[1].Permissions.Elements())
+}
+
+// A server that reflects the API key as an identifier cannot put it into
+// data source state or a diagnostic: the read fails with fixed text.
+func TestAPIDataSources_ReflectedKeyNeverReachesState(t *testing.T) {
+	const key = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	api := func(id string) string {
+		return fmt.Sprintf(`{"id":%q,"name":"Inventory","resource":"https://inventory.example","createdAt":"2026-01-01T00:00:00Z","allowCimdClients":false,"permissions":[{"id":%q,"key":"read","name":"Read","allowedForCimdClients":false}]}`, id, key)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/apis" {
+			_, _ = fmt.Fprintf(w, `{"data":[%s],"pagination":{"totalPages":1,"totalItems":1,"currentPage":1,"itemsPerPage":100}}`, api(apiDataSourceTestFirst))
+			return
+		}
+		_, _ = fmt.Fprint(w, api(apiDataSourceTestFirst))
+	}))
+	t.Cleanup(server.Close)
+	c, err := client.NewClient(server.URL, key, false, 5)
+	require.NoError(t, err)
+
+	text := func(diags diag.Diagnostics) string {
+		var parts []string
+		for _, d := range diags.Errors() {
+			parts = append(parts, d.Summary()+": "+d.Detail())
+		}
+		return strings.Join(parts, "\n")
+	}
+	ctx := context.Background()
+
+	resp, got := apiDataSourceTestRead(t, c, types.StringValue(apiDataSourceTestFirst), types.StringNull())
+	require.True(t, resp.Diagnostics.HasError())
+	assert.NotContains(t, text(resp.Diagnostics), key)
+	assert.True(t, got.Permissions.IsNull() || len(got.Permissions.Elements()) == 0)
+
+	resp, _ = apiDataSourceTestRead(t, c, types.StringNull(), types.StringValue("https://inventory.example"))
+	require.True(t, resp.Diagnostics.HasError())
+	assert.NotContains(t, text(resp.Diagnostics), key)
+
+	var sr datasource.SchemaResponse
+	(&apisDataSource{}).Schema(ctx, datasource.SchemaRequest{}, &sr)
+	list := datasource.ReadResponse{State: tfsdk.State{Schema: sr.Schema, Raw: tftypes.NewValue(sr.Schema.Type().TerraformType(ctx), nil)}}
+	(&apisDataSource{client: c}).Read(ctx, datasource.ReadRequest{}, &list)
+	require.True(t, list.Diagnostics.HasError())
+	assert.NotContains(t, text(list.Diagnostics), key)
+	assert.True(t, list.State.Raw.IsNull(), "nothing reaches state")
 }
 
 func TestAPIDataSource_InputValidators(t *testing.T) {

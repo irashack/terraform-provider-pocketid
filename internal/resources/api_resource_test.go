@@ -57,10 +57,17 @@ type apiTestPocketID struct {
 }
 
 func newAPITestPocketID(t *testing.T) (*apiTestPocketID, *client.Client) {
+	return newAPITestPocketIDWithKey(t, "synthetic-token")
+}
+
+// newAPITestPocketIDWithKey serves the fake to a client that authenticates
+// with key. A UUID-shaped key models Pocket ID's static API keys, which can
+// pass the identifier check.
+func newAPITestPocketIDWithKey(t *testing.T, key string) (*apiTestPocketID, *client.Client) {
 	f := &apiTestPocketID{t: t, version: "2.17.0", apis: map[string]*client.API{}, failures: map[string]apiTestFailure{}}
 	server := httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(server.Close)
-	c, err := client.NewClient(server.URL, "synthetic-token", false, 5)
+	c, err := client.NewClient(server.URL, key, false, 5)
 	require.NoError(t, err)
 	return f, c
 }
@@ -419,6 +426,48 @@ func TestAPIResourceCreate_UncertainResultDoesNotAdoptAnother(t *testing.T) {
 	assert.Contains(t, apiTestCreateDiag(resp), `name "Someone else's"`)
 	assert.Nil(t, state)
 	assert.Equal(t, []string{"GET apis", "POST apis", "GET apis"}, f.routes())
+}
+
+// An API key that looks like a UUID, reflected by the server as the created
+// API's ID, is refused, and the recovery read that follows (which lists the
+// APIs and could name a matching one) never puts the key into a diagnostic or
+// state. The same holds when the list is where the key first appears.
+func TestAPIResourceCreate_ReflectedKeyNeverReachesDiagnostics(t *testing.T) {
+	const key = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	for name, setup := range map[string]func(f *apiTestPocketID){
+		// The POST answers 201 with the key as the new API's ID, and the
+		// recovery list holds that API.
+		"reflected by the create answer": func(f *apiTestPocketID) {
+			f.tamper = func(route string, api *client.API) {
+				if route == "POST apis" {
+					api.ID = key
+				}
+			}
+		},
+		// The POST fails after committing; the recovery list holds an API with
+		// the identifier whose ID is the key.
+		"first seen in the recovery list": func(f *apiTestPocketID) {
+			f.failures["POST apis"] = apiTestFailure{status: 503, afterApply: true}
+			f.tamper = func(route string, api *client.API) {
+				if route == "POST apis" {
+					api.ID = key
+				}
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, c := newAPITestPocketIDWithKey(t, key)
+			setup(f)
+			resp, state := apiTestCreate(t, c, apiTestModel("", "Inventory", "https://inventory.example", false, map[string]attr.Value{
+				"read": apiTestPermission("", "Read", nil, false),
+			}))
+			require.True(t, resp.Diagnostics.HasError())
+			assert.NotContains(t, apiTestCreateDiag(resp), key, "the key is never printed")
+			assert.Equal(t, "API creation result uncertain", resp.Diagnostics[len(resp.Diagnostics)-1].Summary())
+			assert.Nil(t, state, "nothing is recorded as owned")
+			assert.Equal(t, []string{"GET apis", "POST apis", "GET apis"}, f.routes(), "the recovery read ran, and nothing was written after it")
+		})
+	}
 }
 
 // When a follow-up write fails, the created API stays in state as the

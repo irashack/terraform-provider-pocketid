@@ -90,6 +90,162 @@ func TestClient_CreateAPI_IDReflectingKey(t *testing.T) {
 	assert.NotContains(t, err.Error(), key)
 }
 
+// apiReflectTestKey is a UUID-shaped synthetic API key: Pocket ID accepts any
+// static key of 16 or more characters, so a key can pass the UUID check.
+const apiReflectTestKey = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+
+func apiReflectTestServer(t *testing.T, handler http.HandlerFunc) *client.Client {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	c, err := client.NewClient(server.URL, apiReflectTestKey, false, 5)
+	require.NoError(t, err)
+	return c
+}
+
+// An API with the given pieces, as the server would return it.
+func apiReflectTestAPI(id, name, resource, permissionID, permissionKey, description string) string {
+	return fmt.Sprintf(`{"id":%q,"name":%q,"resource":%q,"createdAt":"2026-01-01T00:00:00Z","allowCimdClients":false,"permissions":[{"id":%q,"key":%q,"name":"Read","description":%q,"allowedForCimdClients":false}]}`,
+		id, name, resource, permissionID, permissionKey, description)
+}
+
+// Every identifier that comes back in an API response is checked before
+// anything uses it: a valid UUID, the addressed one when the request named
+// it, and never the API key. A text field carrying the key is refused too.
+// The errors never include the value.
+func TestClient_APIResponses_ReflectedKeyRefused(t *testing.T) {
+	const good = apiTestPermissionID
+	const id = apiTestAPIID
+	for name, body := range map[string]string{
+		"id is the key":                   apiReflectTestAPI(apiReflectTestKey, "Inventory", "urn:x", good, "read", ""),
+		"id contains the key":             apiReflectTestAPI("x"+apiReflectTestKey, "Inventory", "urn:x", good, "read", ""),
+		"id is not a UUID":                apiReflectTestAPI("not-a-uuid", "Inventory", "urn:x", good, "read", ""),
+		"permission id is the key":        apiReflectTestAPI(id, "Inventory", "urn:x", apiReflectTestKey, "read", ""),
+		"permission id is not a UUID":     apiReflectTestAPI(id, "Inventory", "urn:x", "../x", "read", ""),
+		"name carries the key":            apiReflectTestAPI(id, "Inv "+apiReflectTestKey, "urn:x", good, "read", ""),
+		"resource carries the key":        apiReflectTestAPI(id, "Inventory", "urn:"+apiReflectTestKey, good, "read", ""),
+		"permission key carries the key":  apiReflectTestAPI(id, "Inventory", "urn:x", good, apiReflectTestKey, ""),
+		"permission text carries the key": apiReflectTestAPI(id, "Inventory", "urn:x", good, "read", "see "+apiReflectTestKey),
+	} {
+		t.Run(name, func(t *testing.T) {
+			get := apiReflectTestServer(t, func(w http.ResponseWriter, r *http.Request) { _, _ = fmt.Fprint(w, body) })
+			ctx := context.Background()
+			api, err := get.GetAPI(ctx, id)
+			require.ErrorIs(t, err, client.ErrInvalidIdentifier)
+			assert.Nil(t, api)
+			assert.NotContains(t, err.Error(), apiReflectTestKey)
+			assert.NotErrorIs(t, err, client.ErrResultUnread, "a read is not a mutation")
+
+			// A mutation the server accepted has an unread result, so that the
+			// caller reads the API back.
+			for label, call := range map[string]func() (*client.API, error){
+				"update":      func() (*client.API, error) { return get.UpdateAPI(ctx, id, &client.APIUpdateRequest{Name: "x"}) },
+				"permissions": func() (*client.API, error) { return get.UpdateAPIPermissions(ctx, id, nil) },
+				"cimd":        func() (*client.API, error) { return get.UpdateAPICIMDAccess(ctx, id, false, nil) },
+			} {
+				api, err := call()
+				require.ErrorIs(t, err, client.ErrResultUnread, label)
+				require.ErrorIs(t, err, client.ErrInvalidIdentifier, label)
+				assert.Nil(t, api, label)
+				assert.NotContains(t, err.Error(), apiReflectTestKey, label)
+			}
+
+			// A create is refused, and says the API may exist.
+			created, err := get.CreateAPI(ctx, &client.APICreateRequest{Name: "Inventory", Resource: "urn:x"})
+			require.ErrorIs(t, err, client.ErrInvalidIdentifier)
+			assert.Nil(t, created)
+			assert.Contains(t, err.Error(), "the API may exist")
+			assert.NotContains(t, err.Error(), apiReflectTestKey)
+
+			// So is a list that holds the entry, even on a later page.
+			list := apiReflectTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+				entry := apiReflectTestAPI("ffffffff-ffff-4fff-8fff-ffffffffffff", "Fine", "urn:fine", "99999999-9999-4999-8999-999999999999", "read", "")
+				_, _ = fmt.Fprintf(w, `{"data":[%s,%s],"pagination":{"totalPages":1,"totalItems":2,"currentPage":1,"itemsPerPage":100}}`, entry, body)
+			})
+			apis, err := list.ListAPIs(ctx)
+			require.ErrorIs(t, err, client.ErrInvalidIdentifier)
+			assert.Nil(t, apis)
+			assert.NotContains(t, err.Error(), apiReflectTestKey)
+		})
+	}
+}
+
+// A response about another API than the one addressed is refused: a read, and
+// a write whose result is then unread.
+func TestClient_APIResponses_OtherAPIRefused(t *testing.T) {
+	const other = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+	c := apiReflectTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprint(w, apiReflectTestAPI(other, "Inventory", "urn:x", apiTestPermissionID, "read", ""))
+	})
+	ctx := context.Background()
+	_, err := c.GetAPI(ctx, apiTestAPIID)
+	require.ErrorIs(t, err, client.ErrInvalidIdentifier)
+	assert.NotErrorIs(t, err, client.ErrResultUnread)
+	_, err = c.UpdateAPI(ctx, apiTestAPIID, &client.APIUpdateRequest{Name: "x"})
+	require.ErrorIs(t, err, client.ErrInvalidIdentifier)
+	assert.ErrorIs(t, err, client.ErrResultUnread)
+	assert.NotContains(t, err.Error(), other)
+}
+
+// The checks leave a normal response alone: UUID identifiers, text without
+// the key, null permissions.
+func TestClient_APIResponses_NormalPass(t *testing.T) {
+	c := apiReflectTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprintf(w, `{"id":%q,"name":"Inventory","resource":"urn:x","permissions":null}`, apiTestAPIID)
+	})
+	api, err := c.GetAPI(context.Background(), apiTestAPIID)
+	require.NoError(t, err)
+	assert.Equal(t, apiTestAPIID, api.ID)
+}
+
+// The grant responses are checked the same way: a permission ID in the
+// write's answer, and every identifier in the client's grant list.
+func TestClient_GrantResponses_ReflectedKeyRefused(t *testing.T) {
+	grant := func(userIDs, clientIDs string) string {
+		return `{"userDelegatedAccess":true,"clientAccess":false,"userDelegatedPermissionIds":` + userIDs + `,"clientPermissionIds":` + clientIDs + `}`
+	}
+	ctx := context.Background()
+	for name, body := range map[string]string{
+		"user permission is the key":   grant(fmt.Sprintf(`[%q]`, apiReflectTestKey), `[]`),
+		"client permission is the key": grant(`[]`, fmt.Sprintf(`[%q]`, apiReflectTestKey)),
+		"permission is not a UUID":     grant(`["../x"]`, `[]`),
+	} {
+		t.Run("write: "+name, func(t *testing.T) {
+			c := apiReflectTestServer(t, func(w http.ResponseWriter, r *http.Request) { _, _ = fmt.Fprint(w, body) })
+			applied, err := c.SetAPIClientAccess(ctx, apiTestAPIID, "app", client.APIClientGrant{UserDelegatedAccess: true})
+			require.ErrorIs(t, err, client.ErrResultUnread)
+			assert.Nil(t, applied)
+			assert.NotContains(t, err.Error(), apiReflectTestKey)
+		})
+	}
+
+	const good = apiTestPermissionID
+	entry := func(api, userIDs, cimdIDs string) string {
+		return fmt.Sprintf(`[{"api":%s,"userDelegatedAccess":true,"clientAccess":false,"userDelegatedPermissionIds":%s,"clientPermissionIds":[],"cimdGrantedAccess":false,"cimdGrantedPermissionIds":%s}]`, api, userIDs, cimdIDs)
+	}
+	okAPI := apiReflectTestAPI(apiTestAPIID, "Inventory", "urn:x", good, "read", "")
+	for name, body := range map[string]string{
+		"api id is the key":           entry(apiReflectTestAPI(apiReflectTestKey, "Inventory", "urn:x", good, "read", ""), `[]`, `[]`),
+		"api permission is the key":   entry(apiReflectTestAPI(apiTestAPIID, "Inventory", "urn:x", apiReflectTestKey, "read", ""), `[]`, `[]`),
+		"api name carries the key":    entry(apiReflectTestAPI(apiTestAPIID, apiReflectTestKey, "urn:x", good, "read", ""), `[]`, `[]`),
+		"granted permission is a key": entry(okAPI, fmt.Sprintf(`[%q]`, apiReflectTestKey), `[]`),
+		"cimd permission is a key":    entry(okAPI, `[]`, fmt.Sprintf(`[%q]`, apiReflectTestKey)),
+		"api id is not a UUID":        entry(apiReflectTestAPI("not-a-uuid", "Inventory", "urn:x", good, "read", ""), `[]`, `[]`),
+	} {
+		t.Run("list: "+name, func(t *testing.T) {
+			c := apiReflectTestServer(t, func(w http.ResponseWriter, r *http.Request) { _, _ = fmt.Fprint(w, body) })
+			grants, err := c.ListClientAPIGrants(ctx, "app")
+			require.ErrorIs(t, err, client.ErrInvalidIdentifier)
+			assert.Nil(t, grants)
+			assert.NotContains(t, err.Error(), apiReflectTestKey)
+			// The lookup fails too, rather than finding no grant.
+			found, err := c.FindClientAPIGrant(ctx, "app", apiTestAPIID)
+			require.Error(t, err)
+			assert.Nil(t, found)
+		})
+	}
+}
+
 func TestClient_GetAPI_NotFound(t *testing.T) {
 	c := apiTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/api/apis/"+apiTestAPIID, r.URL.Path)

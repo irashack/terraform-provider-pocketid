@@ -116,32 +116,92 @@ func (c *Client) CreateAPI(ctx context.Context, req *APICreateRequest) (*API, er
 	if err != nil {
 		return nil, fmt.Errorf("API creation returned an unreadable response; the API may exist: inspect before recovery: %w", err)
 	}
-	if err := c.apiCheckCreatedID(apiKind, "", result.ID); err != nil {
-		return nil, fmt.Errorf("API creation returned no usable ID, so no follow-up request uses it; the API may exist: inspect before recovery: %w", err)
+	if err := c.apiCheckResponse(result, ""); err != nil {
+		return nil, fmt.Errorf("API creation returned an unusable response, so no follow-up request uses it; the API may exist: inspect before recovery: %w", err)
 	}
 	return result, nil
 }
 
-// apiCheckCreatedID has the signature and rules of the foundation's
-// checkCreatedID (added after this branch's base) and is replaced by it at
-// integration: an ID the server chose must be a UUID, an ID the caller
-// supplied must come back exactly, and no ID may contain the API key this
-// client sends (Pocket ID accepts any static key of 16 or more characters,
-// so a key can look like a UUID). The error never includes the value.
-func (c *Client) apiCheckCreatedID(kind, requested, returned string) error {
+// apiCheckReturnedID checks an identifier that came back in a response before
+// anything uses it, in a path, a diagnostic or state: it must not contain the
+// API key this client sends (a server or proxy that reflects the credential
+// must not see it spread; Pocket ID accepts static keys of 16 or more
+// characters, so a key can look like a UUID), it must be the addressed ID when
+// the request addressed one, and otherwise a UUID. The errors are fixed text:
+// the value is never included. It has the rules of the foundation's
+// checkReturnedID and is replaced by it at integration.
+func (c *Client) apiCheckReturnedID(kind, addressed, returned string) error {
 	if c.apiToken != "" && strings.Contains(returned, c.apiToken) {
-		return fmt.Errorf("%w: the %s ID in the create response contains the API key this provider sent", ErrInvalidIdentifier, kind)
+		return fmt.Errorf("%w: an %s ID in the response contains the API key this provider sent", ErrInvalidIdentifier, kind)
 	}
-	if requested != "" {
-		if returned != requested {
-			return fmt.Errorf("%w: the %s ID in the create response is not the one requested", ErrInvalidIdentifier, kind)
+	if addressed != "" {
+		if returned != addressed {
+			return fmt.Errorf("%w: the %s ID in the response is not the one requested", ErrInvalidIdentifier, kind)
 		}
 		return nil
 	}
 	if !uuidPattern.MatchString(returned) {
-		return fmt.Errorf("%w: the %s ID in the create response is not a UUID", ErrInvalidIdentifier, kind)
+		return fmt.Errorf("%w: an %s ID in the response is not a UUID", ErrInvalidIdentifier, kind)
 	}
 	return nil
+}
+
+// apiCheckResponse checks every identifier of an API the server returned (its
+// own ID, equal to addressed when the request addressed it, and its
+// permissions' IDs), and refuses text fields that carry the API key, since the
+// API's name, resource identifier and permission texts reach diagnostics and
+// non-sensitive state as well.
+func (c *Client) apiCheckResponse(api *API, addressed string) error {
+	if err := c.apiCheckReturnedID(apiKind, addressed, api.ID); err != nil {
+		return err
+	}
+	texts := []string{api.Name, api.Resource}
+	for i := range api.Permissions {
+		p := &api.Permissions[i]
+		if err := c.apiCheckReturnedID("API permission", "", p.ID); err != nil {
+			return err
+		}
+		texts = append(texts, p.Key, p.Name)
+		if p.Description != nil {
+			texts = append(texts, *p.Description)
+		}
+	}
+	for _, text := range texts {
+		if c.apiToken != "" && strings.Contains(text, c.apiToken) {
+			return fmt.Errorf("%w: a text field of the API in the response contains the API key this provider sent", ErrInvalidIdentifier)
+		}
+	}
+	return nil
+}
+
+// apiCheckPermissionIDs checks the permission IDs of a grant.
+func (c *Client) apiCheckPermissionIDs(lists ...[]string) error {
+	for _, ids := range lists {
+		for _, id := range ids {
+			if err := c.apiCheckReturnedID("API permission", "", id); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// decodeCheckedAPI decodes an API the server returned for the addressed ID
+// and checks it (apiCheckResponse). For a mutation the server accepted, an
+// unusable response is an unread result, not a refusal: the change may have
+// been made.
+func (c *Client) decodeCheckedAPI(body []byte, addressed string, mutation bool) (*API, error) {
+	api, err := decodeAPI(body)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.apiCheckResponse(api, addressed); err != nil {
+		if mutation {
+			return nil, fmt.Errorf("API %s: %w: %w", addressed, ErrResultUnread, err)
+		}
+		return nil, err
+	}
+	return api, nil
 }
 
 // GetAPI reads an API with its permissions. A missing API is reported as
@@ -155,7 +215,7 @@ func (c *Client) GetAPI(ctx context.Context, id string) (*API, error) {
 	if err != nil {
 		return nil, err
 	}
-	return decodeAPI(body)
+	return c.decodeCheckedAPI(body, id, false)
 }
 
 // UpdateAPI renames an API and returns it as the server holds it afterwards.
@@ -168,7 +228,7 @@ func (c *Client) UpdateAPI(ctx context.Context, id string, req *APIUpdateRequest
 	if err != nil {
 		return nil, err
 	}
-	return decodeAPI(body)
+	return c.decodeCheckedAPI(body, id, true)
 }
 
 // DeleteAPI deletes an API. Pocket ID deletes its permissions and every
@@ -183,9 +243,19 @@ func (c *Client) DeleteAPI(ctx context.Context, id string) error {
 }
 
 // ListAPIs returns every API, following all pages of GET /api/apis (see
-// listAll).
+// listAll). The identifiers of every entry are checked (apiCheckResponse); an
+// entry that fails fails the list, and no value of it is quoted.
 func (c *Client) ListAPIs(ctx context.Context) ([]API, error) {
-	return listAll(ctx, c, "APIs", "/api/apis", nil, func(api API) string { return api.ID })
+	apis, err := listAll(ctx, c, "APIs", "/api/apis", nil, func(api API) string { return api.ID })
+	if err != nil {
+		return nil, err
+	}
+	for i := range apis {
+		if err := c.apiCheckResponse(&apis[i], ""); err != nil {
+			return nil, fmt.Errorf("listing APIs: %w", err)
+		}
+	}
+	return apis, nil
 }
 
 // UpdateAPIPermissions replaces the full permission set of an API and returns
@@ -206,7 +276,7 @@ func (c *Client) UpdateAPIPermissions(ctx context.Context, id string, permission
 	if err != nil {
 		return nil, err
 	}
-	return decodeAPI(body)
+	return c.decodeCheckedAPI(body, id, true)
 }
 
 // UpdateAPICIMDAccess sets whether clients registered through a Client ID
@@ -226,7 +296,7 @@ func (c *Client) UpdateAPICIMDAccess(ctx context.Context, id string, enabled boo
 	if err != nil {
 		return nil, err
 	}
-	return decodeAPI(body)
+	return c.decodeCheckedAPI(body, id, true)
 }
 
 // SetAPIClientAccess replaces one client's grant on one API, leaving its
@@ -260,6 +330,9 @@ func (c *Client) SetAPIClientAccess(ctx context.Context, apiID, clientID string,
 		return nil, err
 	}
 	applied, err := decodeAPIClientGrant(body)
+	if err == nil {
+		err = c.apiCheckPermissionIDs(applied.UserDelegatedPermissionIDs, applied.ClientPermissionIDs)
+	}
 	if err != nil {
 		// The PUT was accepted: what it stored is unknown, not empty.
 		return nil, fmt.Errorf("API access of client %s: %w: the response did not describe a grant", clientID, ErrResultUnread)
@@ -295,7 +368,7 @@ func (c *Client) ListClientAPIGrants(ctx context.Context, clientID string) ([]Cl
 	if err != nil {
 		return nil, err
 	}
-	return decodeClientAPIGrants(body)
+	return c.decodeClientAPIGrants(body)
 }
 
 // FindClientAPIGrant returns the grant the client holds on the API, or nil
@@ -407,8 +480,9 @@ func decodeAPIClientGrant(body []byte) (APIClientGrant, error) {
 // decodeClientAPIGrants decodes the answer to GET /api/api-access/{clientId}/apis
 // (a list of api.clientApiGrantDto, [] when there are none). Every entry must
 // name its API and carry the four grant fields; one that does not fails the
-// whole read, because it may be the entry that was looked for.
-func decodeClientAPIGrants(body []byte) ([]ClientAPIGrant, error) {
+// whole read, because it may be the entry that was looked for. Every
+// identifier in an entry is checked (apiCheckResponse, apiCheckPermissionIDs).
+func (c *Client) decodeClientAPIGrants(body []byte) ([]ClientAPIGrant, error) {
 	var entries []json.RawMessage
 	if json.Unmarshal(body, &entries) != nil || entries == nil {
 		return nil, ErrIncompleteGrantResponse
@@ -433,6 +507,12 @@ func decodeClientAPIGrants(body []byte) ([]ClientAPIGrant, error) {
 		}
 		if json.Unmarshal(entry, &cimd) != nil {
 			return nil, ErrIncompleteGrantResponse
+		}
+		if err := c.apiCheckResponse(&api, ""); err != nil {
+			return nil, err
+		}
+		if err := c.apiCheckPermissionIDs(grant.UserDelegatedPermissionIDs, grant.ClientPermissionIDs, cimd.PermissionIDs); err != nil {
+			return nil, err
 		}
 		grants[i] = ClientAPIGrant{API: api, APIClientGrant: grant, CIMDGrantedAccess: cimd.Access, CIMDGrantedPermissionIDs: cimd.PermissionIDs}
 	}

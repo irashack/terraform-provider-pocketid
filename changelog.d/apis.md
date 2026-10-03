@@ -40,6 +40,12 @@
   the same way instead of being read as "no grant": a write's answer
   triggers the read-back, and a grant list with such an entry fails the
   refresh rather than dropping the resource from state.
+- Identifiers in Pocket ID's answers about APIs and grants are checked before
+  anything uses them: an ID that is not a UUID, is not the one asked for, or
+  contains the provider's own API key is refused, as is an API name,
+  resource identifier or permission text that contains the key. The error
+  is fixed text that never repeats the value, and nothing from that answer
+  reaches a diagnostic, the state or a data source.
 - New data sources `pocketid_api` (look up one API by `id` or by its exact
   `resource` identifier) and `pocketid_apis` (every API, oldest first, read
   across all pages), each with the API's permissions keyed by permission key
