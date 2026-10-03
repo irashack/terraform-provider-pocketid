@@ -1,4 +1,4 @@
-name: Maintenance CI
+name: CI
 on:
   push:
     branches: [main-maintenance]
