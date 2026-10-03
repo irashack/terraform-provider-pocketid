@@ -172,10 +172,12 @@ func appConfigCallbackURLPatternProblem(pattern string) string {
 	return ""
 }
 
-// The functions below are Pocket ID 2.17.0's (backend/internal/utils/
-// callback_url_util.go; BSD 2-Clause License, Copyright (c) 2024, Elias
-// Schneider), renamed, so the provider accepts exactly the patterns the
-// server does.
+// The functions below are copied from Pocket ID 2.17.0
+// (backend/internal/utils/callback_url_util.go), renamed, so the provider
+// accepts exactly the patterns the server does. Copyright (c) 2024, Elias
+// Schneider; BSD 2-Clause License. THIRD_PARTY_NOTICES.md at the repository
+// root holds the full notice, conditions and disclaimer, and lists the
+// functions it covers.
 
 // appConfigCallbackURLPatternForURLParse is callbackURLPatternForURLParse: it
 // makes a wildcard scheme or port parseable.
