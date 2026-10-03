@@ -143,8 +143,41 @@ func clientSecretPlanned() clientSecretResourceModel {
 }
 
 // clientSecretCreate runs Create with config as the configuration (its
-// write-only value included) and the plan derived from it.
+// write-only value included) and the plan derived from it directly, without
+// planning (see clientSecretCreatePlanned for a plan that ModifyPlan made).
 func clientSecretCreate(t *testing.T, c *client.Client, config clientSecretResourceModel) (resource.CreateResponse, *clientSecretResourceModel) {
+	t.Helper()
+	ctx := context.Background()
+	s := clientSecretTestSchema(t)
+	planned := config
+	planned.SecretWO = types.StringNull()
+	plan := tfsdk.Plan{Schema: s}
+	require.False(t, plan.Set(ctx, &planned).HasError())
+	return clientSecretCreatePlanned(t, c, plan, config)
+}
+
+// clientSecretCreatePlanned runs Create with the given plan and with config
+// as the configuration, and returns the response and the state it wrote.
+func clientSecretCreatePlanned(t *testing.T, c *client.Client, plan tfsdk.Plan, config clientSecretResourceModel) (resource.CreateResponse, *clientSecretResourceModel) {
+	t.Helper()
+	ctx := context.Background()
+	s := clientSecretTestSchema(t)
+	configured := tfsdk.Plan{Schema: s}
+	require.False(t, configured.Set(ctx, &config).HasError())
+	resp := resource.CreateResponse{State: tfsdk.State{Schema: s, Raw: tftypes.NewValue(s.Type().TerraformType(ctx), nil)}}
+	(&clientSecretResource{client: c}).Create(ctx, resource.CreateRequest{Plan: plan, Config: tfsdk.Config{Schema: s, Raw: configured.Raw}}, &resp)
+	if resp.State.Raw.IsNull() {
+		return resp, nil
+	}
+	var state clientSecretResourceModel
+	require.False(t, resp.State.Get(ctx, &state).HasError())
+	return resp, &state
+}
+
+// clientSecretModifyPlan plans a new secret for config as the framework does
+// before calling ModifyPlan (computed values unknown, the write-only value
+// never in the plan) and returns what ModifyPlan made of it.
+func clientSecretModifyPlan(t *testing.T, config clientSecretResourceModel) (resource.ModifyPlanResponse, tfsdk.Plan) {
 	t.Helper()
 	ctx := context.Background()
 	s := clientSecretTestSchema(t)
@@ -154,14 +187,28 @@ func clientSecretCreate(t *testing.T, c *client.Client, config clientSecretResou
 	planned.SecretWO = types.StringNull()
 	plan := tfsdk.Plan{Schema: s}
 	require.False(t, plan.Set(ctx, &planned).HasError())
-	resp := resource.CreateResponse{State: tfsdk.State{Schema: s, Raw: tftypes.NewValue(s.Type().TerraformType(ctx), nil)}}
-	(&clientSecretResource{client: c}).Create(ctx, resource.CreateRequest{Plan: plan, Config: tfsdk.Config{Schema: s, Raw: configured.Raw}}, &resp)
-	if resp.State.Raw.IsNull() {
-		return resp, nil
+	resp := resource.ModifyPlanResponse{Plan: plan}
+	(&clientSecretResource{}).ModifyPlan(ctx, resource.ModifyPlanRequest{
+		Plan: plan, Config: tfsdk.Config{Schema: s, Raw: configured.Raw},
+		State: tfsdk.State{Schema: s, Raw: tftypes.NewValue(s.Type().TerraformType(ctx), nil)},
+	}, &resp)
+	return resp, resp.Plan
+}
+
+// requireValuesHold applies Terraform's consistency rule: every attribute an
+// earlier plan (or plan-shaped value) fixed, that is, did not leave unknown,
+// has the same value in the later one. Only attribute names are reported,
+// never values.
+func requireValuesHold(t *testing.T, what string, earlier, later tftypes.Value) {
+	t.Helper()
+	var fixed, got map[string]tftypes.Value
+	require.NoError(t, earlier.As(&fixed))
+	require.NoError(t, later.As(&got))
+	for name, want := range fixed {
+		if want.IsFullyKnown() {
+			assert.True(t, want.Equal(got[name]), "%s changed %s, which was already fixed", what, name)
+		}
 	}
-	var state clientSecretResourceModel
-	require.False(t, resp.State.Get(ctx, &state).HasError())
-	return resp, &state
 }
 
 func clientSecretDiagText(diags diag.Diagnostics) string {
@@ -506,21 +553,10 @@ func TestClientSecretResource_ValueValidator(t *testing.T) {
 
 func TestClientSecretResource_ModifyPlan(t *testing.T) {
 	ctx := context.Background()
-	s := clientSecretTestSchema(t)
 	run := func(config clientSecretResourceModel) (resource.ModifyPlanResponse, clientSecretResourceModel) {
-		configured := tfsdk.Plan{Schema: s}
-		require.False(t, configured.Set(ctx, &config).HasError())
-		planned := config
-		planned.SecretWO = types.StringNull()
-		plan := tfsdk.Plan{Schema: s}
-		require.False(t, plan.Set(ctx, &planned).HasError())
-		resp := resource.ModifyPlanResponse{Plan: plan}
-		(&clientSecretResource{}).ModifyPlan(ctx, resource.ModifyPlanRequest{
-			Plan: plan, Config: tfsdk.Config{Schema: s, Raw: configured.Raw},
-			State: tfsdk.State{Schema: s, Raw: tftypes.NewValue(s.Type().TerraformType(ctx), nil)},
-		}, &resp)
+		resp, plan := clientSecretModifyPlan(t, config)
 		var got clientSecretResourceModel
-		require.False(t, resp.Plan.Get(ctx, &got).HasError())
+		require.False(t, plan.Get(ctx, &got).HasError())
 		return resp, got
 	}
 	_, got := run(clientSecretPlanned())
@@ -545,23 +581,50 @@ func TestClientSecretResource_ModifyPlan(t *testing.T) {
 	_, got = run(undecided)
 	assert.True(t, got.Secret.IsUnknown(), "presence of secret_wo is not known yet")
 
-	t.Run("unknown then null: a generated value", func(t *testing.T) {
-		fake := clientSecretFake{version: "2.17.0", postStatus: http.StatusCreated,
-			postBody: `{"id":"` + clientSecretTestID + `","prefix":"GENE","createdAt":"2026-10-02T10:00:00Z","isActive":true,"secret":"` + clientSecretTestGen + `"}`}
-		resp, state := clientSecretCreate(t, fake.serve(t), clientSecretPlanned())
-		require.False(t, resp.Diagnostics.HasError(), clientSecretDiagText(resp.Diagnostics))
-		assert.Equal(t, clientSecretTestGen, state.Secret.ValueString(), "a known value fills the unknown planned secret")
-	})
-	t.Run("unknown then supplied: no value stored", func(t *testing.T) {
-		fake := clientSecretFake{version: "2.17.0", postStatus: http.StatusCreated,
-			postBody: `{"id":"` + clientSecretTestID + `","prefix":"wo-v","createdAt":"2026-10-02T10:00:00Z","isActive":true,"secret":"` + clientSecretTestValue + `"}`}
-		config := clientSecretPlanned()
-		config.SecretWO = types.StringValue(clientSecretTestValue)
-		config.SecretWOVersion = types.StringValue("1")
-		resp, state := clientSecretCreate(t, fake.serve(t), config)
-		require.False(t, resp.Diagnostics.HasError(), clientSecretDiagText(resp.Diagnostics))
-		assert.True(t, state.Secret.IsNull(), "null fills the unknown planned secret")
-	})
+	// A secret_wo decided only during the apply goes through planning twice,
+	// as Terraform does: once while its value is unknown, and again at apply
+	// with the value known. The later plan must keep every value the earlier
+	// one fixed, and the state Create writes every value the later plan fixed.
+	_, earlyPlan := clientSecretModifyPlan(t, undecided)
+	for name, tc := range map[string]struct {
+		resolved func() clientSecretResourceModel
+		body     string
+		check    func(t *testing.T, state *clientSecretResourceModel)
+	}{
+		"unknown then null: a generated value": {
+			resolved: clientSecretPlanned,
+			body:     `{"id":"` + clientSecretTestID + `","prefix":"GENE","createdAt":"2026-10-02T10:00:00Z","isActive":true,"secret":"` + clientSecretTestGen + `"}`,
+			check: func(t *testing.T, state *clientSecretResourceModel) {
+				assert.Equal(t, clientSecretTestGen, state.Secret.ValueString(), "a known value fills the unknown planned secret")
+			},
+		},
+		"unknown then supplied: no value stored": {
+			resolved: func() clientSecretResourceModel {
+				config := clientSecretPlanned()
+				config.SecretWO = types.StringValue(clientSecretTestValue)
+				config.SecretWOVersion = types.StringValue("1")
+				return config
+			},
+			body: `{"id":"` + clientSecretTestID + `","prefix":"wo-v","createdAt":"2026-10-02T10:00:00Z","isActive":true,"secret":"` + clientSecretTestValue + `"}`,
+			check: func(t *testing.T, state *clientSecretResourceModel) {
+				assert.True(t, state.Secret.IsNull(), "null fills the unknown planned secret")
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			config := tc.resolved()
+			lateResp, latePlan := clientSecretModifyPlan(t, config)
+			require.False(t, lateResp.Diagnostics.HasError(), clientSecretDiagText(lateResp.Diagnostics))
+			requireValuesHold(t, "the plan made at apply time", earlyPlan.Raw, latePlan.Raw)
+
+			fake := clientSecretFake{version: "2.17.0", postStatus: http.StatusCreated, postBody: tc.body}
+			resp, state := clientSecretCreatePlanned(t, fake.serve(t), latePlan, config)
+			require.False(t, resp.Diagnostics.HasError(), clientSecretDiagText(resp.Diagnostics))
+			requireValuesHold(t, "the applied state", latePlan.Raw, resp.State.Raw)
+			requireValuesHold(t, "the applied state", earlyPlan.Raw, resp.State.Raw)
+			tc.check(t, state)
+		})
+	}
 }
 
 // A create response naming a secret the client already held is not taken as
