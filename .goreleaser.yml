@@ -89,11 +89,11 @@ release:
 
   # Release notes
   header: |
-    Independent maintenance fork of Trozz/terraform-provider-pocketid.
-    Fixes SMTP updates while preserving WebAuthn policy and CIMD settings.
-    Supported Pocket ID versions: 2.17.0 and 2.16.0 (current/prior minor series).
-    See README.md, INSTALL.md, TESTING.md and CHANGELOG.md in this release's source.
-    Registry publication is pending. Use the fork identity and native filesystem mirror.
+    Independent Terraform/OpenTofu provider for Pocket ID, originally a fork of
+    Trozz/terraform-provider-pocketid and maintained on its own since 3.0.0.
+    Supported Pocket ID versions: 2.14.0 through 2.17.0.
+    See README.md, INSTALL.md, UPSTREAM.md, TESTING.md and CHANGELOG.md in this release's source.
+    The provider is not published to a registry. Use the irashack provider address and the native filesystem mirror.
     Archives and SHA256SUMS are published without a registry signing key.
 
   # Prerelease configuration
