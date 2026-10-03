@@ -1,11 +1,25 @@
 # PocketID Provider Tests
 
-For automated checks, use `make test-acc-matrix` and `make test-acc-provider` from
-the repository root; see [TESTING.md](../TESTING.md) for coverage and exclusions.
+The automated checks run from the repository root; [TESTING.md](../TESTING.md) says
+what each covers and how to run it:
 
-The Terraform configurations here are manual demonstrations. Use a disposable
-instance and the fork mirror from [INSTALL.md](../INSTALL.md); review all changes
-before applying. They are not the automated acceptance suite.
+- `make test-acc`, `make test-acc-matrix`, `make test-acc-provider` and
+  `make test-acc-supported` run the acceptance tests (build tag `acc`, in
+  `internal/provider` and `internal/datasources`) against a disposable official
+  Pocket ID image, 2.14.0 through 2.17.0.
+- `scripts/disposable-pocketid.py VERSION -- COMMAND` is that fixture: it starts an
+  isolated server on a free loopback port with a synthetic administrator, runs
+  `COMMAND` against it and removes it. It is the only way tests get a server.
+- `native/*.py` are native Terraform and OpenTofu scripts, run as children of the
+  fixture: `lifecycle.py` (install from a mirror, create, import, delete),
+  `upgrade.py`, `client_upgrade.py` and `upgrade_users_groups.py` (state written by
+  a published release upgrades with the new build), and `application_config.py`
+  (the application configuration, including the write-only password flow).
+
+The Terraform configurations in the two directories below are manual
+demonstrations, not the automated suite. Use a disposable instance and the provider
+installed from a filesystem mirror as described in [INSTALL.md](../INSTALL.md);
+review all changes before applying.
 
 ## Test Structure
 
