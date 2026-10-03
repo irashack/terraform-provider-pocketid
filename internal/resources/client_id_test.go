@@ -91,3 +91,34 @@ func TestClientIDFollowsTheServer(t *testing.T) {
 	assert.False(t, sent, "an update never sends an ID")
 	assert.Equal(t, "c1", after.ClientID.ValueString())
 }
+
+// State in which a 2.4.x provider recorded a client_id rename that Pocket ID
+// ignored: without a refresh the replacement cannot be planned (the stored
+// and configured values are equal), so the plan fails and asks for a
+// refresh; refreshed, client_id reads as the real ID and the plan replaces
+// the client.
+func TestClientIDIgnoredRenameNeedsRefresh(t *testing.T) {
+	fake := managedFake(t, "2.17.0")
+	h := newProtoHarness(t, fake.start())
+	legacy := managedModel()
+	legacy.ClientID = types.StringValue("renamed") // recorded; the server kept c1
+	config := homelabConfig()
+	config.ClientID = types.StringValue("renamed")
+
+	stale := h.plan(&legacy, config, nil)
+	assert.Contains(t, stale.errors, "refresh")
+
+	refreshed := h.read(legacy, nil)
+	require.Empty(t, refreshed.errors)
+	assert.Equal(t, "c1", refreshed.model.ClientID.ValueString())
+	p := h.plan(refreshed.model, config, refreshed.private)
+	require.Empty(t, p.errors)
+	assert.Equal(t, "renamed", p.model.ClientID.ValueString(), "the planned value differs from the prior one, so the replacement survives")
+	require.Len(t, p.requiresReplace, 1)
+	assert.Equal(t, "AttributeName(\"client_id\")", p.requiresReplace[0].String())
+
+	// Configuring the real ID instead plans no change.
+	config.ClientID = types.StringValue("c1")
+	p = h.plan(refreshed.model, config, refreshed.private)
+	assert.True(t, h.emptyPlan(*refreshed.model, p))
+}

@@ -23,7 +23,10 @@ The new build then takes over the same state, with the same configuration:
 - removing a client's groups leaves it restricted (to nobody), stably;
 - a client restricted outside Terraform after the last refresh is not opened
   by an unrefreshed update; the apply asks for a refresh;
-- a different client_id plans a replacement, which prevent_destroy refuses.
+- a different client_id plans a replacement, which prevent_destroy refuses;
+- state in which the released provider recorded an ignored client_id
+  rename fails an unrefreshed plan with a request to refresh, and the
+  refreshed plan replaces the client.
 
 Everything lives in a temporary directory; only the fixture is touched.
 Output that can carry state is never printed.
@@ -49,6 +52,7 @@ assert released, "released archive must keep its published file name"
 released_version, platform = released.groups()
 suffix = uuid.uuid4().hex[:10]
 HOMELAB, PUBLIC, FLIPPED = "upg-home-" + suffix, "upg-pub-" + suffix, "upg-flip-" + suffix
+IGNORED, IGNORED_RENAME = "upg-ign-" + suffix, "upg-ign-renamed-" + suffix
 
 
 def api(path):
@@ -86,7 +90,7 @@ with tempfile.TemporaryDirectory(prefix="pocketid-client-upgrade-") as tmp:
         if key.startswith("TF_LOG") or key in ("TF_PLUGIN_CACHE_DIR", "TF_REATTACH_PROVIDERS"):
             del env[key]
 
-    def config(version, home_extra="", public_groups="[pocketid_group.a.id]", home_id=HOMELAB, protect=True, generated_name="Generated ID", flipped_public=True):
+    def config(version, home_extra="", public_groups="[pocketid_group.a.id]", home_id=HOMELAB, protect=True, generated_name="Generated ID", flipped_public=True, ignored_id=IGNORED):
         lifecycle = "\n lifecycle {\n  prevent_destroy = true\n }\n" if protect else ""
         groups = "" if public_groups is None else " allowed_user_groups = " + public_groups + "\n"
         (work / "main.tf").write_text('''terraform {
@@ -128,6 +132,11 @@ resource "pocketid_client" "flipped" {
  callback_urls = ["https://flipped.example.invalid/callback"]
  is_public = ''' + ("true" if flipped_public else "false") + '''
 ''' + lifecycle + '''}
+resource "pocketid_client" "ignored" {
+ name = "Renamed by 2.4"
+ client_id = "''' + ignored_id + '''"
+ callback_urls = ["https://ignored.example.invalid/callback"]
+}
 resource "pocketid_client" "generated" {
  name = "''' + generated_name + '''"
  callback_urls = ["https://generated.example.invalid/callback"]
@@ -155,9 +164,11 @@ resource "pocketid_client" "generated" {
     config(released_version, flipped_public=False)
     run("init", "-input=false")
     run("apply", "-auto-approve", "-input=false")
-    config(released_version)
+    config(released_version, ignored_id=IGNORED_RENAME)
     run("apply", "-auto-approve", "-input=false")
     old = state()
+    # The released provider records a client_id change Pocket ID ignores.
+    assert old["ignored"]["id"] == IGNORED and old["ignored"]["client_id"] == IGNORED_RENAME, "the released provider did not record the ignored rename"
     assert old["flipped"]["is_public"] is True and old["flipped"]["client_secret"], "the released provider did not keep the secret"
     flipped_secrets = sorted(s["id"] for s in secrets_of(FLIPPED))
     assert flipped_secrets, "Pocket ID did not keep the public client's secret"
@@ -173,8 +184,22 @@ resource "pocketid_client" "generated" {
 
     # 2. The new build: the refreshed plan with the same configuration is
     #    empty (exit 2 would mean a planned change).
-    config(DEV_VERSION)
+    # 2. The new build. With the configuration still asking for the ignored
+    #    rename, a plan without a refresh fails and asks for one (the
+    #    replacement cannot be planned from that state); a refreshed plan
+    #    replaces the client.
+    config(DEV_VERSION, ignored_id=IGNORED_RENAME)
     run("init", "-upgrade", "-input=false")
+    refused = run("plan", "-refresh=false", "-input=false", ok=(1,))
+    assert b"refresh" in refused.stderr, "the unrefreshed plan failed for another reason"
+    run("plan", "-input=false", "-out=rename.tfplan")
+    changes = json.loads(run("show", "-json", "rename.tfplan").stdout)["resource_changes"]
+    actions = {c["name"]: c["change"]["actions"] for c in changes if c["type"] == "pocketid_client"}
+    assert sorted(actions["ignored"]) == ["create", "delete"], "the refreshed plan does not replace the renamed client"
+    assert all(a == ["no-op"] for name, a in actions.items() if name != "ignored"), "the refreshed plan changes other clients"
+    (work / "rename.tfplan").unlink()
+    # With the client's real ID configured, the refreshed plan is empty.
+    config(DEV_VERSION)
     run("plan", "-detailed-exitcode", "-input=false")
     assert sorted(s["id"] for s in secrets_of(FLIPPED)) == flipped_secrets
 
@@ -239,4 +264,4 @@ resource "pocketid_client" "generated" {
     assert sorted(s["id"] for s in secrets_of(FLIPPED)) == flipped_secrets, "the public client's secret was revoked"
     config(DEV_VERSION, public_groups=None, protect=False, generated_name="Generated ID renamed")
     run("destroy", "-auto-approve", "-input=false")
-    print("PASS native " + tool + " client upgrade " + released_version + " -> new build: empty refreshed plan; a public client's kept secret left alone; unrefreshed generate_secret=false revoked only the stored secret by prefix; regenerated in place; groups removal kept the restriction; an unrefreshed update refused to open a client restricted outside Terraform; client_id change refused by prevent_destroy; secrets after the released create: " + str(len(released_secrets)))
+    print("PASS native " + tool + " client upgrade " + released_version + " -> new build: empty refreshed plan; a public client's kept secret left alone; unrefreshed generate_secret=false revoked only the stored secret by prefix; regenerated in place; groups removal kept the restriction; an unrefreshed update refused to open a client restricted outside Terraform; client_id change refused by prevent_destroy; ignored 2.4 rename: unrefreshed plan asks for a refresh, refreshed plan replaces; secrets after the released create: " + str(len(released_secrets)))

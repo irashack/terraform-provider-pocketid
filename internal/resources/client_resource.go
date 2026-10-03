@@ -920,6 +920,13 @@ func (r *clientResource) ModifyPlan(ctx context.Context, req resource.ModifyPlan
 		return
 	}
 
+	if state != nil && clientIDOutOfDate(*state, config) {
+		resp.Diagnostics.AddAttributeError(path.Root("client_id"), "Client ID in state is out of date",
+			fmt.Sprintf("State records client_id %q, but the client's ID is %q: an earlier provider version recorded a change of client_id that Pocket ID never made. "+
+				"Plan with a refresh (without -refresh=false); the plan then replaces the client, because Pocket ID cannot change a client's ID.",
+				state.ClientID.ValueString(), state.ID.ValueString()))
+		return
+	}
 	planSecretAttributes(state, &plan, privateFlag(ctx, req.Private, pendingRevocationKey))
 	planGroupRestriction(state, config, &plan)
 	planPkceSupported(state, &plan)

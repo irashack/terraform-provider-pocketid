@@ -25,7 +25,9 @@
   state while the server kept the old one). With `prevent_destroy` the plan
   fails instead. `client_id` is validated as Pocket ID does: 2 to 128 letters,
   digits, `.`, `_` or `-`. Existing state plans empty whether or not
-  `client_id` was configured.
+  `client_id` was configured. If an earlier version recorded such an ignored
+  change in state, a plan without a refresh now fails and asks for a
+  refreshed plan, which shows the replacement.
 - **Breaking:** `allowed_user_groups` is now a set on `pocketid_client` and on
   the `pocketid_client` and `pocketid_clients` data sources. The order of the
   group IDs no longer shows as a change, so a `sort()` around the list is no

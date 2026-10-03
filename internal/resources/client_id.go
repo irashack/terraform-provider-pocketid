@@ -66,3 +66,17 @@ func (clientIDReplace) PlanModifyString(ctx context.Context, req planmodifier.St
 		resp.RequiresReplace = true
 	}
 }
+
+// clientIDOutOfDate reports state in which an earlier provider version
+// recorded a client_id the server never applied (it ignores an ID sent with an
+// update), and a configuration that still asks for that value. Refresh sets
+// client_id to the real ID, after which clientIDReplace plans the
+// replacement. Without a refresh the replacement cannot be planned: the
+// stored and configured values are equal, and Terraform and OpenTofu drop a
+// replacement request for an attribute whose value does not change.
+func clientIDOutOfDate(state, config clientResourceModel) bool {
+	if config.ClientID.IsNull() || config.ClientID.IsUnknown() || state.ClientID.IsNull() || state.ClientID.IsUnknown() || state.ID.IsNull() || state.ID.IsUnknown() {
+		return false
+	}
+	return state.ClientID.ValueString() != state.ID.ValueString() && config.ClientID.ValueString() == state.ClientID.ValueString()
+}
