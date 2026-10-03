@@ -86,3 +86,8 @@
 - `pocketid_group` looked up by `name` now fails with an error if the group is
   renamed between finding it and reading its details, instead of returning a
   group that no longer has that name. Read again to resolve it.
+- `pocketid_user_profile_picture` now decodes a PNG, JPEG or GIF source file
+  completely at plan time, after the dimension check. A file with a valid header
+  but cut-short or damaged image data is refused with an error before anything
+  is uploaded, where before the plan passed and Pocket ID refused the upload
+  during the apply.

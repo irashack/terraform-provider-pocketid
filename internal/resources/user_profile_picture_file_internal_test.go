@@ -90,6 +90,49 @@ func TestReadUserProfilePicture_PixelLimit(t *testing.T) {
 	assert.Contains(t, err.Error(), "16000000")
 }
 
+// profilePictureCutAfterHeader returns the shortest prefix of an encoded image
+// that image.DecodeConfig still accepts, plus extra bytes of what follows.
+func profilePictureCutAfterHeader(t *testing.T, content []byte, extra int) []byte {
+	t.Helper()
+	for n := 1; n <= len(content); n++ {
+		if _, _, err := image.DecodeConfig(bytes.NewReader(content[:n])); err == nil {
+			require.Less(t, n+extra, len(content), "the test image has no data after its header")
+			return content[:n+extra]
+		}
+	}
+	t.Fatal("the test image has no readable header")
+	return nil
+}
+
+// DecodeConfig reads only the header, so a file with a valid header and nothing
+// (or only part) of the image data behind it passes the dimension checks. Pocket
+// ID decodes the whole image, so the provider has to as well.
+func TestReadUserProfilePicture_RefusesAnImageThatCannotBeDecoded(t *testing.T) {
+	pngData := profilePictureEncode(t, "png", 400, 300)
+	jpegData := profilePictureEncode(t, "jpeg", 400, 300)
+	gifData := profilePictureEncode(t, "gif", 400, 300)
+	cases := map[string][]byte{
+		"png with a header and no image data": profilePictureCutAfterHeader(t, pngData, 0),
+		"png cut in the middle of its data":   pngData[:len(pngData)/2],
+		"jpeg with a header and no scan":      profilePictureCutAfterHeader(t, jpegData, 0),
+		"jpeg cut in the middle of its data":  jpegData[:len(jpegData)*2/3],
+		"gif with a header and no frame":      profilePictureCutAfterHeader(t, gifData, 0),
+		"gif cut in the middle of its data":   gifData[:len(gifData)*2/3],
+	}
+	for name, content := range cases {
+		t.Run(name, func(t *testing.T) {
+			// The header is fine: this is what the check used to accept.
+			config, _, err := image.DecodeConfig(bytes.NewReader(content))
+			require.NoError(t, err, "the test file must have a valid header")
+			require.Positive(t, config.Width)
+
+			_, err = readUserProfilePicture(profilePictureTestFile(t, "cut.img", content))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "incomplete or damaged")
+		})
+	}
+}
+
 func TestReadUserProfilePicture_Refusals(t *testing.T) {
 	dir := t.TempDir()
 	_, err := readUserProfilePicture(filepath.Join(dir, "absent.png"))

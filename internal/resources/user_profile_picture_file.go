@@ -46,9 +46,10 @@ func profilePictureRefusal(format string, args ...any) error {
 // provider can before the server does. Pocket ID decodes PNG, JPEG, GIF, WebP
 // and BMP (checked against 2.17; it may take more) and refuses an image of more
 // than 16 million pixels from 2.15 on; it sets no limit on the file's size, so
-// the provider's own 10 MiB upload limit applies. A file whose format this
-// provider cannot decode itself (WebP, BMP, TIFF) is passed on with only its
-// size checked: the server decides.
+// the provider's own 10 MiB upload limit applies. A PNG, JPEG or GIF is checked
+// for its dimensions and then decoded completely, as the server does. A file
+// whose format this provider cannot decode itself (WebP, BMP, TIFF) is passed
+// on with only its size checked: the server decides.
 //
 // A file that does not exist gives an error satisfying
 // errors.Is(err, errProfilePictureMissing).
@@ -93,6 +94,14 @@ func readUserProfilePicture(path string) (*userProfilePictureFile, error) {
 		}
 		if int64(config.Width)*int64(config.Height) > client.UserProfilePictureMaxPixels {
 			return nil, profilePictureRefusal("the image is %dx%d pixels; Pocket ID accepts at most %d pixels in total (about 4000x4000)", config.Width, config.Height, client.UserProfilePictureMaxPixels)
+		}
+		// DecodeConfig read only the header, so a file cut short, or whose
+		// image data is damaged, got this far. Pocket ID decodes the whole
+		// image and answers an error for such a file after the apply has
+		// started: decode it here as well, which the pixel limit above keeps
+		// to a bounded amount of memory.
+		if _, _, decodeErr := image.Decode(bytes.NewReader(content)); decodeErr != nil {
+			return nil, profilePictureRefusal("the %s image is incomplete or damaged and cannot be decoded", format)
 		}
 		name += "." + format
 	case errors.Is(err, image.ErrFormat):

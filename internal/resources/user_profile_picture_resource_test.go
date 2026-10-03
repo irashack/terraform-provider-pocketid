@@ -433,6 +433,13 @@ func TestUserProfilePictureResource_ModifyPlan(t *testing.T) {
 		assert.Equal(t, "Unusable profile picture file", resp.Diagnostics.Errors()[0].Summary())
 	})
 
+	t.Run("an image with a header and no data is refused at plan time", func(t *testing.T) {
+		resp := ppModifyPlan(t, r, sch, nil, ppFile(t, ppPNG(t, 60, 40, 1)[:33]))
+		require.True(t, resp.Diagnostics.HasError())
+		assert.Equal(t, "Unusable profile picture file", resp.Diagnostics.Errors()[0].Summary())
+		assert.Contains(t, resp.Diagnostics.Errors()[0].Detail(), "incomplete or damaged")
+	})
+
 	t.Run("too many pixels is refused at plan time", func(t *testing.T) {
 		resp := ppModifyPlan(t, r, sch, nil, ppFile(t, ppPNG(t, 4001, 4000, 0)))
 		require.True(t, resp.Diagnostics.HasError())

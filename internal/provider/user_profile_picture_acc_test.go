@@ -192,8 +192,8 @@ func TestAccResourceUserProfilePicture_Lifecycle(t *testing.T) {
 }
 
 // A file Pocket ID cannot use is refused at plan time, on every version: not
-// an image, too many pixels, and one that is not there when the change is
-// applied.
+// an image, a PNG with no image data, too many pixels, and one that is not
+// there when the change is applied.
 func TestAccResourceUserProfilePicture_UnusableFiles(t *testing.T) {
 	testAccPreCheck(t)
 	name := acctest.RandomWithPrefix("tf-acc-pp")
@@ -201,6 +201,12 @@ func TestAccResourceUserProfilePicture_UnusableFiles(t *testing.T) {
 	dir := t.TempDir()
 	notImage := filepath.Join(dir, "notes.png")
 	if err := os.WriteFile(notImage, []byte("this is not an image"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A valid header with no image data behind it: the header check passes, and
+	// Pocket ID refuses the file only once the apply has started.
+	truncated := filepath.Join(dir, "truncated.png")
+	if err := os.WriteFile(truncated, ppAccImage(t, 120, 80, 3)[:33], 0o600); err != nil {
 		t.Fatal(err)
 	}
 	tooBig := filepath.Join(dir, "big.png")
@@ -212,6 +218,7 @@ func TestAccResourceUserProfilePicture_UnusableFiles(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{Config: ppAccConfig(userID, notImage), PlanOnly: true, ExpectError: regexp.MustCompile(`not an image Pocket ID can read`)},
+			{Config: ppAccConfig(userID, truncated), PlanOnly: true, ExpectError: regexp.MustCompile(`incomplete or damaged`)},
 			{Config: ppAccConfig(userID, tooBig), PlanOnly: true, ExpectError: regexp.MustCompile(`16000000`)},
 			{Config: ppAccConfig(userID, filepath.Join(dir, "absent.png")), ExpectError: regexp.MustCompile(`does not exist`)},
 		},

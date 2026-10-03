@@ -62,7 +62,7 @@ func (r *userProfilePictureResource) Schema(_ context.Context, _ resource.Schema
 		MarkdownDescription: "Sets a Pocket-ID user's profile picture from a local image file. Destroying the resource restores the default picture.\n\n" +
 			"**What Pocket ID does with the file.** It decodes the image itself (the file name and media type do not matter), scales and crops it to a 300x300 PNG and stores that. " +
 			"It accepts PNG, JPEG, GIF, WebP and BMP, and from Pocket ID 2.15 refuses an image of more than 16 million pixels in total (about 4000x4000). " +
-			"The provider checks at plan time that the file exists, is a regular file of at most 10 MiB, and, for PNG, JPEG and GIF, is a readable image within the pixel limit; " +
+			"The provider checks at plan time that the file exists, is a regular file of at most 10 MiB, and, for PNG, JPEG and GIF, is within the pixel limit and decodes completely (a file that is cut short or damaged is refused before anything is uploaded); " +
 			"it applies the pixel limit on every supported version, 2.14 included. WebP and BMP files are passed to the server with only their size checked.\n\n" +
 			"**Changes to the file.** `sha256` is the digest of the file's content: when the file changes, the next plan shows a new digest and applying uploads the file again. " +
 			"A change to `source` alone (the same content at another path) uploads nothing. Use `${path.module}/...` for `source`; a relative path is resolved against Terraform's working directory.\n\n" +
