@@ -224,6 +224,7 @@ output "spa_client_id" {
 - `has_logo` (Boolean) Whether the client has a logo configured.
 - `id` (String) The ID of the OIDC client.
 - `pkce_supported` (Boolean) Whether Pocket ID saw this client use PKCE although `pkce_enabled` is false; a hint that PKCE can be enabled. An update with `pkce_enabled = false` resets it.
+- `unresolved_creation` (Boolean) True while creating this client with a chosen `client_id` has an unknown outcome (the create's answer was lost or unusable), so the client Pocket ID holds under that ID may not be the one this resource created. It is null for every other client. While it is set the provider refuses to change, delete or replace the client, and a refresh that finds no client keeps the resource in state with a warning, because the create may still commit. It is never cleared by a refresh: check the client in Pocket ID, then run `terraform state rm` on the resource and either import the client (importing clears this) or choose another `client_id`.
 
 <a id="nestedatt--federated_identities"></a>
 ### Nested Schema for `federated_identities`

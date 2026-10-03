@@ -76,6 +76,10 @@ type clientResourceModel struct {
 	GenerateSecret                      types.Bool   `tfsdk:"generate_secret"`
 	ClientSecret                        types.String `tfsdk:"client_secret"`
 	ClientSecretID                      types.String `tfsdk:"client_secret_id"`
+	// UnresolvedCreation is true while a create with a chosen client_id had
+	// an unknown outcome (see clientUnresolvedCreationKey), and null
+	// otherwise.
+	UnresolvedCreation types.Bool `tfsdk:"unresolved_creation"`
 }
 
 // clientFederatedIdentityModel maps a single federated identity nested object.
@@ -316,6 +320,12 @@ func (r *clientResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"unresolved_creation": schema.BoolAttribute{
+				Description:         clientUnresolvedCreationDescription,
+				MarkdownDescription: clientUnresolvedCreationDescription,
+				Computed:            true,
+				PlanModifiers:       []planmodifier.Bool{keepPriorUnresolved{}},
+			},
 			"pkce_supported": schema.BoolAttribute{
 				Description: "Whether Pocket ID saw this client use PKCE although `pkce_enabled` is false; a hint that PKCE can be enabled. An update with `pkce_enabled = false` resets it.",
 				Computed:    true,
@@ -499,19 +509,34 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 		if !definitelyRejected(err) {
 			detail += ". The POST result is uncertain; inspect read-only before retrying. No cleanup was attempted."
 			if createReq.ClientID != nil {
+				// A client found under the chosen ID may be another
+				// actor's, created between the absence check and this
+				// create, so it is never adopted: the ID is kept only as
+				// an unresolved creation, which the provider will not
+				// change, delete or replace (clientUnresolvedCreationKey).
+				// A read only adds what it saw to the diagnostic.
 				plan.ID = types.StringValue(*createReq.ClientID)
 				plan.ClientID = plan.ID
 				plan.IsGroupRestricted = types.BoolValue(createReq.IsGroupRestricted)
 				plan.ClientSecret = types.StringNull()
 				plan.ClientSecretID = types.StringNull()
-				if found, readErr := r.client.GetClient(ctx, *createReq.ClientID); readErr == nil {
-					fillComputedFromServer(&plan, found)
-					detail += " A read found the fixed-ID client; its identity is retained in state."
-				} else {
-					fillComputedFromServer(&plan, &client.OIDCClient{})
-					detail += " The fixed ID is retained for recovery; its existence could not be confirmed."
+				plan.UnresolvedCreation = types.BoolValue(true)
+				fillComputedFromServer(&plan, &client.OIDCClient{})
+				switch _, readErr := r.client.GetClient(ctx, *createReq.ClientID); {
+				case readErr == nil:
+					detail += " A read found a client with this ID, which may or may not be the one this apply created."
+				case client.IsOIDCClientNotFound(readErr):
+					detail += " A read found no client with this ID yet; the create may still complete."
+				default:
+					detail += " Whether a client with this ID exists could not be confirmed (read: " + readErr.Error() + ")."
 				}
+				detail += " The ID is kept in state as an unresolved creation: the provider will not change, delete or replace that client until it is resolved. " +
+					"Check the client in Pocket ID; if it is the intended client, run `terraform state rm` on this resource and `terraform import` it with ID " + *createReq.ClientID +
+					"; otherwise run `terraform state rm` and choose another client_id."
 				resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+				resp.Diagnostics.Append(resp.Private.SetKey(ctx, clientUnresolvedCreationKey, clientUnresolvedCreationValue)...)
+				resp.Diagnostics.AddError("OIDC client creation result uncertain", detail)
+				return
 			} else {
 				detail += " No server-generated ID was received; list clients before deciding recovery."
 			}
@@ -526,6 +551,7 @@ func (r *clientResource) Create(ctx context.Context, req resource.CreateRequest,
 	})
 
 	// Map API response to Terraform model and preserve fields
+	plan.UnresolvedCreation = types.BoolNull()
 	apiModel := mapAPIClientToModel(ctx, clientResp)
 	plan.ID = apiModel.ID
 	plan.ClientID = apiModel.ID
@@ -615,6 +641,17 @@ func (r *clientResource) Read(ctx context.Context, req resource.ReadRequest, res
 	// Get client from API
 	clientResp, err := r.client.GetClient(ctx, state.ID.ValueString())
 	if client.IsOIDCClientNotFound(err) {
+		// A create whose outcome is unknown may still commit after this
+		// answer, so absence does not settle it: keep the resource, with
+		// its markers, until it is reconciled explicitly.
+		if unresolved, d := clientCreationUnresolved(ctx, req.Private, state.UnresolvedCreation); unresolved || d.HasError() {
+			resp.Diagnostics.Append(d...)
+			resp.Diagnostics.AddAttributeWarning(path.Root("client_id"), "OIDC client creation still unresolved",
+				"Pocket ID reports no client "+state.ID.ValueString()+", but creating it had an unknown outcome in an earlier apply and may still complete. "+
+					"The resource stays in state, and the provider will not change, delete or replace it. To reconcile, run `terraform state rm` on this resource "+
+					"and then import the client if it exists and is the intended one (importing clears this condition), or apply again to create it.")
+			return
+		}
 		// Only Pocket ID's own not-found error for the client proves it is
 		// gone; the next plan then creates it again.
 		tflog.Warn(ctx, "OIDC client no longer exists; removing it from state", map[string]any{"id": state.ID.ValueString()})
@@ -728,6 +765,10 @@ func (r *clientResource) Update(ctx context.Context, req resource.UpdateRequest,
 	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("OIDC client", state.ID)) || !collectionOK(r.client, &resp.Diagnostics, "state", "user group", state.AllowedUserGroups) {
 		return
 	}
+	if refuseUnresolvedClient(ctx, req.Private, state.UnresolvedCreation, state.ID.ValueString(), "change", &resp.Diagnostics) {
+		return
+	}
+	plan.UnresolvedCreation = state.UnresolvedCreation
 
 	// Convert from Terraform types to Go types
 	var callbackURLs []string
@@ -978,6 +1019,27 @@ func (r *clientResource) updateSecretChecks(ctx context.Context, state, plan cli
 
 // ModifyPlan plans the attributes that depend on several others.
 func (r *clientResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// A client whose creation is unresolved is neither destroyed nor
+	// changed (see clientUnresolvedCreationKey); a plan that changes nothing
+	// is left alone. Terraform plans a tainted resource's replacement from a
+	// null prior state, which this cannot see, so Delete and Update refuse it
+	// again at apply time from the prior state they are given.
+	if !req.State.Raw.IsNull() && !req.Plan.Raw.Equal(req.State.Raw) {
+		var id string
+		var flag types.Bool
+		resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("id"), &id)...)
+		resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root(clientUnresolvedCreationKey), &flag)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		action := "change"
+		if req.Plan.Raw.IsNull() {
+			action = "delete or replace"
+		}
+		if refuseUnresolvedClient(ctx, req.Private, flag, id, action, &resp.Diagnostics) {
+			return
+		}
+	}
 	if req.Plan.Raw.IsNull() {
 		return // destroy
 	}
@@ -1024,6 +1086,12 @@ func (r *clientResource) Delete(ctx context.Context, req resource.DeleteRequest,
 		return
 	}
 	if !knownIdentitiesOK(r.client, &resp.Diagnostics, "state", knownAs("OIDC client", state.ID)) {
+		return
+	}
+	// Also the destroy half of a tainted resource's replacement, which has
+	// no private state: the attribute in the prior state carries the
+	// condition there.
+	if refuseUnresolvedClient(ctx, req.Private, state.UnresolvedCreation, state.ID.ValueString(), "delete or replace", &resp.Diagnostics) {
 		return
 	}
 

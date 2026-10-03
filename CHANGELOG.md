@@ -86,6 +86,14 @@ resource keeps what it needs to settle it:
   `terraform state rm` the resource and either `terraform import` it with that
   ID (if it is the intended user; the import clears the condition) or choose
   another `id`.
+- `pocketid_client` created with a chosen `client_id`: computed
+  `unresolved_creation` is true, and the client is handled like such a user:
+  a client found under that ID may be someone else's, so it is not adopted,
+  and changing, deleting or replacing it is refused (also the destroy half
+  of Terraform's replacement of the tainted resource). A refresh that finds
+  no client keeps it with a warning. Check the client, then `terraform state
+  rm` the resource and either `terraform import` it (if it is yours) or
+  choose another `client_id`.
 - `pocketid_group_membership`: computed `unresolved_creation` is true. A
   refresh that sees the user in the group clears it; until then a refresh that
   does not keeps the resource with a warning, and a destroy or replacement that
@@ -277,6 +285,13 @@ go-playground/validator and the URL-pattern libraries.
   million pixels) are refused at plan. Destroying the resource removes that
   logo. Import with `<client_id>/light` or `<client_id>/dark`; the first apply
   after an import uploads the file once.
+- New computed attribute `unresolved_creation` on `pocketid_client`: when a
+  create with a chosen `client_id` ends without a definite answer, the
+  client is kept as an unresolved creation instead of being adopted (see
+  "When a result is uncertain" above). Before, the provider adopted a client
+  it found under that ID, which might have been another actor's, and the
+  replacement of the tainted resource deleted it. Existing state reads it as
+  null and plans no change.
 - A single client's answer must list its allowed groups (`allowedUserGroups`,
   which Pocket ID 2.14.0 to 2.17.0 always send, as `null` or `[]` when there
   are none). An answer without it is an error instead of an empty set, which
