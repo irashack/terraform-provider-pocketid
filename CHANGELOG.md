@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.1.0 — 2026-10-08
+
+Adds Pocket ID 2.18.0 and its icon library. Supported Pocket ID servers are
+2.14.0 through 2.18.0. No breaking changes: existing configurations and state
+plan empty. Built from the private repository; not published as a GitHub
+release.
+
+- Pocket ID 2.18.0 is supported and tested.
+- `pocketid_client_logo` takes `preset`, an icon reference from Pocket ID's
+  icon library (2.18.0 or later; the selfh.st icons by default), as an
+  alternative to `source`. Exactly one of the two is required. The light logo
+  is the icon, the dark logo its white variant. The provider downloads the icon
+  itself, without credentials, and uploads it; it is uploaded again when
+  `preset` changes or the logo is replaced outside Terraform.
+- New data source `pocketid_logo_presets` searches the icon library.
+- On Pocket ID 2.18.0 a client with only a dark logo shows it in light mode
+  too; `pocketid_client_logo` still tracks each logo by the client's own
+  `has_logo` and `has_dark_logo`, so nothing changes in plans.
+
 ## 3.0.1 — 2026-10-03
 
 3.0.0 was tagged but never released: its release run failed one acceptance test

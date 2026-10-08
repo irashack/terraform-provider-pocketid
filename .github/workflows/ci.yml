@@ -36,8 +36,10 @@ jobs:
           - pocketid: '2.15.0'
             target: test-acc
           - pocketid: '2.16.0'
-            target: test-acc-provider
+            target: test-acc
           - pocketid: '2.17.0'
+            target: test-acc-provider
+          - pocketid: '2.18.0'
             target: test-acc-provider
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -47,8 +49,8 @@ jobs:
         with:
           go-version-file: go.mod
       # Disposable credentials only; never upload acceptance output or state.
-      # The two supported versions run the full provider and data-source
-      # suites; the two older fixture versions run client (resource and data
+      # The two newest versions run the full provider and data-source
+      # suites; the three older fixture versions run client (resource and data
       # source) and application-config acceptance. Version-specific behaviour
       # is selected inside the tests from POCKETID_TEST_VERSION.
       - run: make "$TEST_TARGET" POCKETID_VERSION="$POCKETID_VERSION"

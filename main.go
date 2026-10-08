@@ -17,7 +17,7 @@ var (
 	// These will be set by the goreleaser configuration
 	// to appropriate values for the compiled binary (-X main.version=...).
 	// A build without it reports the release it leads up to.
-	version string = "3.0.0-dev"
+	version string = "3.1.0-dev"
 )
 
 func main() {

@@ -4,7 +4,7 @@ How every check runs, what each native script proves, and the evidence recorded
 for each release. The sections from "Release 2.4.104 evidence" down are the record
 of earlier releases; the support matrix and tool versions in each belong to that
 release, not to the current one. The current range is Pocket ID **2.14.0 through
-2.17.0**.
+2.18.0**.
 
 ## Reproducible checks
 
@@ -14,16 +14,16 @@ make docs-check             # generated documentation matches the checkout
 make actionlint             # GitHub Actions syntax and expressions
 make vuln                   # reachable Go vulnerabilities
 go vet -tags=acc ./...      # the acceptance tests compile
-make test-acc               # every acceptance test family (TestAcc*) on POCKETID_VERSION (default 2.17.0)
-make test-acc-matrix        # test-acc on 2.14.0, 2.15.0, 2.16.0 and 2.17.0
+make test-acc               # every acceptance test family (TestAcc*) on POCKETID_VERSION (default 2.18.0)
+make test-acc-matrix        # test-acc on 2.14.0, 2.15.0, 2.16.0, 2.17.0 and 2.18.0
 make test-acc-provider      # full provider and data-source suites on POCKETID_VERSION, one fixture
-make test-acc-supported     # the full suites on every supported version, 2.14.0 to 2.17.0
+make test-acc-supported     # the full suites on every supported version, 2.14.0 to 2.18.0
 ```
 
 `make test-acc-supported` runs `make test-acc-provider` once per supported version
 and is the acceptance gate before a release. CI is lighter to keep its run time
-down: the full suites on 2.16.0 and 2.17.0, and `make test-acc` on 2.14.0 and
-2.15.0. The release workflow runs `make check`, `make vuln` and
+down: the full suites on 2.17.0 and 2.18.0, and `make test-acc` on 2.14.0, 2.15.0
+and 2.16.0. The release workflow runs `make check`, `make vuln` and
 `make test-acc-matrix` on the tagged source.
 
 The acceptance packages share one fixture and run one after another (`-p 1`), so a

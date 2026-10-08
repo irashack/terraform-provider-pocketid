@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/resourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -38,6 +39,8 @@ var (
 	_ resource.ResourceWithConfigure   = &clientLogoResource{}
 	_ resource.ResourceWithImportState = &clientLogoResource{}
 	_ resource.ResourceWithModifyPlan  = &clientLogoResource{}
+
+	_ resource.ResourceWithConfigValidators = &clientLogoResource{}
 )
 
 func init() { register(NewClientLogoResource) }
@@ -48,7 +51,8 @@ func NewClientLogoResource() resource.Resource {
 }
 
 // clientLogoResource manages the light or the dark logo of one OIDC client,
-// uploaded from a local file. Drift is found two ways: the client reports
+// uploaded from a local file or from an icon of Pocket ID's icon library
+// (preset, Pocket ID 2.18.0 and later). Drift is found two ways: the client reports
 // whether it has each logo (hasLogo, hasDarkLogo), and the hash of the image
 // Pocket ID served right after the upload is kept in private state and
 // compared with what it serves later. Pocket ID strips metadata from JPEG,
@@ -62,6 +66,7 @@ type clientLogoResourceModel struct {
 	ClientID types.String `tfsdk:"client_id"`
 	Variant  types.String `tfsdk:"variant"`
 	Source   types.String `tfsdk:"source"`
+	Preset   types.String `tfsdk:"preset"`
 	SHA256   types.String `tfsdk:"sha256"`
 }
 
@@ -72,6 +77,13 @@ const (
 	// clientLogoServedKey is the private-state key holding the SHA-256 of
 	// the image Pocket ID served after this resource's last upload.
 	clientLogoServedKey = "served_sha256"
+
+	// clientLogoPresetKey is the private-state key holding the SHA-256 of
+	// the icon this resource last uploaded from preset. The icon is not
+	// downloaded while planning, so the plan compares sha256 with this
+	// record instead: a refresh that finds the logo replaced changes sha256,
+	// and the two no longer agree.
+	clientLogoPresetKey = "preset_sha256"
 
 	// clientLogoMaxPixels is Pocket ID's limit on a JPEG or PNG logo
 	// (utils/image maxImagePixels, checked with image.DecodeConfig in
@@ -87,12 +99,14 @@ func (r *clientLogoResource) Schema(_ context.Context, _ resource.SchemaRequest,
 	defer func() { resp.Schema = valuefree.ResourceSchema(resp.Schema) }()
 	extensions := strings.Join(client.ClientLogoExtensions(), ", ")
 	resp.Schema = schema.Schema{
-		Description: "Uploads the light or dark logo of an OIDC client in Pocket ID from a local image file.",
-		MarkdownDescription: "Uploads the light or dark logo of an OIDC client in Pocket ID from a local image file. " +
+		Description: "Uploads the light or dark logo of an OIDC client in Pocket ID from a local image file or an icon of Pocket ID's icon library.",
+		MarkdownDescription: "Uploads the light or dark logo of an OIDC client in Pocket ID from a local image file (`source`) or an " +
+			"icon of Pocket ID's icon library (`preset`, Pocket ID 2.18.0 or later). " +
 			"Use one resource per logo: the light logo is the one Pocket ID shows by default, and the dark logo, when there " +
 			"is one, replaces it in dark mode. Destroying the resource removes that logo from the client.\n\n" +
 			"The file is uploaded again when its content changes, and when Pocket ID holds a different image than the one " +
-			"this resource uploaded (it was replaced or removed outside Terraform).",
+			"this resource uploaded (it was replaced or removed outside Terraform). An icon from `preset` is uploaded again " +
+			"when `preset` changes and when Pocket ID holds a different image.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Description: "`<client_id>/<variant>`.",
@@ -125,14 +139,25 @@ func (r *clientLogoResource) Schema(_ context.Context, _ resource.SchemaRequest,
 					"extension changes; another path to the same content with the same extension is not uploaded. At most %d bytes (Pocket ID's 2 MiB upload limit, "+
 					"less the request's own framing); a JPEG or PNG image may have at most %d pixels. The file is read while "+
 					"planning; one that does not exist yet (another resource writes it during the apply) is read when it is uploaded.",
-					extensions, client.ClientLogoMaxBytes, clientLogoMaxPixels),
-				Required:   true,
+					extensions, client.ClientLogoMaxBytes, clientLogoMaxPixels) + " Exactly one of `source` and `preset` is required.",
+				Optional:   true,
 				Validators: []validator.String{clientLogoSourceValidator{}},
 			},
+			"preset": schema.StringAttribute{
+				Description: "Reference of an icon in Pocket ID's icon library (`ICON_LIBRARY_URL`, by default the selfh.st icons, " +
+					"https://selfh.st/icons), such as `jellyfin` or `home-assistant`; the `pocketid_logo_presets` data source finds them. " +
+					"Requires Pocket ID 2.18.0 or later with the icon library turned on. The light logo is the icon itself; the dark logo " +
+					"is its white variant, which only some icons have. The provider asks Pocket ID for the icon's address while planning, " +
+					"downloads the icon itself (not through Pocket ID, and without credentials) and uploads it like a file. It is " +
+					"uploaded again when `preset` changes and when Pocket ID holds a different image; a newer version of the same icon " +
+					"in the library is not picked up by itself (replace the resource for that). Exactly one of `source` and `preset` is required.",
+				Optional:   true,
+				Validators: []validator.String{clientLogoPresetValidator{}},
+			},
 			"sha256": schema.StringAttribute{
-				Description: "SHA-256 (hex) of the content of `source` as last uploaded. When Pocket ID serves a different " +
+				Description: "SHA-256 (hex) of the content of `source`, or of the icon from `preset`, as last uploaded. When Pocket ID serves a different " +
 					"image than the one this resource uploaded, a refresh sets it to the SHA-256 of the image Pocket ID serves, so " +
-					"the next plan uploads `source` again.",
+					"the next plan uploads the logo again.",
 				Computed: true,
 			},
 		},
@@ -152,8 +177,17 @@ func (r *clientLogoResource) Configure(_ context.Context, req resource.Configure
 	r.client = c
 }
 
+// ConfigValidators requires exactly one of source and preset.
+func (r *clientLogoResource) ConfigValidators(context.Context) []resource.ConfigValidator {
+	return []resource.ConfigValidator{
+		resourcevalidator.ExactlyOneOf(path.MatchRoot("source"), path.MatchRoot("preset")),
+	}
+}
+
 // ModifyPlan plans sha256 from the file's current content, so a changed file
-// plans an upload, and plans id from client_id and variant.
+// plans an upload, and plans id from client_id and variant. For a preset it
+// keeps sha256 while the preset and the logo Pocket ID holds are unchanged;
+// otherwise it leaves sha256 unknown, and checks that the icon exists.
 func (r *clientLogoResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	if req.Plan.Raw.IsNull() {
 		return
@@ -182,7 +216,67 @@ func (r *clientLogoResource) ModifyPlan(ctx context.Context, req resource.Modify
 			return
 		}
 	}
+	if !plan.Preset.IsUnknown() && !plan.Preset.IsNull() && !plan.Variant.IsUnknown() {
+		var state *clientLogoResourceModel
+		if !req.State.Raw.IsNull() {
+			state = &clientLogoResourceModel{}
+			resp.Diagnostics.Append(req.State.Get(ctx, state)...)
+		}
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		recorded, d := clientLogoPrivateHash(ctx, req.Private, clientLogoPresetKey)
+		resp.Diagnostics.Append(d...)
+		if clientLogoPresetUnchanged(state, &plan, recorded) {
+			plan.SHA256 = state.SHA256
+		} else if r.client != nil {
+			// Fail at plan time for an icon that is not there (or a server
+			// without the icon library), rather than halfway through the
+			// apply. The icon itself is downloaded when it is uploaded.
+			if _, _, err := r.resolvePreset(ctx, plan.Preset.ValueString(), plan.Variant.ValueString() != clientLogoDark); err != nil {
+				resp.Diagnostics.AddAttributeError(path.Root("preset"), "Cannot use the icon", err.Error())
+				return
+			}
+		}
+	}
 	resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
+}
+
+// clientLogoPresetUnchanged reports whether an existing logo uploaded from
+// the planned preset is still what Pocket ID holds: state (nil before
+// creation) names the same preset, and its sha256 still equals recorded, the
+// hash recorded after that upload (a refresh that finds the logo replaced
+// sets sha256 to the served image's hash).
+func clientLogoPresetUnchanged(state, plan *clientLogoResourceModel, recorded string) bool {
+	if state == nil || !state.Preset.Equal(plan.Preset) || state.SHA256.IsNull() || state.SHA256.IsUnknown() {
+		return false
+	}
+	return recorded != "" && recorded == state.SHA256.ValueString()
+}
+
+// resolvePreset finds the icon reference in Pocket ID's icon library and
+// returns the URL of its light image (light = true) or of its white variant
+// for dark mode, with the icon's name.
+func (r *clientLogoResource) resolvePreset(ctx context.Context, reference string, light bool) (string, string, error) {
+	preset, found, err := r.client.FindLogoPreset(ctx, reference)
+	switch {
+	case client.IsLogoPresetsDisabled(err):
+		return "", "", errors.New("the icon library of this Pocket ID is turned off (ICON_LIBRARY_URL=disabled); use source with a local file instead")
+	case client.IsLogoPresetsUnavailable(err):
+		return "", "", errors.New("the server could not load its icon library's index (" + err.Error() + "); try again later")
+	case client.IsMissingEndpoint(err):
+		return "", "", errors.New("this Pocket ID has no icon library: preset requires Pocket ID 2.18.0 or later")
+	case err != nil:
+		return "", "", errors.New("searching Pocket ID's icon library failed: " + err.Error())
+	case !found:
+		return "", "", fmt.Errorf("the icon library has no icon with the reference %q (the pocketid_logo_presets data source lists matching references)", reference)
+	case light:
+		return preset.LogoURL, preset.Name, nil
+	case preset.DarkLogoURL == nil:
+		return "", "", fmt.Errorf("the icon %q has no white variant for dark mode; without a dark logo Pocket ID shows the light logo in both themes, so leave the dark logo out", reference)
+	default:
+		return *preset.DarkLogoURL, preset.Name, nil
+	}
 }
 
 func (r *clientLogoResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -199,6 +293,7 @@ func (r *clientLogoResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 	resp.Diagnostics.Append(setClientLogoServedHash(ctx, resp.Private, served)...)
+	resp.Diagnostics.Append(setClientLogoPresetHash(ctx, resp.Private, &plan)...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -207,10 +302,14 @@ func (r *clientLogoResource) Create(ctx context.Context, req resource.CreateRequ
 // Pocket ID stores and serves a logo with the type of the uploaded file
 // name's extension, so the same bytes under another extension are a
 // different logo. Another path, or another letter case of the same
-// extension, with the same content needs no upload.
+// extension, with the same content needs no upload. A preset is uploaded
+// when the plan left sha256 unknown (see ModifyPlan) or the preset changed.
 func clientLogoNeedsUpload(plan, state *clientLogoResourceModel) bool {
 	if plan.SHA256.IsUnknown() || !plan.SHA256.Equal(state.SHA256) {
 		return true
+	}
+	if !plan.Preset.IsNull() {
+		return !plan.Preset.Equal(state.Preset)
 	}
 	return state.Source.IsNull() || clientLogoExtension(plan.Source.ValueString()) != clientLogoExtension(state.Source.ValueString())
 }
@@ -237,36 +336,51 @@ func (r *clientLogoResource) Update(ctx context.Context, req resource.UpdateRequ
 			return
 		}
 		resp.Diagnostics.Append(setClientLogoServedHash(ctx, resp.Private, served)...)
+		resp.Diagnostics.Append(setClientLogoPresetHash(ctx, resp.Private, &plan)...)
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-// upload sends the source file, checks that the client now reports the logo,
+// upload sends the source file (or the preset's icon), checks that the client now reports the logo,
 // and fills in id and sha256. It returns whether the upload was made, and the
 // SHA-256 of the image Pocket ID then serves ("" when it could not be read
 // back; the next refresh records it). Nothing is retried: a failed upload may
 // or may not have replaced the logo, and applying again uploads it again.
 func (r *clientLogoResource) upload(ctx context.Context, plan *clientLogoResourceModel, diags *diag.Diagnostics) (bool, string) {
-	clientID, variant, source := plan.ClientID.ValueString(), plan.Variant.ValueString(), plan.Source.ValueString()
+	clientID, variant := plan.ClientID.ValueString(), plan.Variant.ValueString()
 	light := variant != clientLogoDark
-	content, sum, err := readClientLogoSource(source)
-	if err != nil {
-		diags.AddAttributeError(path.Root("source"), "Cannot use the logo file", err.Error()+" Nothing was uploaded.")
-		return false, ""
-	}
-	if !plan.SHA256.IsUnknown() && plan.SHA256.ValueString() != sum {
-		diags.AddAttributeError(path.Root("source"), "Logo file changed",
-			"The file's content changed after the plan was made. Nothing was uploaded; plan again.")
-		return false, ""
+	var content []byte
+	var sum, extension string
+	if !plan.Preset.IsNull() {
+		var ok bool
+		content, extension, ok = r.downloadPreset(ctx, plan.Preset.ValueString(), light, diags)
+		if !ok {
+			return false, ""
+		}
+		sum = clientLogoSHA256(content)
+	} else {
+		source := plan.Source.ValueString()
+		var err error
+		content, sum, err = readClientLogoSource(source)
+		if err != nil {
+			diags.AddAttributeError(path.Root("source"), "Cannot use the logo file", err.Error()+" Nothing was uploaded.")
+			return false, ""
+		}
+		if !plan.SHA256.IsUnknown() && plan.SHA256.ValueString() != sum {
+			diags.AddAttributeError(path.Root("source"), "Logo file changed",
+				"The file's content changed after the plan was made. Nothing was uploaded; plan again.")
+			return false, ""
+		}
+		extension = filepath.Ext(source)
 	}
 
 	tflog.Debug(ctx, "Uploading client logo", map[string]any{"client_id": clientID, "variant": variant, "bytes": len(content)})
-	if err := r.client.UploadClientLogo(ctx, clientID, light, filepath.Ext(source), content); err != nil {
+	if err := r.client.UploadClientLogo(ctx, clientID, light, extension, content); err != nil {
 		switch {
 		case client.IsNotFound(err, client.ResourceOIDCClient):
 			diags.AddAttributeError(path.Root("client_id"), "OIDC client not found", "Pocket ID has no OIDC client "+clientID+"; nothing was uploaded.")
 		case errors.Is(err, client.ErrInvalidUpload):
-			diags.AddAttributeError(path.Root("source"), "Logo not uploaded", err.Error())
+			diags.AddError("Logo not uploaded", err.Error())
 		case writeRefused(err):
 			diags.AddError("Logo not uploaded", "Pocket ID refused the "+variant+" logo for OIDC client "+clientID+" ("+err.Error()+"); the client's logo is unchanged.")
 		default:
@@ -299,6 +413,26 @@ func (r *clientLogoResource) upload(ctx context.Context, plan *clientLogoResourc
 		return true, ""
 	}
 	return true, clientLogoSHA256(served)
+}
+
+// downloadPreset finds the preset's icon and downloads it. It returns the
+// icon's content and image type, and whether both are usable; nothing has
+// been uploaded when it fails.
+func (r *clientLogoResource) downloadPreset(ctx context.Context, reference string, light bool, diags *diag.Diagnostics) ([]byte, string, bool) {
+	iconURL, _, err := r.resolvePreset(ctx, reference, light)
+	if err != nil {
+		diags.AddAttributeError(path.Root("preset"), "Cannot use the icon", err.Error()+" Nothing was uploaded.")
+		return nil, "", false
+	}
+	content, extension, err := r.client.DownloadLogo(ctx, iconURL)
+	if err == nil {
+		err = checkClientLogoContent(extension, content)
+	}
+	if err != nil {
+		diags.AddAttributeError(path.Root("preset"), "Cannot use the icon", err.Error()+". Nothing was uploaded.")
+		return nil, "", false
+	}
+	return content, extension, true
 }
 
 func (r *clientLogoResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -341,8 +475,9 @@ func (r *clientLogoResource) refresh(ctx context.Context, state *clientLogoResou
 		diags.AddError("Error reading client logo", "Could not read OIDC client "+clientID+": "+err.Error())
 		return false, ""
 	}
-	// Asked for a dark logo the client lacks, Pocket ID serves the light
-	// one, so the client's own report decides whether the logo exists.
+	// Asked for a logo the client lacks, Pocket ID serves the other one
+	// (the dark logo in place of a missing light one since 2.18.0), so the
+	// client's own report decides whether the logo exists.
 	if !clientLogoPresent(current, light) {
 		tflog.Info(ctx, "The client has no such logo any more; removing it from state", map[string]any{"client_id": clientID, "variant": variant})
 		return true, ""
@@ -434,7 +569,27 @@ func clientLogoSHA256(content []byte) string {
 func clientLogoServedHash(ctx context.Context, private interface {
 	GetKey(context.Context, string) ([]byte, diag.Diagnostics)
 }) (string, diag.Diagnostics) {
-	raw, diags := private.GetKey(ctx, clientLogoServedKey)
+	return clientLogoPrivateHash(ctx, private, clientLogoServedKey)
+}
+
+// setClientLogoPresetHash records the SHA-256 of the icon just uploaded from
+// preset, or removes the record after an upload from source.
+func setClientLogoPresetHash(ctx context.Context, private interface {
+	SetKey(context.Context, string, []byte) diag.Diagnostics
+}, plan *clientLogoResourceModel) diag.Diagnostics {
+	if plan.Preset.IsNull() {
+		return private.SetKey(ctx, clientLogoPresetKey, nil)
+	}
+	raw, _ := json.Marshal(plan.SHA256.ValueString())
+	return private.SetKey(ctx, clientLogoPresetKey, raw)
+}
+
+// clientLogoPrivateHash returns the hash recorded in private state under
+// key; "" when none is recorded.
+func clientLogoPrivateHash(ctx context.Context, private interface {
+	GetKey(context.Context, string) ([]byte, diag.Diagnostics)
+}, key string) (string, diag.Diagnostics) {
+	raw, diags := private.GetKey(ctx, key)
 	if diags.HasError() || len(raw) == 0 {
 		return "", diags
 	}
@@ -484,15 +639,23 @@ func readClientLogoSource(source string) ([]byte, string, error) {
 	if len(content) > client.ClientLogoMaxBytes {
 		return nil, "", fmt.Errorf("the file is larger than %d bytes, the most Pocket ID accepts for a logo", client.ClientLogoMaxBytes)
 	}
-	switch extension {
-	case "jpg", "jpeg", "png":
-		// Pocket ID refuses an image with too many pixels; one it cannot
-		// decode is accepted as it is, so it is not refused here either.
-		if config, _, err := image.DecodeConfig(bytes.NewReader(content)); err == nil && int64(config.Width)*int64(config.Height) > clientLogoMaxPixels {
-			return nil, "", fmt.Errorf("the image is %dx%d pixels; Pocket ID accepts at most %d pixels", config.Width, config.Height, clientLogoMaxPixels)
-		}
+	if err := checkClientLogoContent(extension, content); err != nil {
+		return nil, "", err
 	}
 	return content, clientLogoSHA256(content), nil
+}
+
+// checkClientLogoContent applies Pocket ID's pixel limit to a JPEG or PNG
+// image. Pocket ID refuses an image with too many pixels; one it cannot
+// decode is accepted as it is, so it is not refused here either.
+func checkClientLogoContent(extension string, content []byte) error {
+	switch extension {
+	case "jpg", "jpeg", "png":
+		if config, _, err := image.DecodeConfig(bytes.NewReader(content)); err == nil && int64(config.Width)*int64(config.Height) > clientLogoMaxPixels {
+			return fmt.Errorf("the image is %dx%d pixels; Pocket ID accepts at most %d pixels", config.Width, config.Height, clientLogoMaxPixels)
+		}
+	}
+	return nil
 }
 
 // clientLogoSourceValidator requires a file name with an image extension
@@ -514,5 +677,26 @@ func (clientLogoSourceValidator) ValidateString(_ context.Context, req validator
 	if _, ok := client.ClientLogoMediaType(filepath.Ext(req.ConfigValue.ValueString())); !ok {
 		resp.Diagnostics.AddAttributeError(req.Path, "Unsupported logo file type",
 			"Pocket ID takes a logo's type from its file extension and accepts only: "+strings.Join(client.ClientLogoExtensions(), ", ")+".")
+	}
+}
+
+// clientLogoPresetValidator requires the form of an icon library reference.
+type clientLogoPresetValidator struct{}
+
+func (clientLogoPresetValidator) Description(context.Context) string {
+	return "must be an icon library reference: lower-case letters, digits, '.', '_' and '-', starting with a letter or digit"
+}
+
+func (v clientLogoPresetValidator) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (clientLogoPresetValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	if !client.ValidLogoPresetReference(req.ConfigValue.ValueString()) {
+		resp.Diagnostics.AddAttributeError(req.Path, "Invalid icon reference",
+			"An icon library reference, such as jellyfin or home-assistant, has only lower-case letters, digits, '.', '_' and '-', and starts with a letter or digit.")
 	}
 }

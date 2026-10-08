@@ -3,15 +3,15 @@
 page_title: "pocketid_client_logo Resource - terraform-provider-pocketid"
 subcategory: ""
 description: |-
-  Uploads the light or dark logo of an OIDC client in Pocket ID from a local image file. Use one resource per logo: the light logo is the one Pocket ID shows by default, and the dark logo, when there is one, replaces it in dark mode. Destroying the resource removes that logo from the client.
-  The file is uploaded again when its content changes, and when Pocket ID holds a different image than the one this resource uploaded (it was replaced or removed outside Terraform).
+  Uploads the light or dark logo of an OIDC client in Pocket ID from a local image file (source) or an icon of Pocket ID's icon library (preset, Pocket ID 2.18.0 or later). Use one resource per logo: the light logo is the one Pocket ID shows by default, and the dark logo, when there is one, replaces it in dark mode. Destroying the resource removes that logo from the client.
+  The file is uploaded again when its content changes, and when Pocket ID holds a different image than the one this resource uploaded (it was replaced or removed outside Terraform). An icon from preset is uploaded again when preset changes and when Pocket ID holds a different image.
 ---
 
 # pocketid_client_logo (Resource)
 
-Uploads the light or dark logo of an OIDC client in Pocket ID from a local image file. Use one resource per logo: the light logo is the one Pocket ID shows by default, and the dark logo, when there is one, replaces it in dark mode. Destroying the resource removes that logo from the client.
+Uploads the light or dark logo of an OIDC client in Pocket ID from a local image file (`source`) or an icon of Pocket ID's icon library (`preset`, Pocket ID 2.18.0 or later). Use one resource per logo: the light logo is the one Pocket ID shows by default, and the dark logo, when there is one, replaces it in dark mode. Destroying the resource removes that logo from the client.
 
-The file is uploaded again when its content changes, and when Pocket ID holds a different image than the one this resource uploaded (it was replaced or removed outside Terraform).
+The file is uploaded again when its content changes, and when Pocket ID holds a different image than the one this resource uploaded (it was replaced or removed outside Terraform). An icon from `preset` is uploaded again when `preset` changes and when Pocket ID holds a different image.
 
 ## Example Usage
 
@@ -34,7 +34,38 @@ resource "pocketid_client_logo" "app_dark" {
   variant   = "dark"
   source    = "${path.module}/logos/my-app-dark.png"
 }
+
+# Pocket ID 2.18.0 or later: an icon of Pocket ID's icon library (the selfh.st
+# icons by default) instead of a file. The dark logo is the icon's white
+# variant, which only some icons have.
+resource "pocketid_client" "media" {
+  name          = "Jellyfin"
+  callback_urls = ["https://jellyfin.example.com/sso/OID/redirect/pocketid"]
+}
+
+resource "pocketid_client_logo" "media" {
+  client_id = pocketid_client.media.id
+  preset    = "jellyfin"
+}
 ```
+
+## Icons from the icon library
+
+With `preset`, the logo is an icon of Pocket ID's icon library (Pocket ID
+2.18.0 or later; `ICON_LIBRARY_URL`, by default the selfh.st icons), the
+same icons the admin interface offers. The `pocketid_logo_presets` data
+source finds an icon's reference. The light logo is the icon itself, and the
+dark logo its white variant; an icon without one cannot be a dark logo, and
+without a dark logo Pocket ID shows the light one in both themes.
+
+While planning, the provider asks Pocket ID for the icon (so a reference that
+does not exist, or a server without the icon library, fails the plan) but
+downloads nothing. When applying, it downloads the icon from the address
+Pocket ID gave, with no credentials and from where Terraform runs, then
+uploads it like a file. The icon is uploaded again when `preset` changes and
+when the logo is replaced or removed outside Terraform. A newer version of the
+same icon in the library is not picked up by itself; replace the resource
+(`-replace`) to fetch it again.
 
 ## How changes are found
 
@@ -57,9 +88,10 @@ Pocket ID allows caches to keep a logo for 15 minutes, so every read of a
 logo uses a URL of its own and asks caches to revalidate: a cache between the
 provider and Pocket ID never answers with an earlier logo.
 
-The logo is uploaded from the file, never from a URL: Pocket ID's own URL
-download refuses private addresses, and when it fails while a client is being
-created the client exists without its logo.
+The logo is uploaded from the file or downloaded icon, never handed to
+Pocket ID as a URL: Pocket ID's own URL download refuses private addresses,
+and when it fails while a client is being created the client exists without
+its logo.
 
 Uploads are never retried. If one fails after it was sent, the logo may or may
 not have been replaced, and applying again uploads it again. Destroying the
@@ -71,16 +103,17 @@ resource removes that logo from the client; the other one stays.
 ### Required
 
 - `client_id` (String) The ID of the OIDC client (`pocketid_client.<name>.id`). Changing it moves the logo to the other client.
-- `source` (String) Path of the image file to upload. Pocket ID takes the image's type from the file name's extension (any case), which must be one of: avif, gif, heic, ico, jpeg, jpg, png, svg, webp. The file is uploaded again when its content or its extension changes; another path to the same content with the same extension is not uploaded. At most 2096128 bytes (Pocket ID's 2 MiB upload limit, less the request's own framing); a JPEG or PNG image may have at most 16000000 pixels. The file is read while planning; one that does not exist yet (another resource writes it during the apply) is read when it is uploaded.
 
 ### Optional
 
+- `preset` (String) Reference of an icon in Pocket ID's icon library (`ICON_LIBRARY_URL`, by default the selfh.st icons, https://selfh.st/icons), such as `jellyfin` or `home-assistant`; the `pocketid_logo_presets` data source finds them. Requires Pocket ID 2.18.0 or later with the icon library turned on. The light logo is the icon itself; the dark logo is its white variant, which only some icons have. The provider asks Pocket ID for the icon's address while planning, downloads the icon itself (not through Pocket ID, and without credentials) and uploads it like a file. It is uploaded again when `preset` changes and when Pocket ID holds a different image; a newer version of the same icon in the library is not picked up by itself (replace the resource for that). Exactly one of `source` and `preset` is required.
+- `source` (String) Path of the image file to upload. Pocket ID takes the image's type from the file name's extension (any case), which must be one of: avif, gif, heic, ico, jpeg, jpg, png, svg, webp. The file is uploaded again when its content or its extension changes; another path to the same content with the same extension is not uploaded. At most 2096128 bytes (Pocket ID's 2 MiB upload limit, less the request's own framing); a JPEG or PNG image may have at most 16000000 pixels. The file is read while planning; one that does not exist yet (another resource writes it during the apply) is read when it is uploaded. Exactly one of `source` and `preset` is required.
 - `variant` (String) Which logo this is: `light` (the default logo) or `dark` (the logo for dark mode). Defaults to `light`. Changing it replaces the resource.
 
 ### Read-Only
 
 - `id` (String) `<client_id>/<variant>`.
-- `sha256` (String) SHA-256 (hex) of the content of `source` as last uploaded. When Pocket ID serves a different image than the one this resource uploaded, a refresh sets it to the SHA-256 of the image Pocket ID serves, so the next plan uploads `source` again.
+- `sha256` (String) SHA-256 (hex) of the content of `source`, or of the icon from `preset`, as last uploaded. When Pocket ID serves a different image than the one this resource uploaded, a refresh sets it to the SHA-256 of the image Pocket ID serves, so the next plan uploads the logo again.
 
 ## Import
 
@@ -101,4 +134,5 @@ resource "pocketid_client_logo" "app_dark" {
 ```
 
 The provider cannot compare the image Pocket ID holds with a local file it
-never uploaded, so after an import the first apply uploads `source` once.
+never uploaded, so after an import the first apply uploads `source` (or the
+icon from `preset`) once.

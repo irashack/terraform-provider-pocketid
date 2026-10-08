@@ -14,6 +14,24 @@ description: |-
 
 {{ tffile "examples/resources/pocketid_client_logo/resource.tf" }}
 
+## Icons from the icon library
+
+With `preset`, the logo is an icon of Pocket ID's icon library (Pocket ID
+2.18.0 or later; `ICON_LIBRARY_URL`, by default the selfh.st icons), the
+same icons the admin interface offers. The `pocketid_logo_presets` data
+source finds an icon's reference. The light logo is the icon itself, and the
+dark logo its white variant; an icon without one cannot be a dark logo, and
+without a dark logo Pocket ID shows the light one in both themes.
+
+While planning, the provider asks Pocket ID for the icon (so a reference that
+does not exist, or a server without the icon library, fails the plan) but
+downloads nothing. When applying, it downloads the icon from the address
+Pocket ID gave, with no credentials and from where Terraform runs, then
+uploads it like a file. The icon is uploaded again when `preset` changes and
+when the logo is replaced or removed outside Terraform. A newer version of the
+same icon in the library is not picked up by itself; replace the resource
+(`-replace`) to fetch it again.
+
 ## How changes are found
 
 - **The file changed.** The plan reads `source` and compares its SHA-256 with
@@ -35,9 +53,10 @@ Pocket ID allows caches to keep a logo for 15 minutes, so every read of a
 logo uses a URL of its own and asks caches to revalidate: a cache between the
 provider and Pocket ID never answers with an earlier logo.
 
-The logo is uploaded from the file, never from a URL: Pocket ID's own URL
-download refuses private addresses, and when it fails while a client is being
-created the client exists without its logo.
+The logo is uploaded from the file or downloaded icon, never handed to
+Pocket ID as a URL: Pocket ID's own URL download refuses private addresses,
+and when it fails while a client is being created the client exists without
+its logo.
 
 Uploads are never retried. If one fails after it was sent, the logo may or may
 not have been replaced, and applying again uploads it again. Destroying the
@@ -52,4 +71,5 @@ Import a logo as `<client_id>/light` or `<client_id>/dark`:
 {{ tffile "examples/resources/pocketid_client_logo/import.tf" }}
 
 The provider cannot compare the image Pocket ID holds with a local file it
-never uploaded, so after an import the first apply uploads `source` once.
+never uploaded, so after an import the first apply uploads `source` (or the
+icon from `preset`) once.

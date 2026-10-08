@@ -68,7 +68,7 @@ def docker_run_command(name, envfile, version, platform):
 
 
 def run(version, command):
-    if version not in ("2.14.0", "2.15.0", "2.16.0", "2.17.0"):
+    if version not in ("2.14.0", "2.15.0", "2.16.0", "2.17.0", "2.18.0"):
         raise ValueError("version must be in the tested matrix")
     os.umask(0o077)
     failure_log = os.environ.get("POCKETID_FIXTURE_FAILURE_LOG")

@@ -6,7 +6,7 @@ what each covers and how to run it:
 - `make test-acc`, `make test-acc-matrix`, `make test-acc-provider` and
   `make test-acc-supported` run the acceptance tests (build tag `acc`, in
   `internal/provider` and `internal/datasources`) against a disposable official
-  Pocket ID image, 2.14.0 through 2.17.0.
+  Pocket ID image, 2.14.0 through 2.18.0.
 - `scripts/disposable-pocketid.py VERSION -- COMMAND` is that fixture: it starts an
   isolated server on a free loopback port with a synthetic administrator, runs
   `COMMAND` against it and removes it. It is the only way tests get a server.

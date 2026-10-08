@@ -1,6 +1,6 @@
 # Local checks and CI use the same entry points. No target deploys to a live instance.
 BINARY_NAME := terraform-provider-pocketid
-POCKETID_VERSION ?= 2.17.0
+POCKETID_VERSION ?= 2.18.0
 GO := go
 LINT := $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
 DOCS := $(GO) run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs@v0.25.0
@@ -51,18 +51,18 @@ test-acc: ## Run every acceptance test family (TestAcc*: resources, data sources
 	python3 scripts/disposable-pocketid.py $(POCKETID_VERSION) -- $(GO) test -v -count=1 -p 1 -timeout 20m $(ACC_PACKAGES) -tags=acc -run '^TestAcc'
 
 test-acc-matrix: ## Run test-acc (every acceptance test family) on every fixture version
-	@for version in 2.14.0 2.15.0 2.16.0 2.17.0; do $(MAKE) test-acc POCKETID_VERSION=$$version || exit $$?; done
+	@for version in 2.14.0 2.15.0 2.16.0 2.17.0 2.18.0; do $(MAKE) test-acc POCKETID_VERSION=$$version || exit $$?; done
 
 test-acc-provider: ## Run the full provider and data-source acceptance suites on one disposable official image
 	python3 scripts/disposable-pocketid.py $(POCKETID_VERSION) -- $(GO) test -v -count=1 -p 1 -timeout 20m $(ACC_PACKAGES) -tags=acc
 
-# The supported servers, 2.14.0 through 2.17.0: test-acc-supported runs the
+# The supported servers, 2.14.0 through 2.18.0: test-acc-supported runs the
 # full provider and data-source suites on each. CI runs the full suites on
-# 2.16.0 and 2.17.0 and test-acc on 2.14.0 and 2.15.0 to keep its run time
+# 2.17.0 and 2.18.0 and test-acc on 2.14.0, 2.15.0 and 2.16.0 to keep its run time
 # down; run this target before a release.
-SUPPORTED_POCKETID_VERSIONS := 2.14.0 2.15.0 2.16.0 2.17.0
+SUPPORTED_POCKETID_VERSIONS := 2.14.0 2.15.0 2.16.0 2.17.0 2.18.0
 
-test-acc-supported: ## Run test-acc-provider on every supported Pocket ID version (2.14.0 to 2.17.0)
+test-acc-supported: ## Run test-acc-provider on every supported Pocket ID version (2.14.0 to 2.18.0)
 	@for version in $(SUPPORTED_POCKETID_VERSIONS); do $(MAKE) test-acc-provider POCKETID_VERSION=$$version || exit $$?; done
 
 vuln: ## Check reachable Go vulnerabilities
