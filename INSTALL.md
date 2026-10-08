@@ -12,14 +12,14 @@ terraform {
   required_providers {
     pocketid = {
       source  = "registry.terraform.io/irashack/pocketid"
-      version = "3.0.1"
+      version = "3.1.1"
     }
   }
 }
 ```
 
 Download the exact version's archive and SHA256SUMS from
-[release v3.0.1](https://github.com/irashack/terraform-provider-pocketid/releases/tag/v3.0.1).
+[release v3.1.1](https://github.com/irashack/terraform-provider-pocketid/releases/tag/v3.1.1).
 Verify the SHA256SUMS file against the immutable digest recorded in the release
 notes, then verify the selected archive against that file. Checksums detect
 content changes; they are not a registry GPG signature. This release is unsigned.
@@ -27,15 +27,15 @@ content changes; they are not a registry GPG signature. This release is unsigned
 For example, for `darwin_arm64` (use `linux_amd64` or `linux_arm64` as appropriate):
 
 ```sh
-version=3.0.1
+version=3.1.1
 platform=darwin_arm64
 archive=terraform-provider-pocketid_${version}_${platform}.zip
 sums=terraform-provider-pocketid_${version}_SHA256SUMS
 release=https://github.com/irashack/terraform-provider-pocketid/releases/download/v${version}
 curl --fail --location --output "$archive" "$release/$archive"
 curl --fail --location --output "$sums" "$release/$sums"
-# Set this to the literal SHA256SUMS digest from the v3.0.1 release notes:
-expected_manifest_sha256=8281dbdf8d0ffedaf8d8408c5b04ddd1a20aa5817f63f55d93354d2ddf301331
+# Set this to the literal SHA256SUMS digest from the v3.1.1 release notes:
+expected_manifest_sha256=RELEASE_NOTES_DIGEST
 printf '%s  %s\n' "$expected_manifest_sha256" "$sums" | shasum -a 256 -c -
 awk -v file="$archive" '$2 == file { print }' "$sums" | shasum -a 256 -c -
 mirror="$HOME/.local/share/pocketid-provider-mirror"
@@ -69,6 +69,19 @@ tofu providers lock -fs-mirror="$mirror" \
 ```
 
 Keep the exact version and checksum pins; do not silently select a newer tag.
+
+## Upgrade from 3.0.1 to 3.1.1
+
+A minor release with no breaking changes and no state upgrade: state written by
+3.0.1 plans empty under 3.1.1 (proved with the verified 3.0.1 archive, below).
+Verify and add the v3.1.1 archive to the native mirror beside 3.0.1, change only
+the exact version pin to `3.1.1`, run `tofu init -upgrade` (or `terraform init
+-upgrade`) and commit the lockfile, then require an empty refreshed plan.
+
+What is new is opt-in: `preset` on `pocketid_client_logo` and the
+`pocketid_logo_presets` data source, both needing Pocket ID 2.18.0 or later with
+its icon library on. Rolling back to 3.0.1 needs any `preset` logos removed from
+the configuration first; 3.0.1 does not know the attribute.
 
 ## Upgrade from 2.4.104 to 3.0.1
 

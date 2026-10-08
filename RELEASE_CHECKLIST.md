@@ -9,10 +9,10 @@
    installed, `make release-check`. Record exact tool versions and any failure.
 3. Run the full acceptance suites on every supported server:
    `make test-acc-supported`. It runs `make test-acc-provider` (the provider and
-   data-source suites on one fixture) on Pocket ID 2.14.0, 2.15.0, 2.16.0 and
-   2.17.0 in turn. This is the local pre-tag gate for the full suites. The
+   data-source suites on one fixture) on Pocket ID 2.14.0, 2.15.0, 2.16.0, 2.17.0
+   and 2.18.0 in turn. This is the local pre-tag gate for the full suites. The
    release workflow does not repeat it: its gate is `make test-acc-matrix`, every
-   acceptance test family (`make test-acc`) on all four versions, and CI runs the full suites only on 2.16.0 and 2.17.0. Record the pass counts per
+   acceptance test family (`make test-acc`) on all five versions, and CI runs the full suites only on 2.17.0 and 2.18.0. Record the pass counts per
    version and package.
 4. Run the native proofs from TESTING.md with Terraform **and** OpenTofu:
    - `tests/native/lifecycle.py` against a build stamped with the release version,
@@ -23,7 +23,7 @@
      `tests/native/upgrade_users_groups.py` (with the binary unpacked from the same
      archive) and `tests/native/application_config.py` with that version as
      `OLD_VERSION`. The new build must take over its state with an empty plan.
-   - Run them on 2.17.0 and on every other supported version the release's changes
+   - Run them on the newest supported version and on every other supported version the release's changes
      depend on. State in TESTING.md what ran and what did not. Same-address
      releases need upgrade/refresh/empty-plan proof without state-provider
      replacement.
@@ -55,6 +55,18 @@ place. Routine CI runs on branch/PR changes. Automatic development releases,
 scheduled sweeps, cleanup and contributor-edit jobs are not enabled in this
 project. Do not publish a registry identity until it is actually registered with
 the required signing setup.
+
+## Release v3.1.1
+
+A minor release: Pocket ID 2.18.0 support, `preset` on `pocketid_client_logo` and
+the `pocketid_logo_presets` data source. 3.1.0 was tagged in the private Forgejo
+repository and built for the homelab, but its commit carried a local committer
+address, so the same tree was recommitted and ships as 3.1.1; the private v3.1.0
+tag stays where it is and was never published. Upgrade proofs run from the
+published 3.0.1 archive on 2.18.0 with both tools; TESTING.md ("Release 3.1.1
+evidence") records the run. Publication: push `main-maintenance` and `v3.1.1` to
+the public repository, run the release workflow for `v3.1.1`, verify the draft's
+assets and the downloaded binary, then publish.
 
 ## Release v3.0.1
 

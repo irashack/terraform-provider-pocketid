@@ -5,9 +5,9 @@ groups, APIs and instance settings as code. This is an independent provider. It
 began in September 2026 as a maintenance fork of
 [Trozz/terraform-provider-pocketid](https://github.com/Trozz/terraform-provider-pocketid)
 and has been its own project since 2026-10-02, with its own version numbers and no
-tracking of upstream. Release **3.0.1**, its first as an independent project (3.0.0
-was tagged but never released; 3.0.1 is the same provider with a test-fixture fix),
-supports Pocket ID **2.14.0 through 2.18.0**. Its archives are published on
+tracking of upstream. Release **3.1.1** supports Pocket ID **2.14.0 through
+2.18.0**, including 2.18.0's icon library for client logos (3.0.1 was its first
+release as an independent project). Its archives are published on
 [GitHub releases](https://github.com/irashack/terraform-provider-pocketid/releases)
 and installed through the native filesystem mirror in [INSTALL.md](INSTALL.md) under
 the source address `registry.terraform.io/irashack/pocketid`; it is not published to a
@@ -27,7 +27,7 @@ terraform {
   required_providers {
     pocketid = {
       source  = "registry.terraform.io/irashack/pocketid"
-      version = "3.0.1"
+      version = "3.1.1"
     }
   }
 }

@@ -33,7 +33,7 @@ behavior is selected inside the tests from `POCKETID_TEST_VERSION`.
 ## The disposable server fixture
 
 `scripts/disposable-pocketid.py VERSION -- COMMAND` is the only way tests get a
-Pocket ID server. VERSION must be one of 2.14.0, 2.15.0, 2.16.0 or 2.17.0. The
+Pocket ID server. VERSION must be one of 2.14.0, 2.15.0, 2.16.0, 2.17.0 or 2.18.0. The
 fixture pulls the official versioned image, creates an isolated container and
 database on a free loopback port, waits for health (HTTP 204 is success), stops the
 server, and seeds one synthetic administrator and a hash of a random API token,
@@ -183,6 +183,58 @@ The migration case additionally needs the genuine upstream 2.3.0 artifact under
 renamed binary of this provider. The test uses supported state replacement, checks
 encrypted state/backups and saved-plan encryption, preserves the ID and secret, and
 requires an empty subsequent plan. No development overrides are used.
+
+## Release 3.1.1 evidence — 2026-10-08
+
+Pocket ID 2.18.0 support, `preset` on `pocketid_client_logo` and the
+`pocketid_logo_presets` data source; supported servers are 2.14.0 through 2.18.0.
+macOS ARM64, Docker via OrbStack, Go 1.27.1, golangci-lint 2.13.2, GoReleaser
+2.18.1, OpenTofu 1.13.1, Terraform 1.16.4. The provider source is the tree of
+the private 3.1.0 build (`b560963`, recommitted as `4bd560c` with the public
+committer address; identical tree); the release commit changes documentation only.
+
+Checks: `make check` (golangci-lint 0 issues), `make docs-check`, `make vuln` (no
+reachable vulnerabilities), `make actionlint`, `go vet -tags=acc ./...`,
+`go mod tidy -diff` (no diff) and GoReleaser's `check` all passed, and
+`goreleaser release --snapshot --clean --skip=publish` built all eleven target
+archives and the SHA256SUMS file.
+
+Acceptance, `make test-acc-provider` on every supported version (top-level tests,
+no failures, no skips; the preset test fetches the selfh.st index and icons from
+jsDelivr, so the fixture and the host need internet access):
+
+| Pocket ID | `internal/provider` | `internal/datasources` |
+|---|---|---|
+| 2.14.0 | 174/174 | 116/116 |
+| 2.15.0 | 174/174 | 116/116 |
+| 2.16.0 | 174/174 | 116/116 |
+| 2.17.0 | 174/174 | 116/116 |
+| 2.18.0 | 174/174 | 116/116 |
+
+Native proofs, binaries built from the release tree and stamped 3.1.1, the old
+provider the published 3.0.1 archive, verified against its SHA256SUMS and that
+file's digest from INSTALL.md (its unpacked binary for `upgrade_users_groups.py`):
+
+- `lifecycle.py` on 2.18.0 and 2.14.0 and `upgrade.py` on 2.18.0 passed with both
+  OpenTofu and Terraform.
+- `upgrade_users_groups.py` and `application_config.py` on 2.18.0, both tools:
+  every step of the 3.0.1-to-3.1.1 takeover passed (empty refreshed and
+  unrefreshed plans after `init -upgrade`, an update applied, IDs, groups and
+  claims unchanged; the application configuration planned empty), and each
+  script then stopped at an assertion about 2.4.104's own behavior that 3.0.1
+  no longer has (`upgrade_users_groups.py` line 183 expects the old provider
+  never to converge on omitted names; `application_config.py` line 178 expects
+  `show` to fail on 2.4.x state).
+- `client_upgrade.py` stopped before the upgrade (line 171): it needs the 2.4.x
+  bug of recording a client rename Pocket ID ignored, which 3.0.1 fixed. It
+  therefore proved nothing for this release.
+- In their place, a real configuration: the homelab's service-provisioning root
+  (26 clients, their groups and secrets, users, the application configuration),
+  with state written by 3.0.1, planned no change to any of them under the 3.1.0
+  build of this tree, against Pocket ID 2.18.0.
+
+The three 2.4.x-specific scripts need a 3.x baseline before the next release
+that changes state; that rework is not part of this release.
 
 ## Release 3.0.0 evidence — 2026-10-03
 

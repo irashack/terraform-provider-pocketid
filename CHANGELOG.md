@@ -1,11 +1,11 @@
 # Changelog
 
-## 3.1.0 — 2026-10-08
+## 3.1.1 — 2026-10-08
 
 Adds Pocket ID 2.18.0 and its icon library. Supported Pocket ID servers are
-2.14.0 through 2.18.0. No breaking changes: existing configurations and state
-plan empty. Built from the private repository; not published as a GitHub
-release.
+2.14.0 through 2.18.0. No breaking changes: state written by 3.0.1 plans empty.
+3.1.0 was a private build of the same source and was never published; 3.1.1 is
+its first release.
 
 - Pocket ID 2.18.0 is supported and tested.
 - `pocketid_client_logo` takes `preset`, an icon reference from Pocket ID's
