@@ -35,7 +35,7 @@ release=https://github.com/irashack/terraform-provider-pocketid/releases/downloa
 curl --fail --location --output "$archive" "$release/$archive"
 curl --fail --location --output "$sums" "$release/$sums"
 # Set this to the literal SHA256SUMS digest from the v3.1.1 release notes:
-expected_manifest_sha256=RELEASE_NOTES_DIGEST
+expected_manifest_sha256=c2295e742d737d0e9d018578e8ff4107e182eea3ea863a89e48aa302c50c2753
 printf '%s  %s\n' "$expected_manifest_sha256" "$sums" | shasum -a 256 -c -
 awk -v file="$archive" '$2 == file { print }' "$sums" | shasum -a 256 -c -
 mirror="$HOME/.local/share/pocketid-provider-mirror"

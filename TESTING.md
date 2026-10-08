@@ -236,6 +236,16 @@ file's digest from INSTALL.md (its unpacked binary for `upgrade_users_groups.py`
 The three 2.4.x-specific scripts need a 3.x baseline before the next release
 that changes state; that rework is not part of this release.
 
+Release workflow: the first attempt stopped in `make test-acc-matrix` on 2.17.0
+when `TestAccResourceAPIClientAccess_outOfBandChanges` ended the package without
+a reported failure (the fixture withholds raw output); that test passed 10 of 10
+times locally on 2.17.0, and the rerun of the job passed and built the draft.
+The SHA256SUMS digest is
+`c2295e742d737d0e9d018578e8ff4107e182eea3ea863a89e48aa302c50c2753`. Every
+published asset verified against SHA256SUMS, the SHA256SUMS attestation
+verified, and `lifecycle.py` passed with both tools on 2.18.0 with the downloaded
+darwin_arm64 archive in a filesystem mirror.
+
 ## Release 3.0.0 evidence — 2026-10-03
 
 The first release of the project on its own terms (UPSTREAM.md); supported servers
