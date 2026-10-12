@@ -1,10 +1,13 @@
 # Install the provider
 
 This provider uses the source address **registry.terraform.io/irashack/pocketid**
-in both Terraform and OpenTofu. Listings on the OpenTofu and Terraform registries
-are being requested; until they exist, installation uses each tool's native
-filesystem mirror support, and no registry account, private server, cache
-substitution or development override is required.
+in both Terraform and OpenTofu. Since 3.1.3 (2026-10-12) it is listed on the
+Terraform Registry, so `terraform init` and `tofu init` install and verify it
+with no further setup (OpenTofu resolves the explicit `registry.terraform.io`
+address; the OpenTofu registry listing is pending, opentofu/registry#5831). The
+rest of this file is the alternative: installing a verified archive through each
+tool's native filesystem mirror, which needs no registry account, private server,
+cache substitution or development override.
 Write-only attributes need Terraform or OpenTofu 1.11 or later; everything else
 works with the versions listed in [TESTING.md](TESTING.md).
 

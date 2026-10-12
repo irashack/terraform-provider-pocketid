@@ -7,22 +7,24 @@ began in September 2026 as a maintenance fork of
 by Michael Leer and has been its own project since 2026-10-02, with its own version
 numbers and no tracking of upstream (see [Attribution](#attribution)). Release **3.1.3** supports Pocket ID **2.14.0 through
 2.18.0**, including 2.18.0's icon library for client logos (3.0.1 was its first
-release as an independent project). Its archives are published on
-[GitHub releases](https://github.com/irashack/terraform-provider-pocketid/releases),
+release as an independent project). It is listed on the Terraform Registry as
+[irashack/pocketid](https://registry.terraform.io/providers/irashack/pocketid)
+since 3.1.3 (2026-10-12), and `terraform init` and `tofu init` install it from
+there with the source address `registry.terraform.io/irashack/pocketid`; the
+OpenTofu registry listing is pending (opentofu/registry#5831). Its archives are
+published on [GitHub releases](https://github.com/irashack/terraform-provider-pocketid/releases),
 signed since 3.1.2 with the key in [release-signing-key.asc](release-signing-key.asc),
-and installed through the native filesystem mirror in [INSTALL.md](INSTALL.md) under
-the source address `registry.terraform.io/irashack/pocketid`; listings on the
-OpenTofu and Terraform registries are being requested. It has deliberate breaking
-changes from 2.4.x, each marked
+and [INSTALL.md](INSTALL.md) also covers installing them through a native
+filesystem mirror. It has deliberate breaking changes from 2.4.x, each marked
 **Breaking** in the 3.0.0 section of [CHANGELOG.md](CHANGELOG.md). This is not an
 official Pocket ID or Trozz release.
 
 ## Get started
 
-Install the verified archive as [INSTALL.md](INSTALL.md) describes before running
-`terraform init` or `tofu init`; a GitHub release alone does not make the provider
-registry-installable. If you already use this provider, read
-[Upgrading from 2.4.x](#upgrading-from-24x) first.
+`terraform init` or `tofu init` installs the provider from the Terraform Registry
+and verifies its signature; [INSTALL.md](INSTALL.md) covers installing a verified
+archive through a filesystem mirror instead. If you already use this provider,
+read [Upgrading from 2.4.x](#upgrading-from-24x) first.
 
 ```hcl
 terraform {
