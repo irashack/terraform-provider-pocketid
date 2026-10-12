@@ -31,12 +31,7 @@ func testAccLosingProxy(t *testing.T, lose func(*http.Request) bool) string {
 	if err != nil {
 		t.Fatal("POCKETID_BASE_URL is not a URL")
 	}
-	forward := httputil.NewSingleHostReverseProxy(target)
-	director := forward.Director
-	forward.Director = func(r *http.Request) {
-		director(r)
-		r.Host = target.Host
-	}
+	forward := &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) { r.SetURL(target) }}
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if lose(r) {
 			forward.ServeHTTP(httptest.NewRecorder(), r)
@@ -60,12 +55,7 @@ func testAccHoldingProxy(t *testing.T, hold func(*http.Request) bool) (string, f
 	if err != nil {
 		t.Fatal("POCKETID_BASE_URL is not a URL")
 	}
-	forward := httputil.NewSingleHostReverseProxy(target)
-	director := forward.Director
-	forward.Director = func(r *http.Request) {
-		director(r)
-		r.Host = target.Host
-	}
+	forward := &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) { r.SetURL(target) }}
 	var (
 		mu      sync.Mutex
 		held    bool

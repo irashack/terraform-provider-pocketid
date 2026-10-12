@@ -5,13 +5,15 @@ groups, APIs and instance settings as code. This is an independent provider. It
 began in September 2026 as a maintenance fork of
 [Trozz/terraform-provider-pocketid](https://github.com/Trozz/terraform-provider-pocketid)
 by Michael Leer and has been its own project since 2026-10-02, with its own version
-numbers and no tracking of upstream (see [Attribution](#attribution)). Release **3.1.1** supports Pocket ID **2.14.0 through
+numbers and no tracking of upstream (see [Attribution](#attribution)). Release **3.1.2** supports Pocket ID **2.14.0 through
 2.18.0**, including 2.18.0's icon library for client logos (3.0.1 was its first
 release as an independent project). Its archives are published on
-[GitHub releases](https://github.com/irashack/terraform-provider-pocketid/releases)
+[GitHub releases](https://github.com/irashack/terraform-provider-pocketid/releases),
+signed since 3.1.2 with the key in [release-signing-key.asc](release-signing-key.asc),
 and installed through the native filesystem mirror in [INSTALL.md](INSTALL.md) under
-the source address `registry.terraform.io/irashack/pocketid`; it is not published to a
-provider registry. It has deliberate breaking changes from 2.4.x, each marked
+the source address `registry.terraform.io/irashack/pocketid`; listings on the
+OpenTofu and Terraform registries are being requested. It has deliberate breaking
+changes from 2.4.x, each marked
 **Breaking** in the 3.0.0 section of [CHANGELOG.md](CHANGELOG.md). This is not an
 official Pocket ID or Trozz release.
 
@@ -27,7 +29,7 @@ terraform {
   required_providers {
     pocketid = {
       source  = "registry.terraform.io/irashack/pocketid"
-      version = "3.1.1"
+      version = "3.1.2"
     }
   }
 }

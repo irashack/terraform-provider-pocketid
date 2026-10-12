@@ -1,9 +1,10 @@
 # Install the provider
 
 This provider uses the source address **registry.terraform.io/irashack/pocketid**
-in both Terraform and OpenTofu. It is not published to a provider registry.
-Installation uses each tool's native filesystem mirror support; no registry
-account, private server, cache substitution, or development override is required.
+in both Terraform and OpenTofu. Listings on the OpenTofu and Terraform registries
+are being requested; until they exist, installation uses each tool's native
+filesystem mirror support, and no registry account, private server, cache
+substitution or development override is required.
 Write-only attributes need Terraform or OpenTofu 1.11 or later; everything else
 works with the versions listed in [TESTING.md](TESTING.md).
 
@@ -12,30 +13,40 @@ terraform {
   required_providers {
     pocketid = {
       source  = "registry.terraform.io/irashack/pocketid"
-      version = "3.1.1"
+      version = "3.1.2"
     }
   }
 }
 ```
 
-Download the exact version's archive and SHA256SUMS from
-[release v3.1.1](https://github.com/irashack/terraform-provider-pocketid/releases/tag/v3.1.1).
-Verify the SHA256SUMS file against the immutable digest recorded in the release
-notes, then verify the selected archive against that file. Checksums detect
-content changes; they are not a registry GPG signature. This release is unsigned.
+Download the exact version's archive, SHA256SUMS and SHA256SUMS.sig from
+[release v3.1.2](https://github.com/irashack/terraform-provider-pocketid/releases/tag/v3.1.2).
+Verify the signature with the release key,
+[release-signing-key.asc](release-signing-key.asc) (RSA 4096, fingerprint
+`FE9D 704B 2C1E 6675 46F0 EBB1 E031 C4DE 04D8 19D6`, valid until October 2029),
+and the SHA256SUMS file against the immutable digest recorded in the release
+notes, then verify the selected archive against that file. Releases before 3.1.2
+are unsigned and have only the digest.
 
 For example, for `darwin_arm64` (use `linux_amd64` or `linux_arm64` as appropriate):
 
 ```sh
-version=3.1.1
+version=3.1.2
 platform=darwin_arm64
 archive=terraform-provider-pocketid_${version}_${platform}.zip
 sums=terraform-provider-pocketid_${version}_SHA256SUMS
 release=https://github.com/irashack/terraform-provider-pocketid/releases/download/v${version}
 curl --fail --location --output "$archive" "$release/$archive"
 curl --fail --location --output "$sums" "$release/$sums"
-# Set this to the literal SHA256SUMS digest from the v3.1.1 release notes:
-expected_manifest_sha256=c2295e742d737d0e9d018578e8ff4107e182eea3ea863a89e48aa302c50c2753
+curl --fail --location --output "$sums.sig" "$release/$sums.sig"
+# The release key; the fingerprint shown must be FE9D704B2C1E667546F0EBB1E031C4DE04D819D6.
+curl --fail --location --output release-signing-key.asc \
+  https://raw.githubusercontent.com/irashack/terraform-provider-pocketid/main-maintenance/release-signing-key.asc
+gpg --show-keys --with-fingerprint release-signing-key.asc
+gpg --import release-signing-key.asc
+gpg --verify "$sums.sig" "$sums"
+# Set this to the literal SHA256SUMS digest from the v3.1.2 release notes:
+expected_manifest_sha256=RECORDED_IN_THE_V3_1_2_RELEASE_NOTES
 printf '%s  %s\n' "$expected_manifest_sha256" "$sums" | shasum -a 256 -c -
 awk -v file="$archive" '$2 == file { print }' "$sums" | shasum -a 256 -c -
 mirror="$HOME/.local/share/pocketid-provider-mirror"
@@ -69,6 +80,16 @@ tofu providers lock -fs-mirror="$mirror" \
 ```
 
 Keep the exact version and checksum pins; do not silently select a newer tag.
+
+## Upgrade from 3.1.1 to 3.1.2
+
+Nothing changes in the provider: 3.1.2 is 3.1.1's provider source, built with
+Go 1.27.2 and updated golang.org/x/ modules, with signed release archives and the
+documentation of 2026-10-12. State written by 3.1.1 plans
+empty under 3.1.2. Verify and add the v3.1.2 archive to the native mirror, change
+the exact version pin to `3.1.2`, run `tofu init -upgrade` (or `terraform init
+-upgrade`) and commit the lockfile, then require an empty refreshed plan. Rolling
+back to 3.1.1 is the same steps in reverse.
 
 ## Upgrade from 3.0.1 to 3.1.1
 

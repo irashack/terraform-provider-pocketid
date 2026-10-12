@@ -35,10 +35,16 @@
    3.x tag may appear there) so two different releases are not called the same
    thing. Create a stable version tag after validation.
 7. Build with pinned GoReleaser 2.18.1 using `.goreleaser.yml`:
-   `goreleaser release --clean --skip=publish`. Check all expected target ZIPs and
-   SHA256SUMS. No GPG key or registry publication is implied.
-8. Publish the tag/source and release archives, manifest and SHA256SUMS. Include
-   the SHA256SUMS digest and exact validation evidence in release notes.
+   `goreleaser release --clean --skip=publish --skip=sign`. Check all expected target
+   ZIPs and SHA256SUMS. Signing happens in the release workflow: the `signs` section
+   of `.goreleaser.yml` signs SHA256SUMS with the key in `release-signing-key.asc`,
+   whose private half is the repository's `GPG_PRIVATE_KEY` Actions secret (custody:
+   the homelab's OpenBao). A local build signs too when `GPG_FINGERPRINT` is set and
+   `GNUPGHOME` holds the key.
+8. Publish the tag/source and release archives, manifest, SHA256SUMS and
+   SHA256SUMS.sig. Verify the draft's signature with `gpg --verify` against
+   `release-signing-key.asc` first. Include the SHA256SUMS digest and exact
+   validation evidence in release notes.
 9. Download the published artifacts into a fresh directory, verify all checksums,
    install via a native mirror and repeat native Terraform/OpenTofu lifecycle
    checks. A tag or successful build alone is not a released-provider proof. The
@@ -55,6 +61,30 @@ place. Routine CI runs on branch/PR changes. Automatic development releases,
 scheduled sweeps, cleanup and contributor-edit jobs are not enabled in this
 project. Do not publish a registry identity until it is actually registered with
 the required signing setup.
+
+## Release v3.1.2
+
+A patch release with no provider code change: `git diff v3.1.1 v3.1.2 --stat
+-- internal main.go tests scripts` names only
+`internal/provider/resource_user_unresolved_acc_test.go`, whose two proxy
+helpers move from `ReverseProxy.Director` (deprecated by Go 1.26, which
+staticcheck then flags) to `Rewrite`; the two tests they serve ran on a
+disposable 2.18.0 before tagging. `go.mod` and
+`go.sum` change for Go 1.26 as the language version, the go1.27.2 toolchain and
+golang.org/x/net 0.60.0 with the x/ modules it requires (x/mod 0.41.0, x/crypto
+0.57.0, x/sync 0.23.0, x/sys 0.48.0, x/text 0.42.0, x/tools 0.49.0), because
+`make vuln` reported reachable vulnerabilities that go1.27.2 and x/net 0.60.0
+fix; the Makefile's golangci-lint moves to 2.14.0, since 2.13.2 cannot read
+go1.27.2's export data. It adds release signing for the registries (`.goreleaser.yml` `signs`, the
+workflow's key import and verification, `release-signing-key.asc`) and the
+documentation of 2026-10-12 (attribution, upstream review). Step 2's checks ran;
+steps 3 and 4 were not repeated for an identical provider tree, and the release
+workflow's `make test-acc-matrix` is the acceptance gate for this release.
+TESTING.md ("Release 3.1.2 evidence") records the local run, including a signed
+snapshot build verified with the public key alone. Publication: set the
+`GPG_PRIVATE_KEY` secret, push `main-maintenance` and `v3.1.2` to the public
+repository, run the release workflow for `v3.1.2`, verify the draft's assets and
+`SHA256SUMS.sig`, publish, then submit the key and provider to the registries.
 
 ## Release v3.1.1
 

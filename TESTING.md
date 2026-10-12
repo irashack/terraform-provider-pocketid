@@ -184,6 +184,38 @@ renamed binary of this provider. The test uses supported state replacement, chec
 encrypted state/backups and saved-plan encryption, preserves the ID and secret, and
 requires an empty subsequent plan. No development overrides are used.
 
+## Release 3.1.2 evidence — 2026-10-12
+
+Signed release archives and documentation; the provider code is the 3.1.1
+tree. Under `internal/` only `internal/provider/resource_user_unresolved_acc_test.go`
+changes: its two proxy helpers move from `ReverseProxy.Director`, deprecated by
+Go 1.26, to `Rewrite` with `SetURL`. `go.mod` moves to Go 1.26 as
+the language version and go1.27.2 as the toolchain, and golang.org/x/net to
+0.60.0 (with the x/ modules it requires and golang.org/x/mod 0.41.0): govulncheck
+reported nine reachable standard-library vulnerabilities fixed in go1.27.2 and
+five in x/net 0.58.0 fixed in 0.60.0. golangci-lint moves to 2.14.0, which reads
+go1.27.2's export data (2.13.2 cannot). macOS ARM64, Go 1.27.2, golangci-lint
+2.14.0, GoReleaser 2.18.1 (through `go run`), GnuPG 2.5.24.
+
+Checks: `make check` (golangci-lint 0 issues), `make docs-check`, `make vuln`
+(no reachable vulnerabilities), `make actionlint`, `go vet -tags=acc ./...`,
+`go mod tidy -diff` (no diff) and GoReleaser's `check` passed. A snapshot build
+with signing (`goreleaser release --snapshot --clean --skip=publish` with
+`GPG_FINGERPRINT` set and a keyring holding the release key) built all eleven
+target archives, the SHA256SUMS file and `SHA256SUMS.sig`, and `gpg --verify` in
+a fresh keyring holding only `release-signing-key.asc` reported a good signature
+from fingerprint `FE9D 704B 2C1E 6675 46F0 EBB1 E031 C4DE 04D8 19D6`.
+
+`TestAccResourceUser_unresolvedCreationIsNotReplaced` and
+`TestAccResourceUser_refreshBeforeLateCommitKeepsResource`, the two tests the
+changed helpers serve, passed on a disposable Pocket ID 2.18.0.
+
+Not run: the rest of the acceptance suites and the native proofs, because the
+provider code is unchanged from 3.1.1 (whose evidence follows) and the dependency
+changes are patch releases of the Go toolchain and the x/ modules; the release
+workflow's `make test-acc-matrix` ran on the tag. The published 3.1.2 archive's
+digest and the release run are recorded here after publication.
+
 ## Release 3.1.1 evidence — 2026-10-08
 
 Pocket ID 2.18.0 support, `preset` on `pocketid_client_logo` and the

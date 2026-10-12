@@ -7,6 +7,11 @@ Use a minimal reproduction with synthetic values. This is an independent volunte
 project with no guaranteed response or remediation timeline; fixes target the latest
 release.
 
+Releases from 3.1.2 are signed: `SHA256SUMS.sig` verifies with
+[release-signing-key.asc](release-signing-key.asc) (fingerprint
+`FE9D 704B 2C1E 6675 46F0 EBB1 E031 C4DE 04D8 19D6`). Report a suspected compromise of
+that key the same private way.
+
 Use [Issues](https://github.com/irashack/terraform-provider-pocketid/issues) for ordinary bugs.
 The project is maintained independently of the upstream it began from (see
 [UPSTREAM.md](UPSTREAM.md)): report problems here, and note that upstream's contact

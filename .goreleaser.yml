@@ -78,6 +78,23 @@ checksum:
     - glob: "terraform-registry-manifest.json"
       name_template: "{{ .ProjectName }}_{{ .Version }}_manifest.json"
 
+# Signing: a detached binary signature of the SHA256SUMS file, which both
+# registries verify. The key is release-signing-key.asc; its private half is the
+# release workflow's GPG_PRIVATE_KEY secret, and GPG_FINGERPRINT selects it.
+signs:
+  - id: checksums
+    artifacts: checksum
+    cmd: gpg
+    signature: "${artifact}.sig"
+    args:
+      - "--batch"
+      - "--local-user"
+      - "{{ .Env.GPG_FINGERPRINT }}"
+      - "--output"
+      - "${signature}"
+      - "--detach-sign"
+      - "${artifact}"
+
 # Release configuration
 release:
   github:
@@ -95,8 +112,8 @@ release:
     LICENSE and THIRD_PARTY_NOTICES.md) and is maintained on its own since 3.0.0.
     Supported Pocket ID versions: 2.14.0 through 2.18.0.
     See README.md, INSTALL.md, UPSTREAM.md, TESTING.md and CHANGELOG.md in this release's source.
-    The provider is not published to a registry. Use the irashack provider address and the native filesystem mirror.
-    Archives and SHA256SUMS are published without a registry signing key.
+    Registry listings (OpenTofu, Terraform) are being requested; until they exist, use the irashack provider address and the native filesystem mirror.
+    SHA256SUMS is signed: SHA256SUMS.sig is a detached signature by the key in release-signing-key.asc, fingerprint FE9D 704B 2C1E 6675 46F0 EBB1 E031 C4DE 04D8 19D6.
 
   # Prerelease configuration
   prerelease: auto

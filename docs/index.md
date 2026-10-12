@@ -16,8 +16,9 @@ This provider is an independent project: it began as a fork of
 by Michael Leer (MIT; the notice stays in LICENSE) and is maintained on its own,
 with its own version numbers (see
 [UPSTREAM.md](https://github.com/irashack/terraform-provider-pocketid/blob/main-maintenance/UPSTREAM.md)).
-Release 3.1.1 supports Pocket ID 2.14.0 through 2.18.0. It is not published to a
-provider registry: install a verified archive from its
+Release 3.1.2 supports Pocket ID 2.14.0 through 2.18.0. Listings on the OpenTofu
+and Terraform registries are being requested; until they exist, install a verified,
+signed archive from its
 [GitHub releases](https://github.com/irashack/terraform-provider-pocketid/releases)
 through a native filesystem mirror under the source address
 `registry.terraform.io/irashack/pocketid`, as the

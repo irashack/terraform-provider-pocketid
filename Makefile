@@ -2,7 +2,7 @@
 BINARY_NAME := terraform-provider-pocketid
 POCKETID_VERSION ?= 2.18.0
 GO := go
-LINT := $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
+LINT := $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
 DOCS := $(GO) run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs@v0.25.0
 
 .DEFAULT_GOAL := help

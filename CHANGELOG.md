@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.1.2 — 2026-10-12
+
+Signed releases, for the OpenTofu and Terraform registries. No provider changes:
+the provider source is the 3.1.1 tree, and state written by 3.1.1 plans empty.
+Built with Go 1.27.2 and golang.org/x/net 0.60.0 (`go.mod`: language version
+1.26, toolchain go1.27.2, x/mod 0.41.0 and the x/ modules x/net requires), which
+fix the `net/http`, `crypto/tls`, `net/textproto`, `os`, `html/template` and
+x/net HTTP/2 vulnerabilities govulncheck reports as reachable from 3.1.1's build.
+The only change under `internal/` is in an acceptance test: two proxy helpers
+move from `ReverseProxy.Director`, which Go 1.26 deprecates, to `Rewrite`.
+
+- Each release's `SHA256SUMS` now carries a detached signature,
+  `SHA256SUMS.sig`, made with the release key in `release-signing-key.asc`
+  (RSA 4096, fingerprint `FE9D 704B 2C1E 6675 46F0 EBB1 E031 C4DE 04D8 19D6`,
+  valid until October 2029). INSTALL.md shows how to verify it.
+- Documentation: the project's attribution (README.md "Attribution",
+  THIRD_PARTY_NOTICES.md, UPSTREAM.md) now that the repository stands on its
+  own, and a review of upstream's main branch through its #126.
+
 ## 3.1.1 — 2026-10-08
 
 Adds Pocket ID 2.18.0 and its icon library. Supported Pocket ID servers are

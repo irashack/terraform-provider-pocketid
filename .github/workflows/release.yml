@@ -8,6 +8,9 @@ on:
         type: string
 permissions:
   contents: read
+env:
+  # The release signing key: release-signing-key.asc in this repository.
+  GPG_FINGERPRINT: FE9D704B2C1E667546F0EBB1E031C4DE04D819D6
 concurrency:
   group: release-${{ inputs.tag }}
   cancel-in-progress: false
@@ -43,6 +46,18 @@ jobs:
           make check
           make vuln
           make test-acc-matrix
+      - name: Import the release signing key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "$GPG_PRIVATE_KEY" ]] || { echo 'the GPG_PRIVATE_KEY secret is not set' >&2; exit 1; }
+          gpg --batch --quiet --with-colons --show-keys release-signing-key.asc | grep -q "^fpr:.*:${GPG_FINGERPRINT}:" \
+            || { echo 'release-signing-key.asc is not the key this workflow expects' >&2; exit 1; }
+          printf '%s\n' "$GPG_PRIVATE_KEY" | gpg --batch --quiet --import
+          gpg --batch --with-colons --list-secret-keys | grep -q "^fpr:.*:${GPG_FINGERPRINT}:" \
+            || { echo 'the GPG_PRIVATE_KEY secret is not the private half of release-signing-key.asc' >&2; exit 1; }
       - name: Build draft release
         uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v6
         with:
@@ -51,12 +66,21 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_CURRENT_TAG: ${{ inputs.tag }}
+      - name: Verify the checksum signature with the public key alone
+        shell: bash
+        run: |
+          set -euo pipefail
+          GNUPGHOME="$(mktemp -d)"
+          export GNUPGHOME
+          gpg --batch --quiet --import release-signing-key.asc
+          gpg --batch --verify dist/*_SHA256SUMS.sig dist/*_SHA256SUMS
       - name: Generate release attestations
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             dist/*.zip
             dist/*_SHA256SUMS
+            dist/*_SHA256SUMS.sig
       - name: Record checksum manifest digest
         run: |
           echo 'Add this checksum manifest digest and validation evidence to the draft release before publishing:' >> "$GITHUB_STEP_SUMMARY"
