@@ -69,9 +69,10 @@ in the first plan, and read the 3.0.0 section of [CHANGELOG.md](CHANGELOG.md).
 ## Behavioral differences
 
 This describes what this provider does. Where upstream's behavior is known from
-the review of its 2.4.x and 2.5.0 releases (2026-09-23 and 2026-10-02) it is
-named; otherwise assume upstream still behaves as its v2.3.0 base did, which has
-not been re-checked against every later release. Resources and data sources that
+the review of its 2.4.x and 2.5.0 releases (2026-09-23 and 2026-10-02) and of
+its main branch after 2.5.0 (2026-10-12, through its #126) it is named;
+otherwise assume upstream still behaves as its v2.3.0 base did, which has not
+been re-checked against every later release. Resources and data sources that
 exist only here are listed in [README.md](README.md#what-you-can-manage), not
 compared one by one.
 
@@ -164,11 +165,35 @@ compared one by one.
 - Values are checked at plan time with Pocket ID's rules, and what the server
   stored is checked afterward. An empty value that Pocket ID would replace with
   a default is refused, and `session_duration` must be at least 1.
-- Application images are the separate resource `pocketid_application_image`,
-  sent without retries. A user's profile picture is the separate resource
-  `pocketid_user_profile_picture`.
+**Images**
+
+- Application images are the separate resource `pocketid_application_image`
+  and a user's profile picture the separate resource
+  `pocketid_user_profile_picture`, one file each. Upstream's #125 (on its main
+  branch since 2026-10-11, in no release as of 2026-10-12) makes them nested
+  attributes instead: `profile_picture = { source = ... }` on `pocketid_user`,
+  and `logo`, `dark_logo`, `email_logo`, `background`, `favicon` and
+  `default_profile_picture` on `pocketid_application_config`, each with a
+  computed `sha256` of the local file. Not adopted: it ties an upload to the
+  user or settings update, and it is checked differently, as follows.
+- Uploads are never retried here. Upstream's go through its retrying request
+  path, which sends the whole body again on each attempt.
+- Both notice an edited file by its digest. Here, a refresh also compares the
+  image Pocket ID serves with the one the provider uploaded, so an application
+  image or a profile picture replaced or removed outside Terraform is uploaded
+  again. Upstream notices only an application image that was removed (a 404
+  from `?default=false`), not one that was replaced, and nothing about a
+  profile picture.
+- Destroying `pocketid_user_profile_picture` removes a picture only while it
+  is still the one the provider uploaded. Upstream removes whatever picture the
+  user has when `profile_picture` leaves the configuration.
+- Neither resource is part of a user or settings create, so a failed upload
+  leaves the user or the settings as they were. Upstream deletes the new user
+  when its profile picture fails to upload during the create.
+- Both leave an image Pocket ID cannot delete (the favicon and the e-mail
+  logo) in place when it stops being managed.
 
 **Servers**
 
-- Supported Pocket ID servers are 2.14.0 through 2.17.0. Upstream's own range is
+- Supported Pocket ID servers are 2.14.0 through 2.18.0. Upstream's own range is
   its own to state.

@@ -58,7 +58,7 @@ make check              # format, vet, race unit tests, script tests, build and 
 make docs-check         # generated documentation matches the checkout
 make actionlint         # for workflow changes
 make vuln               # reachable Go vulnerabilities
-make test-acc-supported # the full acceptance suites on Pocket ID 2.14.0 to 2.17.0
+make test-acc-supported # the full acceptance suites on Pocket ID 2.14.0 to 2.18.0
 ```
 
 `make test-acc-supported` is long; while working, run
@@ -86,7 +86,7 @@ server by hand. The only way to run one during tests is the fixture script:
 python3 scripts/disposable-pocketid.py 2.17.0 -- go test -count=1 ./internal/provider -tags=acc
 ```
 
-It pulls the official image for a version from 2.14.0 to 2.17.0, starts an
+It pulls the official image for a version from 2.14.0 to 2.18.0, starts an
 isolated container on a free loopback port, seeds a fresh database with one
 synthetic administrator and a random token held only in memory, runs the command
 with `POCKETID_BASE_URL`, `POCKETID_API_TOKEN` and `POCKETID_TEST_VERSION` set,
