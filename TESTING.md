@@ -197,8 +197,17 @@ Checks: GoReleaser 2.18.1 `check` passed, and an unsigned snapshot build
 `freebsd_386`, `freebsd_amd64`, `linux_386`, `linux_amd64`, `linux_arm`,
 `linux_arm64`, `windows_386` and `windows_amd64` with the SHA256SUMS file. The
 Go gates were not re-run locally for an unchanged Go tree; the release workflow
-runs them on the tag, signs and verifies as for 3.1.2. The published archive's
-digest and the release run are recorded here after publication.
+runs them on the tag, signs and verifies as for 3.1.2.
+
+Release run 38316662298 (2026-10-12) passed every step. The published
+`terraform-provider-pocketid_3.1.3_SHA256SUMS` lists the ten platform archives
+and has digest
+`5115d90d559ca772ffc718ccede882da6dbf68bfdcc606a2b6bd399120d4d370`; its
+`.sig` verified in a fresh keyring holding only `release-signing-key.asc`, and
+`gh attestation verify` accepted the SHA256SUMS file and the darwin_arm64
+archive. `lifecycle.py` passed with OpenTofu 1.13.1 and Terraform 1.16.4 on
+2.18.0 using the downloaded darwin_arm64 archive (verified against SHA256SUMS)
+from a filesystem mirror. The release was published on 2026-10-12.
 
 ## Release 3.1.2 evidence — 2026-10-12
 
