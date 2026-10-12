@@ -35,9 +35,11 @@ builds:
       - arm64
       - arm
       - 386
+    # One linux/arm build, GOARM 6, published as linux_arm: the registries
+    # accept only Terraform's platform names (3.1.2's linux_armv6 and
+    # linux_armv7 archives made the Terraform Registry refuse the release).
     goarm:
       - "6"
-      - "7"
     ignore:
       # Windows doesn't support ARM
       - goos: windows
@@ -58,7 +60,7 @@ builds:
 # Archive configuration
 archives:
   - id: terraform-provider-pocketid
-    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats:
       - zip
     files:

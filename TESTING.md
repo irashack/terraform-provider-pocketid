@@ -184,6 +184,22 @@ renamed binary of this provider. The test uses supported state replacement, chec
 encrypted state/backups and saved-plan encryption, preserves the ID and secret, and
 requires an empty subsequent plan. No development overrides are used.
 
+## Release 3.1.3 evidence — 2026-10-12
+
+Registry-compatible archive names; the provider code and dependencies are the
+3.1.2 tree (the diff against v3.1.2 under `internal/`, `main.go`, `go.mod`,
+`go.sum`, `tests/` and `scripts/` is empty). `.goreleaser.yml` builds one
+linux/arm archive (GOARM 6) named `linux_arm`; the Terraform Registry had
+refused 3.1.2 for its `linux_armv6` and `linux_armv7` names.
+
+Checks: GoReleaser 2.18.1 `check` passed, and an unsigned snapshot build
+(`--skip=sign`) produced the ten archives `darwin_amd64`, `darwin_arm64`,
+`freebsd_386`, `freebsd_amd64`, `linux_386`, `linux_amd64`, `linux_arm`,
+`linux_arm64`, `windows_386` and `windows_amd64` with the SHA256SUMS file. The
+Go gates were not re-run locally for an unchanged Go tree; the release workflow
+runs them on the tag, signs and verifies as for 3.1.2. The published archive's
+digest and the release run are recorded here after publication.
+
 ## Release 3.1.2 evidence — 2026-10-12
 
 Signed release archives and documentation; the provider code is the 3.1.1

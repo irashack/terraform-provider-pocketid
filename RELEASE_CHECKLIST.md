@@ -62,6 +62,19 @@ scheduled sweeps, cleanup and contributor-edit jobs are not enabled in this
 project. Do not publish a registry identity until it is actually registered with
 the required signing setup.
 
+## Release v3.1.3
+
+A patch release that changes only `.goreleaser.yml` and documentation: the
+32-bit ARM Linux build is one GOARM 6 archive named `linux_arm`. The Terraform
+Registry refused v3.1.2 as a whole because its `linux_armv6` and `linux_armv7`
+archives are not Terraform platform names, so archive names must stay
+`{os}_{arch}` with Terraform's architecture names. The provider code and
+dependencies are v3.1.2's (`git diff v3.1.2 v3.1.3 --stat -- internal main.go
+go.mod go.sum tests scripts` is empty); the release workflow's gates are the
+acceptance gate. TESTING.md ("Release 3.1.3 evidence") records the local run.
+Publication as for v3.1.2; the Terraform Registry ingests the release through
+its webhook, and the OpenTofu registry through its submissions.
+
 ## Release v3.1.2
 
 A patch release with no provider code change: `git diff v3.1.1 v3.1.2 --stat

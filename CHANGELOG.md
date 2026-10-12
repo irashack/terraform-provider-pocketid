@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.1.3 — 2026-10-12
+
+Registry-compatible archive names. No provider changes: the provider code and
+dependencies are 3.1.2's, and state written by 3.1.1 or 3.1.2 plans empty.
+
+- The 32-bit ARM Linux archive is now `linux_arm` (GOARM 6), the platform name
+  the Terraform and OpenTofu registries accept. 3.1.2 shipped `linux_armv6` and
+  `linux_armv7`, which made the Terraform Registry refuse the whole release, so
+  it lists no 3.1.2. Filesystem-mirror installs are unaffected: 3.1.2's
+  archives for every other platform are valid and signed.
+
 ## 3.1.2 — 2026-10-12
 
 Signed releases, for the OpenTofu and Terraform registries. No provider changes:
