@@ -11,9 +11,10 @@ are in this file's git history.
 
 ## Origin and attribution
 
-- The first release, 2.3.1, started at upstream v2.3.0 (`44c32e0`). The complete
-  history, with every upstream author's commits under their own name, is kept in
-  this repository's git history.
+- Upstream is the work of Michael Leer (Trozz). The first release, 2.3.1,
+  started at upstream v2.3.0 (`44c32e0`); the 112 commits up to that point, by
+  Michael Leer, meerumschlungen, Russell Troxel, SL and Dependabot, are kept in
+  this repository's git history under their authors' names.
 - [LICENSE](LICENSE) is upstream's MIT license with its notice, "Copyright (c)
   2024 trozz", unchanged. The license requires that notice and permission text
   to stay with every copy or substantial portion of the software, so it stays in
@@ -21,15 +22,16 @@ are in this file's git history.
   repository.
 - Release 2.3.1 includes Mathieu Lemay's
   [PR #97](https://github.com/Trozz/terraform-provider-pocketid/pull/97) (secret
-  creation on Pocket ID 2.14 and later) and Yusaku Mizobuchi's tests. Release
-  2.4.102 includes upstream's #116 (preserve client settings the provider does
-  not expose) with its authorship kept, and takes the copy-first shape of #103's
-  application-configuration update. Release 2.4.104 adapts #122 (the secret
-  Pocket ID 2.17.0 creates with a client).
+  creation on Pocket ID 2.14 and later; its tests are co-authored by Yusaku
+  Mizobuchi). Release 2.4.102 includes Michael Leer's #116 (preserve client
+  settings the provider does not expose) with its authorship kept, and takes
+  the copy-first shape of the application-configuration update in Michael
+  Leer's #103. Release 2.4.104 adapts Michael Leer's #122 (the secret Pocket ID
+  2.17.0 creates with a client).
 - Two 3.0.0 changes follow proposals made upstream, adapted to this provider's
-  conventions: `allowed_user_groups` as a set (#92), and choosing a user's ID
-  when creating it (#90). The rest of #90, a configurable client secret, is not
-  adopted; see below.
+  conventions: `allowed_user_groups` as a set (Michael Heyman's #92), and
+  choosing a user's ID when creating it (Markus Schanz's #90). The rest of #90,
+  a configurable client secret, is not adopted; see below.
 - Dependency and workflow updates that upstream's pull requests proposed were
   taken or replaced by this repository's own pins.
 
@@ -55,6 +57,13 @@ are in this file's git history.
   and the Go module is `github.com/irashack/terraform-provider-pocketid` (it was
   upstream's module path until 3.0.0). This is not an official Pocket ID or
   Trozz release.
+- **A repository of its own.** On 2026-10-12 the public repository left
+  GitHub's fork network (a one-way owner action in the repository's settings),
+  so GitHub no longer lists it as a fork of upstream and it appears in search
+  on its own. History, releases and issues stayed as they were. To read
+  upstream's changes, add it as a fetch-only remote:
+  `git remote add upstream https://github.com/Trozz/terraform-provider-pocketid.git`.
+  The short form of this file's attribution is README.md's "Attribution".
 
 ## Moving from upstream's provider
 

@@ -4,8 +4,8 @@ Manage [Pocket ID](https://pocket-id.org/) OIDC clients and their secrets, users
 groups, APIs and instance settings as code. This is an independent provider. It
 began in September 2026 as a maintenance fork of
 [Trozz/terraform-provider-pocketid](https://github.com/Trozz/terraform-provider-pocketid)
-and has been its own project since 2026-10-02, with its own version numbers and no
-tracking of upstream. Release **3.1.1** supports Pocket ID **2.14.0 through
+by Michael Leer and has been its own project since 2026-10-02, with its own version
+numbers and no tracking of upstream (see [Attribution](#attribution)). Release **3.1.1** supports Pocket ID **2.14.0 through
 2.18.0**, including 2.18.0's icon library for client logos (3.0.1 was its first
 release as an independent project). Its archives are published on
 [GitHub releases](https://github.com/irashack/terraform-provider-pocketid/releases)
@@ -348,18 +348,39 @@ volunteer project with no response-time guarantee.
 
 ## Attribution
 
-[MIT licensed](LICENSE), with upstream's copyright notice and history preserved.
-The first release, 2.3.1, started at upstream v2.3.0 (`44c32e0`) and includes
+This provider is a derivative work of
+[Trozz/terraform-provider-pocketid](https://github.com/Trozz/terraform-provider-pocketid)
+by Michael Leer (Trozz), [MIT licensed](LICENSE). Its copyright notice,
+"Copyright (c) 2024 trozz", stays in LICENSE, in every release archive and in
+anything derived from this repository, as the license requires. The 112 commits
+of upstream history up to v2.3.0 (`44c32e0`), by Michael Leer, meerumschlungen,
+Russell Troxel, SL and Dependabot, are kept in this repository's git history
+under their authors' names. The project began as a fork of that release in
+September 2026 and became a project of its own with 3.0.0; since 2026-10-12 the
+public repository is a standalone GitHub repository, no longer in upstream's
+fork network, and the lineage is recorded here and in [UPSTREAM.md](UPSTREAM.md)
+instead.
+
+Work by others taken after the fork point, with authorship kept in git:
 Mathieu Lemay's [PR #97](https://github.com/Trozz/terraform-provider-pocketid/pull/97)
-and Yusaku Mizobuchi's tests; [UPSTREAM.md](UPSTREAM.md) lists the other upstream
-work taken. [UPSTREAM-README.md](UPSTREAM-README.md) is an archived upstream README,
-not this provider's installation guide. See [CHANGELOG.md](CHANGELOG.md) for released
-changes.
+(secret creation on Pocket ID 2.14 and later, with tests co-authored by Yusaku
+Mizobuchi) in 2.3.1, and Michael Leer's
+[#116](https://github.com/Trozz/terraform-provider-pocketid/pull/116) (preserve
+client settings the provider does not expose) in 2.4.102. Ideas taken from
+upstream and implemented again here: the copy-first application-configuration
+update of Michael Leer's #103 and, from #122, the handling of the client secret
+Pocket ID 2.17.0 creates; `allowed_user_groups` as a set from Michael Heyman's
+#92; choosing a user's ID at creation from Markus Schanz's #90. UPSTREAM.md
+records these and how this provider's behavior differs from upstream's.
+[UPSTREAM-README.md](UPSTREAM-README.md) is upstream's README as it was at the
+fork point, kept as a record, not this provider's installation guide. See
+[CHANGELOG.md](CHANGELOG.md) for released changes.
 
 Some code is adapted from other projects (Pocket ID's callback-URL matching,
 go-playground/validator's e-mail pattern) and the provider links modules for URL
 patterns; [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) carries their notices and
-licenses and ships in every release archive.
+licenses and ships in every release archive. Pocket ID itself is the work of the
+[Pocket ID project](https://github.com/pocket-id/pocket-id).
 
 ## Secret and failure behavior
 

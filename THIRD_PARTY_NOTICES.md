@@ -6,10 +6,26 @@ third-party projects below. Their licenses require the following notices to
 accompany the source code and every binary distribution, so this file is
 included in each release archive.
 
-This file covers the code copied or adapted from Pocket ID and from
-go-playground/validator, and the modules linked into the provider for checking
-URL patterns (`github.com/dunglas/go-urlpattern` and the modules it links). It
-does not yet list every other module the provider links.
+This file covers the project this provider derives from, the code copied or
+adapted from Pocket ID and from go-playground/validator, and the modules linked
+into the provider for checking URL patterns (`github.com/dunglas/go-urlpattern`
+and the modules it links). It does not yet list every other module the provider
+links.
+
+## Origin: Trozz/terraform-provider-pocketid
+
+This provider is a derivative work of
+https://github.com/Trozz/terraform-provider-pocketid by Michael Leer (Trozz),
+from its release v2.3.0 (commit `44c32e0`), with later upstream work by Mathieu
+Lemay (#97, tests co-authored by Yusaku Mizobuchi) and Michael Leer (#116) kept
+under their names in the git history. README.md ("Attribution") and UPSTREAM.md
+name every upstream change taken or adapted. Upstream's license is the MIT
+License in `LICENSE`, unchanged; its notice covers this whole repository and
+every release archive:
+
+    Copyright (c) 2024 trozz
+
+The permission notice the license requires beside it is the rest of `LICENSE`.
 
 ## Pocket ID
 
