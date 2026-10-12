@@ -213,8 +213,19 @@ changed helpers serve, passed on a disposable Pocket ID 2.18.0.
 Not run: the rest of the acceptance suites and the native proofs, because the
 provider code is unchanged from 3.1.1 (whose evidence follows) and the dependency
 changes are patch releases of the Go toolchain and the x/ modules; the release
-workflow's `make test-acc-matrix` ran on the tag. The published 3.1.2 archive's
-digest and the release run are recorded here after publication.
+workflow's `make test-acc-matrix` ran on the tag.
+
+Release run 38310528505 (2026-10-12) passed every step: `make check`, `make vuln`
+and `make test-acc-matrix` on the tagged source, the key import with the
+fingerprint check, the signed draft build, signature verification with the
+public key alone, and the attestations. The published
+`terraform-provider-pocketid_3.1.2_SHA256SUMS` has digest
+`fa54d76ea8100659b18664c1134d9d046ba98e15c1629cb791e993c7079bb29e`; its
+`.sig` verified in a fresh keyring holding only `release-signing-key.asc`, and
+`gh attestation verify` accepted the SHA256SUMS file and the darwin_arm64
+archive. `lifecycle.py` passed with OpenTofu 1.13.1 and Terraform 1.16.4 on
+2.18.0 using the downloaded darwin_arm64 archive (verified against SHA256SUMS)
+from a filesystem mirror. The release was published on 2026-10-12.
 
 ## Release 3.1.1 evidence — 2026-10-08
 
