@@ -1,29 +1,53 @@
 # Install the provider
 
-This provider uses the source address **registry.terraform.io/irashack/pocketid**
-in both Terraform and OpenTofu. Since 3.1.3 (2026-10-12) it is listed on the
-Terraform Registry, so `terraform init` and `tofu init` install and verify it
-with no further setup (OpenTofu resolves the explicit `registry.terraform.io`
-address; the OpenTofu registry listing is pending, opentofu/registry#5831). The
-rest of this file is the alternative: installing a verified archive through each
-tool's native filesystem mirror, which needs no registry account, private server,
-cache substitution or development override.
+This provider is listed on the Terraform Registry and the OpenTofu Registry as
+**irashack/pocketid**, so `terraform init` and `tofu init` install and verify it
+with no further setup:
+
+```hcl
+terraform {
+  required_providers {
+    pocketid = {
+      source  = "irashack/pocketid"
+      version = "3.1.4"
+    }
+  }
+}
+```
+
+Terraform resolves the short address to `registry.terraform.io/irashack/pocketid`
+and OpenTofu to `registry.opentofu.org/irashack/pocketid`. The explicit
+`registry.terraform.io/irashack/pocketid` address, which the mirror below uses,
+works in both tools. OpenTofu treats the two forms as one provider in state, so
+switching an existing configuration between them needs no `state replace-provider`
+(checked with OpenTofu 1.13.1: the plan is empty either way), but the lockfile
+records each form under its own address: run `tofu init` after the switch and
+commit the lockfile.
 Write-only attributes need Terraform or OpenTofu 1.11 or later; everything else
 works with the versions listed in [TESTING.md](TESTING.md).
+
+## Install from a verified archive (filesystem mirror)
+
+The alternative to a registry, for a host that cannot reach one or when you want
+to verify the archive yourself: install a verified archive through each tool's
+native filesystem mirror, which needs no registry connection, private server,
+cache substitution or development override. The upgrade sections below describe
+this mirror procedure; with a registry, skip their archive steps, change the
+exact version pin and run `init -upgrade`.
 
 ```hcl
 terraform {
   required_providers {
     pocketid = {
       source  = "registry.terraform.io/irashack/pocketid"
-      version = "3.1.3"
+      version = "3.1.4"
     }
   }
 }
 ```
 
 Download the exact version's archive, SHA256SUMS and SHA256SUMS.sig from
-[release v3.1.3](https://github.com/irashack/terraform-provider-pocketid/releases/tag/v3.1.3).
+[release v3.1.4](https://github.com/irashack/terraform-provider-pocketid/releases/tag/v3.1.4).
 Verify the signature with the release key,
 [release-signing-key.asc](release-signing-key.asc) (RSA 4096, fingerprint
 `FE9D 704B 2C1E 6675 46F0 EBB1 E031 C4DE 04D8 19D6`, valid until October 2029),
@@ -34,7 +58,7 @@ are unsigned and have only the digest.
 For example, for `darwin_arm64` (use `linux_amd64` or `linux_arm64` as appropriate):
 
 ```sh
-version=3.1.3
+version=3.1.4
 platform=darwin_arm64
 archive=terraform-provider-pocketid_${version}_${platform}.zip
 sums=terraform-provider-pocketid_${version}_SHA256SUMS
@@ -48,8 +72,8 @@ curl --fail --location --output release-signing-key.asc \
 gpg --show-keys --with-fingerprint release-signing-key.asc
 gpg --import release-signing-key.asc
 gpg --verify "$sums.sig" "$sums"
-# Set this to the literal SHA256SUMS digest from the v3.1.3 release notes:
-expected_manifest_sha256=5115d90d559ca772ffc718ccede882da6dbf68bfdcc606a2b6bd399120d4d370
+# Set this to the literal SHA256SUMS digest from the v3.1.4 release notes:
+expected_manifest_sha256=RECORDED_IN_THE_V3_1_4_RELEASE_NOTES
 printf '%s  %s\n' "$expected_manifest_sha256" "$sums" | shasum -a 256 -c -
 awk -v file="$archive" '$2 == file { print }' "$sums" | shasum -a 256 -c -
 mirror="$HOME/.local/share/pocketid-provider-mirror"
@@ -84,14 +108,25 @@ tofu providers lock -fs-mirror="$mirror" \
 
 Keep the exact version and checksum pins; do not silently select a newer tag.
 
+## Upgrade from 3.1.x to 3.1.4
+
+Nothing changes in the provider: 3.1.4 is 3.1.3's provider code and dependencies
+with corrected documentation, and its source archive now carries `docs/`, so the
+Terraform Registry shows its pages. State written by any 3.1.x release plans empty
+under 3.1.4. Change the exact version pin to `3.1.4` (from a filesystem mirror,
+verify and add the v3.1.4 archive to it first), run `tofu init -upgrade` (or
+`terraform init -upgrade`) and commit the lockfile, then require an empty
+refreshed plan. Rolling back is the same steps in reverse.
+
 ## Upgrade from 3.1.1 or 3.1.2 to 3.1.3
 
 Nothing changes in the provider: 3.1.2 and 3.1.3 are 3.1.1's provider source,
 built with Go 1.27.2 and updated golang.org/x/ modules, with signed release
 archives and the documentation of 2026-10-12; 3.1.3 only renames the 32-bit ARM
 Linux archive to `linux_arm`, the name the registries accept. State written by
-3.1.1 or 3.1.2 plans empty under 3.1.3. Verify and add the v3.1.3 archive to the
-native mirror, change the exact version pin to `3.1.3`, run `tofu init -upgrade`
+3.1.1 or 3.1.2 plans empty under 3.1.3. Change the exact version pin to `3.1.3`
+(from a filesystem mirror, verify and add the v3.1.3 archive to it first), run
+`tofu init -upgrade`
 (or `terraform init -upgrade`) and commit the lockfile, then require an empty
 refreshed plan. Rolling back is the same steps in reverse.
 
@@ -117,8 +152,9 @@ empty for every configuration, because it contains deliberate breaking changes
 [CHANGELOG.md](CHANGELOG.md)). State written by 2.4.103 and 2.4.104 keeps working:
 same source address, no `state replace-provider`, no state upgrade step, no
 development override. The upgrade proofs start from that state; from an older
-release, upgrade to 2.4.104 first and require an empty plan there. Supported Pocket
-ID servers are 2.14.0 through 2.17.0; upgrade an older server first.
+release, upgrade to 2.4.104 first and require an empty plan there. 3.0.1 supports
+Pocket ID servers 2.14.0 through 2.17.0 (3.1.1 added 2.18.0); upgrade an older
+server first.
 
 **Before switching**
 

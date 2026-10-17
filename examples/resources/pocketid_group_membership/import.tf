@@ -1,14 +1,7 @@
-# Group memberships are imported using "<group_id>/<user_id>"
-# terraform import pocketid_group_membership.owner_family "3fa2c1d4-.../7b9e0a12-..."
-
-# Example import block (Terraform 1.5+):
+# Group memberships are imported as "<group_id>/<user_id>"; the resource's
+# group_id and user_id must name the same group and user. Import block
+# (Terraform 1.5+, OpenTofu):
 import {
   to = pocketid_group_membership.owner_family
-  id = "3fa2c1d4-0000-0000-0000-000000000000/7b9e0a12-0000-0000-0000-000000000000"
-}
-
-# The resource block that the import will populate:
-resource "pocketid_group_membership" "owner_family" {
-  group_id = "3fa2c1d4-0000-0000-0000-000000000000"
-  user_id  = "7b9e0a12-0000-0000-0000-000000000000"
+  id = "3fa2c1d4-0000-4000-8000-000000000001/7b9e0a12-0000-4000-8000-000000000001"
 }

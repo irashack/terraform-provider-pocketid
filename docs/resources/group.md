@@ -19,69 +19,6 @@ resource "pocketid_group" "developers" {
   friendly_name = "Development Team"
 }
 
-# Create multiple groups for different roles
-resource "pocketid_group" "admins" {
-  name          = "admins"
-  friendly_name = "System Administrators"
-}
-
-resource "pocketid_group" "users" {
-  name          = "users"
-  friendly_name = "Regular Users"
-}
-
-resource "pocketid_group" "qa_team" {
-  name          = "qa"
-  friendly_name = "Quality Assurance Team"
-}
-
-# Create groups with users assigned
-resource "pocketid_group" "managers" {
-  name          = "managers"
-  friendly_name = "Management Team"
-}
-
-resource "pocketid_user" "manager" {
-  username   = "john.manager"
-  email      = "john.manager@example.com"
-  first_name = "John"
-  last_name  = "Manager"
-
-  groups = [pocketid_group.managers.id]
-}
-
-# Use groups to control client access
-resource "pocketid_client" "internal_app" {
-  name = "Internal Application"
-
-  callback_urls = [
-    "https://internal.example.com/callback"
-  ]
-
-  # Only developers and admins can access this client
-  allowed_user_groups = [
-    pocketid_group.developers.id,
-    pocketid_group.admins.id
-  ]
-}
-
-# Create groups dynamically
-locals {
-  departments = {
-    "engineering" = "Engineering Department"
-    "sales"       = "Sales Department"
-    "marketing"   = "Marketing Department"
-    "hr"          = "Human Resources"
-  }
-}
-
-resource "pocketid_group" "departments" {
-  for_each = local.departments
-
-  name          = each.key
-  friendly_name = each.value
-}
-
 # Create a group with custom claims included in member OIDC tokens.
 # Setting custom_claims replaces all custom claims for the group.
 # Reserved claim names (e.g. "email", "groups", "sub") are rejected by Pocket-ID.
@@ -92,17 +29,6 @@ resource "pocketid_group" "with_claims" {
   custom_claims = {
     role        = "admin"
     environment = "production"
-  }
-}
-
-# Output group IDs for use in other configurations
-output "developer_group_id" {
-  value = pocketid_group.developers.id
-}
-
-output "department_groups" {
-  value = {
-    for k, v in pocketid_group.departments : k => v.id
   }
 }
 ```
@@ -122,3 +48,10 @@ output "department_groups" {
 ### Read-Only
 
 - `id` (String) The ID of the user group.
+
+## Import
+
+```shell
+# Import a group by its ID (a UUID).
+terraform import pocketid_group.developers "3fa2c1d4-0000-4000-8000-000000000001"
+```

@@ -25,70 +25,6 @@ resource "pocketid_user" "example" {
   email    = "john.doe@example.com"
 }
 
-# Create a user with full details
-resource "pocketid_user" "full_example" {
-  username       = "jane.smith"
-  email          = "jane.smith@example.com"
-  first_name     = "Jane"
-  last_name      = "Smith"
-  locale         = "en-US"
-  is_admin       = false
-  disabled       = false
-  email_verified = true
-}
-
-# Create an admin user
-resource "pocketid_user" "admin" {
-  username   = "admin"
-  email      = "admin@example.com"
-  first_name = "Admin"
-  last_name  = "User"
-  is_admin   = true
-}
-
-# Create a user with group assignments
-resource "pocketid_group" "developers" {
-  name          = "developers"
-  friendly_name = "Development Team"
-}
-
-resource "pocketid_group" "managers" {
-  name          = "managers"
-  friendly_name = "Management Team"
-}
-
-resource "pocketid_user" "developer" {
-  username   = "dev.user"
-  email      = "dev.user@example.com"
-  first_name = "Dev"
-  last_name  = "User"
-
-  groups = [
-    pocketid_group.developers.id,
-    pocketid_group.managers.id
-  ]
-}
-
-# Create multiple users using for_each
-locals {
-  users = {
-    "alice" = { email = "alice@example.com", first_name = "Alice", last_name = "Johnson" }
-    "bob"   = { email = "bob@example.com", first_name = "Bob", last_name = "Smith" }
-    "carol" = { email = "carol@example.com", first_name = "Carol", last_name = "Davis" }
-  }
-}
-
-resource "pocketid_user" "team" {
-  for_each = local.users
-
-  username   = each.key
-  email      = each.value.email
-  first_name = each.value.first_name
-  last_name  = each.value.last_name
-
-  groups = [pocketid_group.developers.id]
-}
-
 # Create a user with custom claims included in OIDC tokens.
 # Setting custom_claims replaces all custom claims for the user.
 # Reserved claim names (e.g. "email", "groups", "sub") are rejected by Pocket-ID.
@@ -129,3 +65,10 @@ resource "pocketid_user" "with_claims" {
 ### Read-Only
 
 - `unresolved_creation` (Boolean) True while creating this user with a chosen `id` has an unknown outcome (the create's answer was lost, or a read after it could not settle it), so the user Pocket ID holds under that ID may not be the one this resource created. It is null for every other user. While it is set the provider refuses to change, delete or replace the user, and a refresh that finds no user keeps the resource in state with a warning instead of removing it, because the create may still commit. It is never cleared by a refresh: check the user in Pocket ID, then run `terraform state rm` on the resource and either import the user (importing clears this) or choose another `id`.
+
+## Import
+
+```shell
+# Import a user by its ID (a UUID).
+terraform import pocketid_user.example "7b9e0a12-0000-4000-8000-000000000001"
+```

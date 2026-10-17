@@ -1,9 +1,9 @@
 # Testing and release validation
 
 How every check runs, what each native script proves, and the evidence recorded
-for each release. The sections from "Release 2.4.104 evidence" down are the record
-of earlier releases; the support matrix and tool versions in each belong to that
-release, not to the current one. The current range is Pocket ID **2.14.0 through
+for each release. The "Release … evidence" sections are the record of each
+release; the support matrix and tool versions in each belong to that release, not
+to the current one. The current range is Pocket ID **2.14.0 through
 2.18.0**.
 
 ## Reproducible checks
@@ -183,6 +183,29 @@ The migration case additionally needs the genuine upstream 2.3.0 artifact under
 renamed binary of this provider. The test uses supported state replacement, checks
 encrypted state/backups and saved-plan encryption, preserves the ID and secret, and
 requires an empty subsequent plan. No development overrides are used.
+
+## Release 3.1.4 evidence — 2026-10-16
+
+Documentation only; the provider code and dependencies are the 3.1.3 tree (the
+diff against v3.1.3 under `internal/`, `main.go`, `go.mod`, `go.sum`, `tests/` and
+`scripts/` is empty). `.gitattributes` no longer export-ignores `docs/`:
+`git archive HEAD | tar -t` lists all 33 pages, where the v3.1.2 and v3.1.3
+archives list none, which is why the Terraform Registry has no pages for them.
+
+Checks: tfplugindocs 0.25.0 `generate` leaves `docs/` unchanged (the
+`make docs-check` condition) and `validate` passes. `tofu fmt -check -recursive
+examples` passes, and Terraform 1.16.6 and OpenTofu 1.13.1 `validate` pass in
+every example directory against a local build of this tree. A GPT-6 Astra
+(Codex) review of the diff found examples that contradicted the provider's
+behaviour, fixed here: a group-restricted client that would open to every user
+when none of its groups exists, a complete example whose web application was
+unrestricted despite its README, check blocks described as failing the plan
+(now postconditions where the comment promises a failure), and a SPA callback
+path that did not match its client. The OpenTofu address claim in
+INSTALL.md was checked with OpenTofu 1.13.1: state recorded under
+`registry.terraform.io/irashack/pocketid` plans empty with the short source, and
+the reverse. The Go gates and acceptance matrix run in the release workflow on
+the tag; `lifecycle.py` was not re-run for an unchanged Go tree.
 
 ## Release 3.1.3 evidence — 2026-10-12
 

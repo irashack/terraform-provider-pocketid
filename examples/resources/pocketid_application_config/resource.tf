@@ -12,12 +12,8 @@ resource "pocketid_application_config" "this" {
   require_user_email = "true"
   disable_animations = "false"
   emails_verified    = "false"
-}
 
-# Example: configure SMTP for outgoing email
-resource "pocketid_application_config" "with_smtp" {
-  app_name = "My Company SSO"
-
+  # Configure SMTP for outgoing email.
   smtp_host             = "smtp.example.com"
   smtp_port             = "587"
   smtp_from             = "no-reply@example.com"
@@ -35,6 +31,14 @@ resource "pocketid_application_config" "with_smtp" {
   email_verification_enabled       = "true"
 }
 
-# On older Terraform and OpenTofu versions, the plain attribute works too;
-# the password is then stored in state (marked sensitive).
+# On older Terraform and OpenTofu versions, use the plain attribute instead of
+# the two smtp_password_wo arguments, and remove `ephemeral = true` from the
+# variable; the password is then stored in state (marked sensitive).
 # smtp_password = var.smtp_password
+
+variable "smtp_password" {
+  description = "SMTP password supplied only for this run"
+  type        = string
+  sensitive   = true
+  ephemeral   = true
+}

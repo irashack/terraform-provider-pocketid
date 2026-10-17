@@ -25,18 +25,14 @@ This resource is deliberately non-authoritative: it manages exactly one `(group_
 ## Example Usage
 
 ```terraform
-# A group whose membership is partly managed outside Terraform, for example by
-# a self-service onboarding process that adds family or friends.
 resource "pocketid_group" "family" {
   name          = "family"
   friendly_name = "Family"
 }
 
-# Look up an existing user created outside this provider (for example, by a
-# self-service onboarding process, or an account that predates Terraform
-# management) and add just that one user to the group, without owning the
-# group's full member list. Do not do this for a user also managed by a
-# pocketid_user resource - see the warning above.
+# Look up an existing user, such as an owner account that is not itself
+# managed by a pocketid_user resource, and add just that one user to the
+# group without taking ownership of the group's other members.
 data "pocketid_user" "owner" {
   email = "owner@example.com"
 }
@@ -44,28 +40,6 @@ data "pocketid_user" "owner" {
 resource "pocketid_group_membership" "owner_family" {
   group_id = pocketid_group.family.id
   user_id  = data.pocketid_user.owner.id
-}
-
-# Add several existing users to a group, one resource per (group, user) pair.
-locals {
-  reviewer_usernames = ["alice", "bob", "carol"]
-}
-
-data "pocketid_user" "reviewers" {
-  for_each = toset(local.reviewer_usernames)
-  username = each.value
-}
-
-resource "pocketid_group" "reviewers" {
-  name          = "reviewers"
-  friendly_name = "Reviewers"
-}
-
-resource "pocketid_group_membership" "reviewers" {
-  for_each = data.pocketid_user.reviewers
-
-  group_id = pocketid_group.reviewers.id
-  user_id  = each.value.id
 }
 ```
 
@@ -89,6 +63,6 @@ Import is supported using the following syntax:
 The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
 
 ```shell
-# Group memberships are imported using "<group_id>/<user_id>"
-terraform import pocketid_group_membership.owner_family "3fa2c1d4-.../7b9e0a12-..."
+# Group memberships are imported using <group_id>/<user_id>.
+terraform import pocketid_group_membership.owner_family "3fa2c1d4-0000-4000-8000-000000000001/7b9e0a12-0000-4000-8000-000000000001"
 ```

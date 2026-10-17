@@ -11,47 +11,6 @@ description: |-
 
 ## Example Usage
 
-```terraform
-# Look up a group by ID (a UUID). The group is read directly, so this works
-# however many groups exist.
-data "pocketid_group" "by_id" {
-  id = "3fa2c1d4-0000-4000-8000-000000000001"
-}
-
-# Look up a group by its exact name. Every group is considered, not just the
-# first page of them.
-data "pocketid_group" "developers" {
-  name = "developers"
-}
-
-# Use the group data in other resources
-resource "pocketid_user" "developer" {
-  username   = "new.developer"
-  email      = "new.developer@example.com"
-  first_name = "New"
-  last_name  = "Developer"
-
-  groups = [data.pocketid_group.developers.id]
-}
-
-# Reference group information
-output "developers_group_info" {
-  value = {
-    id            = data.pocketid_group.developers.id
-    name          = data.pocketid_group.developers.name
-    friendly_name = data.pocketid_group.developers.friendly_name
-  }
-}
-
-# Who is in the group, which clients allow it, and its claims
-output "developers_group_details" {
-  value = {
-    member_ids         = data.pocketid_group.developers.member_ids
-    allowed_client_ids = data.pocketid_group.developers.allowed_client_ids
-    user_count         = data.pocketid_group.developers.user_count
-    custom_claims      = data.pocketid_group.developers.custom_claims
-  }
-}
-```
+{{ tffile "examples/data-sources/pocketid_group/data-source.tf" }}
 
 {{ .SchemaMarkdown | trimspace }}

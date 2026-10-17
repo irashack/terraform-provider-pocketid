@@ -65,7 +65,7 @@ In your SPA, you would use this client like:
 const settings = {
   authority: 'https://pocket-id.example.com',
   client_id: '<output from terraform>',
-  redirect_uri: 'http://localhost:3000/callback',
+  redirect_uri: 'http://localhost:3000/auth/callback',
   response_type: 'code',
   scope: 'openid profile email',
   // PKCE is automatically handled by most OIDC libraries

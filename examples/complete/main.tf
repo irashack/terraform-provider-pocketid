@@ -1,8 +1,8 @@
 terraform {
   required_providers {
     pocketid = {
-      source  = "registry.terraform.io/irashack/pocketid"
-      version = "3.0.0"
+      source  = "irashack/pocketid"
+      version = "~> 3.1"
     }
     random = {
       source  = "hashicorp/random"
@@ -85,6 +85,10 @@ resource "pocketid_client" "web_app" {
   pkce_enabled              = true
   requires_reauthentication = true
   launch_url                = "https://app.example.com/launch"
+  allowed_user_groups = [
+    pocketid_group.developers.id,
+    pocketid_group.admins.id
+  ]
 }
 
 # Mobile application client
@@ -183,9 +187,6 @@ data "pocketid_user" "admin" {
 # List all users
 data "pocketid_users" "all_users" {}
 
-# List all users (filtering by group not supported in data source)
-data "pocketid_users" "developers" {}
-
 # Outputs
 
 output "spa_client_id" {
@@ -203,6 +204,18 @@ output "admin_portal_client_id" {
   value       = pocketid_client.admin_portal.id
 }
 
+output "web_app_client_secret" {
+  description = "Client secret for the web application"
+  value       = pocketid_client.web_app.client_secret
+  sensitive   = true
+}
+
+output "admin_portal_client_secret" {
+  description = "Client secret for the admin portal"
+  value       = pocketid_client.admin_portal.client_secret
+  sensitive   = true
+}
+
 output "total_clients" {
   description = "Total number of OIDC clients"
   value       = length(data.pocketid_clients.all_clients.clients)
@@ -215,7 +228,10 @@ output "total_users" {
 
 output "developers_count" {
   description = "Number of users in developers group"
-  value       = length(data.pocketid_users.developers.users)
+  value = length([
+    for user in data.pocketid_users.all_users.users : user
+    if contains(user.groups, pocketid_group.developers.id)
+  ])
 }
 
 # Example of creating multiple similar resources

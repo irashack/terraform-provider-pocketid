@@ -1,10 +1,11 @@
 # Examples
 
-Install the provider with the filesystem mirror in [INSTALL.md](../INSTALL.md) first;
-it is not published to a provider registry. Every runnable example pins
-`registry.terraform.io/irashack/pocketid` at `3.0.0`: change the pin to the version
-you installed. Set `TF_CLI_CONFIG_FILE` to your mirror configuration. The provider is
-maintained independently of its upstream origin; see [UPSTREAM.md](../UPSTREAM.md).
+`terraform init` or `tofu init` installs the provider from the registry; every
+runnable example requires `irashack/pocketid` `~> 3.1`. To install a verified
+archive through a filesystem mirror instead, follow [INSTALL.md](../INSTALL.md),
+use its explicit `registry.terraform.io/irashack/pocketid` source address and set
+`TF_CLI_CONFIG_FILE` to your mirror configuration. The provider is maintained
+independently of its upstream origin; see [UPSTREAM.md](../UPSTREAM.md).
 
 - [Basic client](basic-client/): one confidential OIDC application.
 - [SPA with PKCE](spa-with-pkce/): a public browser application.

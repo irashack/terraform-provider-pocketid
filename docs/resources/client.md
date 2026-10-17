@@ -16,175 +16,21 @@ Manages an OIDC client in Pocket-ID. OIDC clients are applications that can auth
 ## Example Usage
 
 ```terraform
-# Create a public SPA client (no client secret)
-resource "pocketid_client" "spa_app" {
-  name = "React SPA Application"
-
-  callback_urls = [
-    "https://spa.example.com/callback",
-    "http://localhost:3000/callback"
-  ]
-
-  logout_callback_urls = [
-    "https://spa.example.com/logout",
-    "http://localhost:3000/logout"
-  ]
-
-  is_public    = true
-  pkce_enabled = true
-  launch_url   = "https://spa.example.com"
+# A public browser application uses PKCE and has no client secret.
+resource "pocketid_client" "spa" {
+  name          = "Example SPA"
+  callback_urls = ["https://spa.example.com/callback"]
+  is_public     = true
+  pkce_enabled  = true
 }
 
-# Create a client with a custom client ID
-resource "pocketid_client" "custom_id_app" {
-  name      = "Custom ID Application"
-  client_id = "my-custom-client-id"
-
-  callback_urls = [
-    "https://custom.example.com/callback"
-  ]
-
-  is_public    = false
-  pkce_enabled = true
-}
-
-# Create a confidential web application
-resource "pocketid_client" "web_app" {
-  name = "Main Web Application"
-
-  callback_urls = [
-    "https://app.example.com/auth/callback",
-    "https://staging.example.com/auth/callback",
-    "http://localhost:8080/auth/callback"
-  ]
-
-  logout_callback_urls = [
-    "https://app.example.com/logout",
-    "https://staging.example.com/logout"
-  ]
-
-  # Pocket ID posts a logout token here when a user's access to the client
-  # is revoked, for example when the user is disabled (Pocket ID 2.17.0 or later).
-  backchannel_logout_url = "https://app.example.com/backchannel-logout"
-
-  is_public    = false
-  pkce_enabled = true
-}
-
-# Create a mobile application client
-resource "pocketid_client" "mobile_app" {
-  name = "Mobile Application"
-
-  callback_urls = [
-    "com.example.myapp://callback",
-    "myapp://auth/callback"
-  ]
-
-  is_public    = true
-  pkce_enabled = true
-}
-
-# Create a client with restricted access
-resource "pocketid_group" "developers" {
-  name          = "developers"
-  friendly_name = "Development Team"
-}
-
-resource "pocketid_group" "admins" {
-  name          = "admins"
-  friendly_name = "System Administrators"
-}
-
-resource "pocketid_client" "admin_portal" {
-  name = "Admin Portal"
-
-  callback_urls = [
-    "https://admin.example.com/callback"
-  ]
-
-  logout_callback_urls = [
-    "https://admin.example.com/logout"
-  ]
-
-  is_public                              = false
-  pkce_enabled                           = true
-  requires_reauthentication              = true
-  requires_pushed_authorization_requests = true
-  launch_url                             = "https://admin.example.com"
-
-  # Only admins and developers can access this client
-  allowed_user_groups = [
-    pocketid_group.admins.id,
-    pocketid_group.developers.id
-  ]
-}
-
-# Create a client that accepts a federated (workload) identity
-resource "pocketid_client" "federated_app" {
-  name = "Federated Workload Client"
-
-  callback_urls = [
-    "https://workload.example.com/callback"
-  ]
-
-  is_public = false
-
-  federated_identities = [
-    {
-      issuer   = "https://token.actions.githubusercontent.com"
-      subject  = "repo:example/repo:ref:refs/heads/main"
-      audience = "https://pocket-id.example.com"
-    },
-    {
-      # An issuer that publishes no JWKS: pin its public keys instead
-      # (Pocket ID 2.15.0 or later). Never put a private key here.
-      issuer = "https://build.internal.example.com"
-      public_keys = [
-        jsonencode({
-          kty = "EC"
-          crv = "P-256"
-          kid = "build-2026"
-          use = "sig"
-          x   = "ScFVPMb2zxk2ZDS5IJu91DBAzf4L7bKikkOXdV6I4_w"
-          y   = "yJAFYZTNNfNKrBFfEnzqepcQkSEfyWOyr0l5U3l5aTM"
-        })
-      ]
-      # Tokens are single-use by default. Turn that off only for an issuer
-      # whose token is legitimately presented more than once.
-      replay_protection = false
-    }
-  ]
-}
-
-# Store the client secret securely
-resource "pocketid_client" "api_client" {
-  name = "API Service Client"
-
-  callback_urls = [
-    "https://api.example.com/oauth/callback"
-  ]
-
-  is_public = false
-}
-
-# A confidential client whose secrets are managed by pocketid_client_secret
-# (for example to rotate them without touching the client): this resource
-# generates none of its own.
-resource "pocketid_client" "rotated_secrets" {
-  name            = "Rotated Secrets Client"
-  callback_urls   = ["https://rotated.example.com/callback"]
-  generate_secret = false
-}
-
-# Output the client secret (be careful with this in production!)
-output "api_client_secret" {
-  value     = pocketid_client.api_client.client_secret
-  sensitive = true
-}
-
-# Use the client ID in other resources
-output "spa_client_id" {
-  value = pocketid_client.spa_app.id
+# A confidential application with a stable client ID.
+resource "pocketid_client" "web" {
+  name                 = "Example Web Application"
+  client_id            = "example-web"
+  callback_urls        = ["https://app.example.com/callback"]
+  logout_callback_urls = ["https://app.example.com/logout"]
+  pkce_enabled         = true
 }
 ```
 
@@ -240,3 +86,10 @@ Optional:
 - `public_keys` (List of String) Explicit public keys used to validate the federated identity token, each a JSON-encoded JWK (for example `jsonencode({...})`). Every key must be an asymmetric public key with a unique `kid`, and `use` must be `sig` or absent. Requires Pocket ID 2.15.0 or later. Conflicts with `jwks`.
 - `replay_protection` (Boolean) Whether a federated identity token may be used only once. When omitted, an identity already managed keeps its current value and a new identity gets `true`, matching the Pocket ID admin UI. Disable it only for an issuer whose tokens are legitimately presented more than once.
 - `subject` (String) The expected subject of the federated identity token.
+
+## Import
+
+```shell
+# Import a client by its client ID (not a Client ID Metadata Document URL).
+terraform import pocketid_client.web "example-web"
+```

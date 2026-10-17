@@ -112,11 +112,13 @@ go.sum text diff=golang merge=union
 .gitmodules text eol=lf
 
 # Export ignore (files to exclude from archives)
+# Never export-ignore /docs: the Terraform Registry reads a release's
+# documentation from the tag's source archive (git archive), so 3.1.2 and 3.1.3,
+# whose archives left docs/ out, have no pages there.
 .github export-ignore
 .gitignore export-ignore
 .gitattributes export-ignore
 /test export-ignore
-/docs export-ignore
 .editorconfig export-ignore
 .golangci.yml export-ignore
 *.test.go export-ignore

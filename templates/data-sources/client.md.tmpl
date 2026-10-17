@@ -12,54 +12,6 @@ description: |-
 
 ## Example Usage
 
-```terraform
-# First create a client
-resource "pocketid_client" "app" {
-  name = "My Application"
-
-  callback_urls = [
-    "https://app.example.com/callback"
-  ]
-
-  is_public = false
-}
-
-# Fetch the client by ID
-data "pocketid_client" "app" {
-  id = pocketid_client.app.id
-}
-
-# Use the client data
-output "client_name" {
-  value = data.pocketid_client.app.name
-}
-
-output "client_callback_urls" {
-  value = data.pocketid_client.app.callback_urls
-}
-
-output "client_has_logo" {
-  value = data.pocketid_client.app.has_logo
-}
-
-# Example of fetching an existing client by known ID
-data "pocketid_client" "existing" {
-  id = "550e8400-e29b-41d4-a716-446655440000"
-}
-
-# Check client configuration
-output "existing_client_is_public" {
-  value = data.pocketid_client.existing.is_public
-}
-
-output "existing_client_pkce_enabled" {
-  value = data.pocketid_client.existing.pkce_enabled
-}
-
-# Secrets are listed without their values: check that none expires soon
-output "existing_client_secret_expiries" {
-  value = [for secret in data.pocketid_client.existing.secrets : secret.expires_at if secret.expires_at != null]
-}
-```
+{{ tffile "examples/data-sources/pocketid_client/data-source.tf" }}
 
 {{ .SchemaMarkdown | trimspace }}

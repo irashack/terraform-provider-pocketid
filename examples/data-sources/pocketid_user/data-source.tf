@@ -1,0 +1,56 @@
+# First create a user
+resource "pocketid_user" "example" {
+  username   = "john.doe"
+  email      = "john.doe@example.com"
+  first_name = "John"
+  last_name  = "Doe"
+}
+
+# Then fetch the user by ID
+data "pocketid_user" "example" {
+  id = pocketid_user.example.id
+}
+
+# Use the user data
+output "user_email" {
+  value = data.pocketid_user.example.email
+}
+
+output "user_groups" {
+  value = data.pocketid_user.example.groups
+}
+
+output "user_is_admin" {
+  value = data.pocketid_user.example.is_admin
+}
+
+# Example of fetching an existing user by known ID
+data "pocketid_user" "existing" {
+  id = "123e4567-e89b-12d3-a456-426614174000"
+}
+
+# Example of fetching a user by username
+data "pocketid_user" "by_username" {
+  username = "admin"
+}
+
+output "admin_user_id" {
+  value = data.pocketid_user.by_username.id
+}
+
+# Example of fetching a user by email, such as looking up an owner account
+# that is not itself managed by a pocketid_user resource so it can be added
+# to groups with pocketid_group_membership.
+data "pocketid_user" "by_email" {
+  email = "owner@example.com"
+}
+
+resource "pocketid_group" "admins" {
+  name          = "admins"
+  friendly_name = "Administrators"
+}
+
+resource "pocketid_group_membership" "owner_admins" {
+  group_id = pocketid_group.admins.id
+  user_id  = data.pocketid_user.by_email.id
+}

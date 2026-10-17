@@ -5,14 +5,13 @@ groups, APIs and instance settings as code. This is an independent provider. It
 began in September 2026 as a maintenance fork of
 [Trozz/terraform-provider-pocketid](https://github.com/Trozz/terraform-provider-pocketid)
 by Michael Leer and has been its own project since 2026-10-02, with its own version
-numbers and no tracking of upstream (see [Attribution](#attribution)). Release **3.1.3** supports Pocket ID **2.14.0 through
+numbers and no tracking of upstream (see [Attribution](#attribution)). Release **3.1.4** supports Pocket ID **2.14.0 through
 2.18.0**, including 2.18.0's icon library for client logos (3.0.1 was its first
-release as an independent project). It is listed on the Terraform Registry as
-[irashack/pocketid](https://registry.terraform.io/providers/irashack/pocketid)
-since 3.1.3 (2026-10-12), and `terraform init` and `tofu init` install it from
-there with the source address `registry.terraform.io/irashack/pocketid`; the
-OpenTofu registry listing is pending (opentofu/registry#5831). Its archives are
-published on [GitHub releases](https://github.com/irashack/terraform-provider-pocketid/releases),
+release as an independent project). It is listed on the
+[Terraform Registry](https://registry.terraform.io/providers/irashack/pocketid)
+and on the OpenTofu Registry as `irashack/pocketid`, and `terraform init` and
+`tofu init` install it from there with the source address `irashack/pocketid`.
+Its archives are published on [GitHub releases](https://github.com/irashack/terraform-provider-pocketid/releases),
 signed since 3.1.2 with the key in [release-signing-key.asc](release-signing-key.asc),
 and [INSTALL.md](INSTALL.md) also covers installing them through a native
 filesystem mirror. It has deliberate breaking changes from 2.4.x, each marked
@@ -21,17 +20,20 @@ official Pocket ID or Trozz release.
 
 ## Get started
 
-`terraform init` or `tofu init` installs the provider from the Terraform Registry
-and verifies its signature; [INSTALL.md](INSTALL.md) covers installing a verified
-archive through a filesystem mirror instead. If you already use this provider,
-read [Upgrading from 2.4.x](#upgrading-from-24x) first.
+`terraform init` installs the provider from the Terraform Registry and `tofu init`
+from the OpenTofu Registry, and each verifies its signature;
+[INSTALL.md](INSTALL.md) covers installing a verified archive through a
+filesystem mirror instead. A configuration that already uses the explicit
+`registry.terraform.io/irashack/pocketid` address keeps working in both tools. If
+you already use this provider, read [Upgrading from 2.4.x](#upgrading-from-24x)
+first.
 
 ```hcl
 terraform {
   required_providers {
     pocketid = {
-      source  = "registry.terraform.io/irashack/pocketid"
-      version = "3.1.3"
+      source  = "irashack/pocketid"
+      version = "3.1.4"
     }
   }
 }
@@ -191,8 +193,8 @@ records it. What this provider does that upstream does not, or does differently:
   `application_config`). This provider adds ten resources: `client_secret`,
   `client_logo`, `user_profile_picture`, `group_membership`, `group_members`,
   `scim_sync`, `signup_token`, `api`, `api_client_access` and `application_image`;
-  and seven data sources: `current_user`, `user_passkeys`, `api`, `apis`,
-  `api_keys`, `signup_tokens` and `version`. The ones both have behave differently,
+  and eight data sources: `current_user`, `user_passkeys`, `api`, `apis`,
+  `api_keys`, `signup_tokens`, `logo_presets` and `version`. The ones both have behave differently,
   as below.
 - **Redirects and retries.** Redirects are never followed with the API key.
   Changes (create, update, delete, uploads) are never retried; reads are retried

@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.1.4 — 2026-10-16
+
+Documentation. No provider changes: the provider code and dependencies are
+3.1.3's, and state written by any 3.1.x release plans empty.
+
+- The Terraform Registry now shows this provider's documentation. The source
+  archive of 3.1.2 and 3.1.3 left out `docs/` (an inherited `/docs export-ignore`
+  in `.gitattributes`), and the registry reads a version's pages from that
+  archive, so those two versions have none there.
+- Every resource and data source page has an example, and every importable
+  resource an import section with the ID format it accepts. Examples that used
+  attributes the schema does not have, or invalid import IDs, are corrected.
+- Installation: both registries list the provider as `irashack/pocketid`, and
+  the documentation and examples now use that short address. The explicit
+  `registry.terraform.io/irashack/pocketid` keeps working; under OpenTofu,
+  switching between the two plans empty and only adds a lockfile entry.
+
 ## 3.1.3 — 2026-10-12
 
 Registry-compatible archive names. No provider changes: the provider code and

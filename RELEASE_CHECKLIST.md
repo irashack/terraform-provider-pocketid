@@ -38,8 +38,8 @@
    `goreleaser release --clean --skip=publish --skip=sign`. Check all expected target
    ZIPs and SHA256SUMS. Signing happens in the release workflow: the `signs` section
    of `.goreleaser.yml` signs SHA256SUMS with the key in `release-signing-key.asc`,
-   whose private half is the repository's `GPG_PRIVATE_KEY` Actions secret (custody:
-   the homelab's OpenBao). A local build signs too when `GPG_FINGERPRINT` is set and
+   whose private half is the repository's `GPG_PRIVATE_KEY` Actions secret (the
+   maintainer keeps the custody copy outside the repository). A local build signs too when `GPG_FINGERPRINT` is set and
    `GNUPGHOME` holds the key.
 8. Publish the tag/source and release archives, manifest, SHA256SUMS and
    SHA256SUMS.sig. Verify the draft's signature with `gpg --verify` against
@@ -49,6 +49,18 @@
    install via a native mirror and repeat native Terraform/OpenTofu lifecycle
    checks. A tag or successful build alone is not a released-provider proof. The
    archive you verify here is the input to the next release's upgrade proofs.
+10. Confirm both registries carry the version and its documentation. The
+    Terraform Registry ingests the release through its GitHub webhook and reads
+    the pages from the tag's source archive, so before tagging `git archive HEAD | tar -t | grep -c
+    '^docs/.*\.md$'` must count every page (3.1.2 and 3.1.3 shipped
+    with `/docs export-ignore` and have none there). Check
+    `https://registry.terraform.io/v2/providers/irashack/pocketid?include=provider-versions`
+    for the version, then `/v2/provider-versions/<id>?include=provider-docs` for
+    its pages; the OpenTofu registry's
+    `https://api.opentofu.org/registry/docs/providers/irashack/pocketid/index.json`
+    lists versions as it picks them up. The Terraform Registry copies the GitHub
+    repository description onto each version when it ingests it: keep that
+    description current before publishing.
 
 The GoReleaser GitHub workflow is for an explicit manual release run from
 `main-maintenance` (the branch the workflow accepts), accepting only an existing
@@ -59,8 +71,19 @@ digest from the run summary and the validation results to its notes before
 explicitly publishing. Existing released tags must never be moved or rebuilt in
 place. Routine CI runs on branch/PR changes. Automatic development releases,
 scheduled sweeps, cleanup and contributor-edit jobs are not enabled in this
-project. Do not publish a registry identity until it is actually registered with
-the required signing setup.
+project. The provider is registered on the Terraform and OpenTofu registries as
+`irashack/pocketid`; each ingests a published release on its own (step 10).
+
+## Release v3.1.4
+
+A documentation release with no provider change (`git diff v3.1.3 v3.1.4 --stat
+-- internal main.go go.mod go.sum tests scripts` is empty). `.gitattributes` no
+longer export-ignores `docs/`, so the Terraform Registry, which reads pages from
+the tag's source archive, gets the documentation 3.1.2 and 3.1.3 lack. Every
+resource and data source page now has an example, every importable resource an
+import section, and the prose drops the "OpenTofu registry pending" wording. The
+release workflow's gates are the acceptance gate; TESTING.md ("Release 3.1.4
+evidence") records the rest.
 
 ## Release v3.1.3
 
@@ -174,7 +197,7 @@ releases on the 2.4 line are numbered from 2.4.101 because upstream has released
 different 2.4.0 to 2.4.2. Before tagging a fork release, check that the number is
 not an upstream tag (`git ls-remote --tags upstream`). The upgrade proof is
 `tests/native/upgrade.py` from the published 2.4.1 archive. Publication runs
-`dist/release-v2.4.102/publish.sh` on Cygnus with the login Keychain; it verifies
+`dist/release-v2.4.102/publish.sh` on the release workstation; it verifies
 the draft's assets and runs the downloaded binary through the native lifecycle
 before publishing. Then follow INSTALL.md's "Upgrade from fork 2.4.1 to 2.4.102".
 

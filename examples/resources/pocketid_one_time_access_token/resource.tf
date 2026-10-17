@@ -41,7 +41,7 @@ resource "pocketid_one_time_access_token" "emergency" {
 # Use case: Initial user setup, token valid for 7 days
 resource "pocketid_user" "new_user" {
   username   = "new.employee"
-  email      = "new.employee@company.com"
+  email      = "new.employee@example.com"
   first_name = "New"
   last_name  = "Employee"
 }
@@ -49,19 +49,4 @@ resource "pocketid_user" "new_user" {
 resource "pocketid_one_time_access_token" "onboarding" {
   user_id = pocketid_user.new_user.id
   ttl     = "168h" # 7 days (max ttl is 744h / 31 days)
-}
-
-# Send the token via another provider (e.g., email, SMS)
-# This is just an example - use your actual notification provider
-resource "example_email" "welcome" {
-  to      = pocketid_user.new_user.email
-  subject = "Welcome to Pocket-ID"
-  body    = <<-EOT
-    Welcome ${pocketid_user.new_user.first_name}!
-
-    Please use this one-time access token to log in and set up your passkey:
-    ${pocketid_one_time_access_token.onboarding.token}
-
-    This token will expire in 7 days.
-  EOT
 }

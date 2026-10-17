@@ -44,7 +44,10 @@ resource "pocketid_client" "multi_group_app" {
     "https://app.example.com/callback"
   ]
 
-  # Allow access to specific groups
+  # Allow access to specific groups. is_group_restricted keeps the client
+  # closed even if none of these groups exists: a new client with no allowed
+  # groups is otherwise open to every user.
+  is_group_restricted = true
   allowed_user_groups = [
     for group in data.pocketid_groups.all.groups : group.id
     if contains(["developers", "admins", "managers"], group.name)

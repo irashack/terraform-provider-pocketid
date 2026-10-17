@@ -38,18 +38,20 @@ output "admin_count" {
   value = length(local.admin_users)
 }
 
-# Filter users by group membership
-resource "pocketid_group" "developers" {
-  name          = "developers"
-  friendly_name = "Development Team"
+# Filter the full user list locally by group membership.
+data "pocketid_group" "developers" {
+  name = "developers"
 }
 
-data "pocketid_users" "developers" {
-  group_id = pocketid_group.developers.id
+locals {
+  developers = [
+    for user in data.pocketid_users.all.users : user
+    if contains(user.groups, data.pocketid_group.developers.id)
+  ]
 }
 
 output "developers_count" {
-  value = length(data.pocketid_users.developers.users)
+  value = length(local.developers)
 }
 
 # Create a map of users by username

@@ -12,57 +12,6 @@ description: |-
 
 ## Example Usage
 
-```terraform
-# Fetch all users
-data "pocketid_users" "all" {}
-
-# Output total user count
-output "total_users" {
-  value = length(data.pocketid_users.all.users)
-}
-
-# Output all user emails
-output "user_emails" {
-  value = [for user in data.pocketid_users.all.users : user.email]
-}
-
-# Find admin users
-locals {
-  admin_users = [
-    for user in data.pocketid_users.all.users : user
-    if user.is_admin
-  ]
-}
-
-output "admin_count" {
-  value = length(local.admin_users)
-}
-
-# Filter users by group membership
-resource "pocketid_group" "developers" {
-  name          = "developers"
-  friendly_name = "Development Team"
-}
-
-data "pocketid_users" "developers" {
-  group_id = pocketid_group.developers.id
-}
-
-output "developers_count" {
-  value = length(data.pocketid_users.developers.users)
-}
-
-# Create a map of users by username
-locals {
-  users_by_username = {
-    for user in data.pocketid_users.all.users : user.username => user
-  }
-}
-
-# Access a specific user from the map
-output "john_doe_email" {
-  value = lookup(local.users_by_username, "john.doe", null) != null ? local.users_by_username["john.doe"].email : "User not found"
-}
-```
+{{ tffile "examples/data-sources/pocketid_users/data-source.tf" }}
 
 {{ .SchemaMarkdown | trimspace }}

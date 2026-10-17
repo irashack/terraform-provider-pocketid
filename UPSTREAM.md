@@ -53,10 +53,10 @@ are in this file's git history.
   vulnerabilities through [private reporting](SECURITY.md). Upstream's contact
   addresses and support commitments do not apply. It is a volunteer project
   with no response-time guarantee.
-- **Names.** The provider address is `registry.terraform.io/irashack/pocketid`
-  and the Go module is `github.com/irashack/terraform-provider-pocketid` (it was
-  upstream's module path until 3.0.0). This is not an official Pocket ID or
-  Trozz release.
+- **Names.** The provider address is `irashack/pocketid` (on the Terraform and
+  OpenTofu registries) and the Go module is
+  `github.com/irashack/terraform-provider-pocketid` (it was upstream's module
+  path until 3.0.0). This is not an official Pocket ID or Trozz release.
 - **A repository of its own.** On 2026-10-12 the public repository left
   GitHub's fork network (a one-way owner action in the repository's settings),
   so GitHub no longer lists it as a fork of upstream and it appears in search

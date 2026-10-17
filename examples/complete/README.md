@@ -77,7 +77,8 @@ data sources.
    terraform output -raw admin_portal_client_secret > admin_portal_secret.txt
    ```
 
-   ⚠️ **Important**: Client secrets are only available during resource creation!
+   ⚠️ **Important**: Pocket ID shows a client secret only when it is created.
+   Terraform keeps it in state (marked sensitive), so protect the state file.
 
 ## What Gets Created
 

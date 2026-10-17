@@ -95,7 +95,7 @@ Import is supported using the following syntax:
 The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
 
 ```shell
-# A group's membership is imported using the group's ID
+# A group's membership is imported using the group's ID.
 terraform import pocketid_group_members.admins "3fa2c1d4-0000-4000-8000-000000000001"
 ```
 
@@ -107,10 +107,5 @@ terraform import pocketid_group_members.admins "3fa2c1d4-0000-4000-8000-00000000
 import {
   to = pocketid_group_members.admins
   id = "3fa2c1d4-0000-4000-8000-000000000001"
-}
-
-resource "pocketid_group_members" "admins" {
-  group_id = "3fa2c1d4-0000-4000-8000-000000000001"
-  user_ids = ["7b9e0a12-0000-4000-8000-000000000001"]
 }
 ```
