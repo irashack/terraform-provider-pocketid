@@ -73,7 +73,7 @@ gpg --show-keys --with-fingerprint release-signing-key.asc
 gpg --import release-signing-key.asc
 gpg --verify "$sums.sig" "$sums"
 # Set this to the literal SHA256SUMS digest from the v3.1.4 release notes:
-expected_manifest_sha256=RECORDED_IN_THE_V3_1_4_RELEASE_NOTES
+expected_manifest_sha256=71639eb9eb93fa7abee61cb753c3a61865340ccc452e14496a33d3183016eaad
 printf '%s  %s\n' "$expected_manifest_sha256" "$sums" | shasum -a 256 -c -
 awk -v file="$archive" '$2 == file { print }' "$sums" | shasum -a 256 -c -
 mirror="$HOME/.local/share/pocketid-provider-mirror"

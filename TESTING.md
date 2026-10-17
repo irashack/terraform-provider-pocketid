@@ -205,7 +205,20 @@ path that did not match its client. The OpenTofu address claim in
 INSTALL.md was checked with OpenTofu 1.13.1: state recorded under
 `registry.terraform.io/irashack/pocketid` plans empty with the short source, and
 the reverse. The Go gates and acceptance matrix run in the release workflow on
-the tag; `lifecycle.py` was not re-run for an unchanged Go tree.
+the tag.
+
+Release run 39006166239 (2026-10-17) passed every step. The published
+`terraform-provider-pocketid_3.1.4_SHA256SUMS` lists the ten platform archives
+and the manifest, and has digest
+`71639eb9eb93fa7abee61cb753c3a61865340ccc452e14496a33d3183016eaad`; its `.sig`
+verified in a fresh keyring holding only `release-signing-key.asc`, and
+`gh attestation verify` accepted the SHA256SUMS file and the darwin_arm64
+archive. `lifecycle.py` passed with OpenTofu 1.13.1 and Terraform 1.16.6 on
+2.18.0 using the downloaded linux_arm64 archive (verified against SHA256SUMS)
+from a filesystem mirror, with the fixture under rootless Podman. The Terraform
+Registry ingested 3.1.4 with all 33 pages (17 resources, 15 data sources and the
+index) and the current repository description, and `terraform init` installs it
+with the short source. The release was published on 2026-10-17.
 
 ## Release 3.1.3 evidence — 2026-10-12
 
