@@ -58,14 +58,14 @@ make check              # format, vet, race unit tests, script tests, build and 
 make docs-check         # generated documentation matches the checkout
 make actionlint         # for workflow changes
 make vuln               # reachable Go vulnerabilities
-make test-acc-supported # the full acceptance suites on Pocket ID 2.14.0 to 2.18.0
+make test-acc-supported # the full acceptance suites on Pocket ID 2.14.0 to 2.19.1
 ```
 
 `make test-acc-supported` is long; while working, run
 `make test-acc-provider POCKETID_VERSION=2.17.0` (both suites on one version) or
 `make test-acc` for every acceptance test family (the `TestAcc` tests), and
 `make test-acc-matrix` for those on every version. CI runs the
-full suites on 2.17.0 and 2.18.0. TESTING.md has the details, including the native
+full suites on 2.18.0 and 2.19.1. TESTING.md has the details, including the native
 Terraform and OpenTofu scripts.
 
 Every behavior change needs a unit test and, wherever the real server's behavior
@@ -86,7 +86,7 @@ server by hand. The only way to run one during tests is the fixture script:
 python3 scripts/disposable-pocketid.py 2.17.0 -- go test -count=1 ./internal/provider -tags=acc
 ```
 
-It pulls the official image for a version from 2.14.0 to 2.18.0, starts an
+It pulls the official image for a version from 2.14.0 to 2.19.1, starts an
 isolated container on a free loopback port, seeds a fresh database with one
 synthetic administrator and a random token held only in memory, runs the command
 with `POCKETID_BASE_URL`, `POCKETID_API_TOKEN` and `POCKETID_TEST_VERSION` set,

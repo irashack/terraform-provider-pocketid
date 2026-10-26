@@ -4,7 +4,7 @@ How every check runs, what each native script proves, and the evidence recorded
 for each release. The "Release … evidence" sections are the record of each
 release; the support matrix and tool versions in each belong to that release, not
 to the current one. The current range is Pocket ID **2.14.0 through
-2.18.0**.
+2.19.1**.
 
 ## Reproducible checks
 
@@ -14,16 +14,16 @@ make docs-check             # generated documentation matches the checkout
 make actionlint             # GitHub Actions syntax and expressions
 make vuln                   # reachable Go vulnerabilities
 go vet -tags=acc ./...      # the acceptance tests compile
-make test-acc               # every acceptance test family (TestAcc*) on POCKETID_VERSION (default 2.18.0)
-make test-acc-matrix        # test-acc on 2.14.0, 2.15.0, 2.16.0, 2.17.0 and 2.18.0
+make test-acc               # every acceptance test family (TestAcc*) on POCKETID_VERSION (default 2.19.1)
+make test-acc-matrix        # test-acc on 2.14.0, 2.15.0, 2.16.0, 2.17.0, 2.18.0 and 2.19.1
 make test-acc-provider      # full provider and data-source suites on POCKETID_VERSION, one fixture
-make test-acc-supported     # the full suites on every supported version, 2.14.0 to 2.18.0
+make test-acc-supported     # the full suites on every supported version, 2.14.0 to 2.19.1
 ```
 
 `make test-acc-supported` runs `make test-acc-provider` once per supported version
 and is the acceptance gate before a release. CI is lighter to keep its run time
-down: the full suites on 2.17.0 and 2.18.0, and `make test-acc` on 2.14.0, 2.15.0
-and 2.16.0. The release workflow runs `make check`, `make vuln` and
+down: the full suites on 2.18.0 and 2.19.1, and `make test-acc` on 2.14.0 to
+2.17.0. The release workflow runs `make check`, `make vuln` and
 `make test-acc-matrix` on the tagged source.
 
 The acceptance packages share one fixture and run one after another (`-p 1`), so a
@@ -33,7 +33,7 @@ behavior is selected inside the tests from `POCKETID_TEST_VERSION`.
 ## The disposable server fixture
 
 `scripts/disposable-pocketid.py VERSION -- COMMAND` is the only way tests get a
-Pocket ID server. VERSION must be one of 2.14.0, 2.15.0, 2.16.0, 2.17.0 or 2.18.0. The
+Pocket ID server. VERSION must be one of 2.14.0, 2.15.0, 2.16.0, 2.17.0, 2.18.0 or 2.19.1. The
 fixture pulls the official versioned image, creates an isolated container and
 database on a free loopback port, waits for health (HTTP 204 is success), stops the
 server, and seeds one synthetic administrator and a hash of a random API token,
@@ -125,11 +125,18 @@ own API, then proves, in order:
   validator with no change.
 - An empty `pocketid_application_config` imports and plans empty, and an import
   tracks no password in state.
-- An SMTP configuration (with `allow_own_account_edit` and
-  `email_login_notification_enabled`) changes only those settings. Every other
+- An SMTP configuration (with `allow_own_account_edit` and the login notification
+  setting: `email_login_notification_enabled` before Pocket ID 2.19.0,
+  `email_login_notification_mode` from it) changes only those settings. Every other
   returned setting is unchanged, the resource and the data source show the same
   values, and the data source has no password attributes. Refresh and an empty plan
   follow.
+- With `OLD_VERSION` on Pocket ID 2.19.0 or later, which an older provider can
+  import but not apply to: the imported state (with the boolean e-mail attributes
+  3.1.x held, written into a Terraform state file; an OpenTofu state is encrypted
+  and keeps what the import wrote) is taken over by the target version, and a
+  configuration that uses `email_login_notification_mode` and `email_verification`
+  at the server's values refreshes to null booleans and plans empty.
 - The write-only flow, below.
 - Removing every attribute, then removing the resource from state and importing it
   again, plans empty, and destroying the resource leaves the live configuration

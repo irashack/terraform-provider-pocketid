@@ -61,6 +61,14 @@ def host_reach(platform):
     return [], "127.0.0.1"
 
 
+# Pocket ID 2.19.0 limits where SCIM requests may go to private and loopback
+# addresses (its own default). The tests' SCIM endpoint is the host, reached as
+# host.docker.internal: Docker on Linux maps that to a private bridge address,
+# but rootless Podman maps it to a link-local one, so the range is added. Older
+# servers ignore the variable.
+SCIM_ALLOWED_HOSTS = "OUTBOUND_ALLOWED_HOSTS_SCIM=private,loopback,169.254.0.0/16"
+
+
 def docker_run_command(name, envfile, version, platform):
     return ["docker", "run", "-d", "--name", name, "--label", "pocketid-provider-fixture=true",
             "--env-file", str(envfile), "-p", "127.0.0.1::1411", *host_reach(platform)[0],
@@ -68,7 +76,7 @@ def docker_run_command(name, envfile, version, platform):
 
 
 def run(version, command):
-    if version not in ("2.14.0", "2.15.0", "2.16.0", "2.17.0", "2.18.0"):
+    if version not in ("2.14.0", "2.15.0", "2.16.0", "2.17.0", "2.18.0", "2.19.1"):
         raise ValueError("version must be in the tested matrix")
     os.umask(0o077)
     failure_log = os.environ.get("POCKETID_FIXTURE_FAILURE_LOG")
@@ -82,7 +90,7 @@ def run(version, command):
         name = "provider-fixture-" + uuid.uuid4().hex[:12]
         envfile = root / "container.env"
         envfile.write_text("APP_URL=http://localhost:1411\nENCRYPTION_KEY=" + secrets.token_hex(32) +
-                           "\nTRUST_PROXY=false\nVERSION_CHECK_DISABLED=true\nANALYTICS_DISABLED=true\nPUID=" + str(os.getuid()) +
+                           "\nTRUST_PROXY=false\nVERSION_CHECK_DISABLED=true\nANALYTICS_DISABLED=true\n" + SCIM_ALLOWED_HOSTS + "\nPUID=" + str(os.getuid()) +
                            "\nPGID=" + str(os.getgid()) + "\n")
         created = False
         try:

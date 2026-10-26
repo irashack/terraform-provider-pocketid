@@ -255,7 +255,7 @@ records it. What this provider does that upstream does not, or does differently:
   changes ([INSTALL.md](INSTALL.md#upgrade-from-24104-to-301)); from older
   releases, upgrade to 2.4.104 first. The only upstream state this project has run
   against is upstream 2.3.0 on Pocket ID 2.13.0; later upstream state is untested.
-- **Supported versions and test matrix.** Pocket ID 2.14.0 through 2.18.0 is
+- **Supported versions and test matrix.** Pocket ID 2.14.0 through 2.19.1 is
   supported, at the exact versions the acceptance suites run against on official
   images ([Compatibility](#compatibility-and-current-limits)). Native proofs run a
   real `terraform` and a real `tofu` binary against a disposable server, including
@@ -268,7 +268,7 @@ records it. What this provider does that upstream does not, or does differently:
 
 ## Compatibility and current limits
 
-Pocket ID **2.14.0 through 2.18.0** is supported, at the exact patch versions the
+Pocket ID **2.14.0 through 2.19.1** is supported, at the exact patch versions the
 acceptance suites run against (official images). Untested patch versions are not
 automatically certified. **2.13.0 and earlier are not supported or tested**; legacy
 parsing safeguards, such as the singular secret endpoint used when a server reports
@@ -283,14 +283,15 @@ run with both tools; [TESTING.md](TESTING.md) records the tool versions used.
 | 2.16.0 | As 2.15.0. |
 | 2.17.0 | `backchannel_logout_url` and `auto_create_oidc_client_secret` supported; a new confidential client's server-created secret is revoked by the provider. |
 | 2.18.0 | The icon library: `preset` on `pocketid_client_logo` and the `pocketid_logo_presets` data source. A client with only a dark logo shows it in light mode too. |
+| 2.19.0 | `email_login_notification_mode` and `email_verification` on `pocketid_application_config` (3.2.0), replacing the boolean `email_login_notification_enabled` and `email_verification_enabled`, which are deprecated, work only before 2.19.0 and are refused from it on. |
 
 `pocketid_client_secret`, `pocketid_api` and `pocketid_api_client_access` need
 Pocket ID 2.14.0 or later, which every supported server is. A feature that needs a
 newer server than yours (`backchannel_logout_url`, `public_keys`,
-`auto_create_oidc_client_secret`, a logo `preset`) is refused. CI runs the full provider and
-data-source acceptance suites on 2.17.0 and 2.18.0 and every acceptance test family
-(`make test-acc`) on 2.14.0, 2.15.0 and 2.16.0; `make test-acc-supported` runs the full
-suites on all five and is part of the [release checklist](RELEASE_CHECKLIST.md).
+`auto_create_oidc_client_secret`, a logo `preset`, `email_verification`) is refused. CI runs the full provider and
+data-source acceptance suites on 2.18.0 and 2.19.1 and every acceptance test family
+(`make test-acc`) on 2.14.0 to 2.17.0; `make test-acc-supported` runs the full
+suites on all six and is part of the [release checklist](RELEASE_CHECKLIST.md).
 
 ## Upgrading from 2.4.x
 
@@ -333,9 +334,9 @@ cleans up. It does not use your running Pocket ID instance.
 ```sh
 make check                  # formatting, vet, unit/race tests, script tests, build and lint
 make docs-check             # generated documentation matches the checkout
-make test-acc               # every acceptance test family (TestAcc*) on Pocket ID 2.18.0
-make test-acc-matrix        # the same on every fixture version (2.14.0 to 2.18.0)
-make test-acc-provider      # full provider and data-source suites on POCKETID_VERSION (default 2.18.0)
+make test-acc               # every acceptance test family (TestAcc*) on Pocket ID 2.19.1
+make test-acc-matrix        # the same on every fixture version (2.14.0 to 2.19.1)
+make test-acc-provider      # full provider and data-source suites on POCKETID_VERSION (default 2.19.1)
 make test-acc-supported     # the full suites on every supported version
 ```
 
