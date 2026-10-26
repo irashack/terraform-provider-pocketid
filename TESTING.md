@@ -191,6 +191,54 @@ renamed binary of this provider. The test uses supported state replacement, chec
 encrypted state/backups and saved-plan encryption, preserves the ID and secret, and
 requires an empty subsequent plan. No development overrides are used.
 
+## Release 3.2.0 evidence — 2026-10-26
+
+Pocket ID 2.19 support (CHANGELOG.md, "3.2.0"). Prepared on an aarch64 Linux
+host with the official go1.27.3 linux-arm64 toolchain, golangci-lint 2.14.0,
+govulncheck 1.7.0, tfplugindocs 0.25.0, Terraform 1.16.4, OpenTofu 1.13.1 and
+rootless Podman for the fixture; `make` was not installed, so each target's
+command ran directly. The fixture adds `OUTBOUND_ALLOWED_HOSTS_SCIM` for
+169.254.0.0/16, because 2.19.0 limits SCIM requests to private and loopback
+addresses and rootless Podman maps `host.docker.internal` to a link-local one.
+
+Ran and passed: `gofmt`, `go vet` and `go vet -tags=acc ./...`, golangci-lint
+(0 issues), build, `go mod tidy -diff`, actionlint, govulncheck (no
+vulnerabilities), the script tests (9 passed) and `go test -race` in all six
+packages. `tfplugindocs generate` leaves `docs/` equal to the checkout (the
+`make docs-check` condition) and `git archive HEAD | tar -t` lists 33 pages.
+`tfplugindocs validate` reports "missing documentation file for datasource:
+pocketid_version" in this environment, also on the 3.1.4 tree
+(a690969), whose `docs/data-sources/version.md` exists; it is not new here and
+was not investigated. `git ls-remote --tags` of Trozz/terraform-provider-pocketid
+lists no v3.* tag, so v3.2.0 is free.
+
+Acceptance (fixture on Podman, `-p 1`): the application-configuration tests
+(`TestAccResourceApplicationConfig*`, `TestAccAPI_applicationConfigRules`)
+passed 10 of 10 on 2.19.1, and 9 with 1 skip on 2.18.0
+(`emailVerificationRequired` needs 2.19.0). The full `./internal/provider
+./internal/datasources -tags=acc` suites passed on 2.19.1 with no failure, and on
+2.18.0 with no failure and that one skip. The first 2.19.1 run failed
+`TestAccResourceScimSync_runsTheSyncDuringTheApply` on the SCIM policy above,
+fixed in the fixture; the test passed on 2.18.0 throughout. Not run: 2.14.0
+through 2.17.0, `make test-acc-supported` as a whole, `make release-check`
+(GoReleaser) and the release workflow's `make test-acc-matrix`.
+
+Native, with Terraform and OpenTofu, on 2.19.1 and 2.18.0, a 3.2.0-stamped build
+in a mirror: `lifecycle.py` passed in all four runs. The old provider was the
+published 3.1.4 archive (SHA256SUMS verified): `upgrade.py` passed in all four
+runs (empty plan, kept identity and secret, replay protection, back-channel
+logout URL), and `application_config.py` with `OLD_VERSION` 3.1.4 passed in all
+four (on 2.19.1 the old provider only imports; the old attributes are set to
+"false" in state, the new provider takes over with the modes at the server's
+values and plans empty). `client_upgrade.py` and `upgrade_users_groups.py` do
+not apply to a 3.1.4 starting point and failed on assertions written for
+2.4.104: the first requires the old provider to record a renamed `client_id`
+(3.x makes it immutable), the second that the old state never converges and the
+first plan exits 2 (from 3.1.4 it exited 0, an empty plan). They were not
+changed and are not proof for this release; the state-compatibility claim rests
+on `upgrade.py` and `application_config.py`. Not run: native scripts on
+2.14.0 through 2.17.0 or on a platform other than linux_arm64.
+
 ## Release 3.1.4 evidence — 2026-10-16
 
 Documentation only; the provider code and dependencies are the 3.1.3 tree (the

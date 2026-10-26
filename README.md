@@ -5,9 +5,9 @@ groups, APIs and instance settings as code. This is an independent provider. It
 began in September 2026 as a maintenance fork of
 [Trozz/terraform-provider-pocketid](https://github.com/Trozz/terraform-provider-pocketid)
 by Michael Leer and has been its own project since 2026-10-02, with its own version
-numbers and no tracking of upstream (see [Attribution](#attribution)). Release **3.1.4** supports Pocket ID **2.14.0 through
-2.18.0**, including 2.18.0's icon library for client logos (3.0.1 was its first
-release as an independent project). It is listed on the
+numbers and no tracking of upstream (see [Attribution](#attribution)). Release **3.2.0** supports Pocket ID **2.14.0 through
+2.19.1**, including 2.19's e-mail login notification and verification modes
+(3.0.1 was its first release as an independent project). It is listed on the
 [Terraform Registry](https://registry.terraform.io/providers/irashack/pocketid)
 and on the OpenTofu Registry as `irashack/pocketid`, and `terraform init` and
 `tofu init` install it from there with the source address `irashack/pocketid`.
@@ -33,7 +33,7 @@ terraform {
   required_providers {
     pocketid = {
       source  = "irashack/pocketid"
-      version = "3.1.4"
+      version = "3.2.0"
     }
   }
 }

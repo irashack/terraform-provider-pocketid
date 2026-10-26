@@ -17,7 +17,7 @@ Include the CLI version, Pocket ID version, operating system and architecture.
 
 ## Provider Version
 
-Include the exact provider source address (`irashack/pocketid`, or `registry.terraform.io/irashack/pocketid` if you use the explicit form) and version, for example 3.1.4. This project is independent of Trozz/terraform-provider-pocketid; report problems with that provider there.
+Include the exact provider source address (`irashack/pocketid`, or `registry.terraform.io/irashack/pocketid` if you use the explicit form) and version, for example 3.2.0. This project is independent of Trozz/terraform-provider-pocketid; report problems with that provider there.
 
 ## Affected Resource(s)
 

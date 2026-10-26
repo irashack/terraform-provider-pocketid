@@ -9,7 +9,7 @@ terraform {
   required_providers {
     pocketid = {
       source  = "irashack/pocketid"
-      version = "3.1.4"
+      version = "3.2.0"
     }
   }
 }
@@ -40,14 +40,14 @@ terraform {
   required_providers {
     pocketid = {
       source  = "registry.terraform.io/irashack/pocketid"
-      version = "3.1.4"
+      version = "3.2.0"
     }
   }
 }
 ```
 
 Download the exact version's archive, SHA256SUMS and SHA256SUMS.sig from
-[release v3.1.4](https://github.com/irashack/terraform-provider-pocketid/releases/tag/v3.1.4).
+[release v3.2.0](https://github.com/irashack/terraform-provider-pocketid/releases/tag/v3.2.0).
 Verify the signature with the release key,
 [release-signing-key.asc](release-signing-key.asc) (RSA 4096, fingerprint
 `FE9D 704B 2C1E 6675 46F0 EBB1 E031 C4DE 04D8 19D6`, valid until October 2029),
@@ -58,7 +58,7 @@ are unsigned and have only the digest.
 For example, for `darwin_arm64` (use `linux_amd64` or `linux_arm64` as appropriate):
 
 ```sh
-version=3.1.4
+version=3.2.0
 platform=darwin_arm64
 archive=terraform-provider-pocketid_${version}_${platform}.zip
 sums=terraform-provider-pocketid_${version}_SHA256SUMS
@@ -72,8 +72,8 @@ curl --fail --location --output release-signing-key.asc \
 gpg --show-keys --with-fingerprint release-signing-key.asc
 gpg --import release-signing-key.asc
 gpg --verify "$sums.sig" "$sums"
-# Set this to the literal SHA256SUMS digest from the v3.1.4 release notes:
-expected_manifest_sha256=71639eb9eb93fa7abee61cb753c3a61865340ccc452e14496a33d3183016eaad
+# Set this to the literal SHA256SUMS digest from the v3.2.0 release notes:
+expected_manifest_sha256=RECORDED_IN_THE_V3_2_0_RELEASE_NOTES
 printf '%s  %s\n' "$expected_manifest_sha256" "$sums" | shasum -a 256 -c -
 awk -v file="$archive" '$2 == file { print }' "$sums" | shasum -a 256 -c -
 mirror="$HOME/.local/share/pocketid-provider-mirror"
@@ -107,6 +107,41 @@ tofu providers lock -fs-mirror="$mirror" \
 ```
 
 Keep the exact version and checksum pins; do not silently select a newer tag.
+
+## Upgrade from 3.1.x to 3.2.0
+
+3.2.0 adds Pocket ID 2.19 support (servers 2.14.0 through 2.19.1). State written by
+any 3.1.x release loads without a state upgrade step, with no change to the
+source address. The only configuration that needs editing is
+`pocketid_application_config` when it sets `email_login_notification_enabled` or
+`email_verification_enabled`: Pocket ID 2.19.0 replaced those two boolean settings
+with `email_login_notification_mode` (`disabled`, `always`, `ipAndUserAgent` or
+`browserRecognition`) and `email_verification` (`disabled`, `optional` or
+`required`), and the server reports only the new ones. Against 2.19.0 or later the
+old attributes are null in state and the data source, and configuring one is a
+plan error that names its replacement; before 2.19.0 they keep working (they are
+deprecated) and the new attributes are refused.
+
+Order of the upgrade:
+
+1. Switch the provider to `3.2.0` (verify and add the v3.2.0 archive to a
+   filesystem mirror first), run `tofu init -upgrade` (or `terraform init
+   -upgrade`), commit the lockfile and require an empty refreshed plan against
+   the server you have. Nothing else changes yet.
+2. Upgrade Pocket ID to 2.19.x. Until the configuration is edited, a plan fails
+   with the message naming the new attribute for each old one still set.
+3. Replace the attributes at the values Pocket ID migrated them to: `true` became
+   `browserRecognition` (login notification) or `optional` (verification), and
+   `false` became `disabled`. The first refresh sets the old attributes to null
+   and the modes to the server's values, so a configuration that uses the
+   migrated values plans empty. `email_verification = "required"` also needs
+   `require_user_email = "true"`, `emails_verified = "false"`, and `smtp_host`
+   and `smtp_from` set; the provider refuses it with a message naming what is
+   missing.
+
+Do not edit the configuration to the new attributes before the server is on 2.19:
+they are refused on older servers. Rolling the provider back to 3.1.x is possible
+only against a server before 2.19 with the old attributes restored.
 
 ## Upgrade from 3.1.x to 3.1.4
 

@@ -112,7 +112,7 @@ release:
     Independent Terraform/OpenTofu provider for Pocket ID. It began as a fork of
     Trozz/terraform-provider-pocketid by Michael Leer (MIT; the notice stays in
     LICENSE and THIRD_PARTY_NOTICES.md) and is maintained on its own since 3.0.0.
-    Supported Pocket ID versions: 2.14.0 through 2.18.0.
+    Supported Pocket ID versions: 2.14.0 through 2.19.1.
     See README.md, INSTALL.md, UPSTREAM.md, TESTING.md and CHANGELOG.md in this release's source.
     Listed on the Terraform Registry and the OpenTofu Registry as irashack/pocketid; the native filesystem mirror remains an alternative.
     SHA256SUMS is signed: SHA256SUMS.sig is a detached signature by the key in release-signing-key.asc, fingerprint FE9D 704B 2C1E 6675 46F0 EBB1 E031 C4DE 04D8 19D6.
