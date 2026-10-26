@@ -44,9 +44,7 @@ type ApplicationConfig struct {
 
 	EmailOneTimeAccessAsAdminEnabled           string `json:"emailOneTimeAccessAsAdminEnabled"`
 	EmailOneTimeAccessAsUnauthenticatedEnabled string `json:"emailOneTimeAccessAsUnauthenticatedEnabled"`
-	EmailLoginNotificationEnabled              string `json:"emailLoginNotificationEnabled"`
 	EmailApiKeyExpirationEnabled               string `json:"emailApiKeyExpirationEnabled"`
-	EmailVerificationEnabled                   string `json:"emailVerificationEnabled"`
 
 	// LDAP
 	LdapEnabled                        string `json:"ldapEnabled"`
@@ -69,6 +67,20 @@ type ApplicationConfig struct {
 	LdapAttributeGroupName             string `json:"ldapAttributeGroupName"`
 	LdapAdminGroupName                 string `json:"ldapAdminGroupName"`
 	LdapSoftDeleteUsers                string `json:"ldapSoftDeleteUsers"`
+
+	// Settings that exist on some Pocket ID releases only. A pointer is nil
+	// when the server did not report the key, and then an update omits it, so
+	// a key is only ever sent to a server that has it.
+	//
+	// EmailLoginNotificationEnabled and EmailVerificationEnabled (booleans)
+	// exist before Pocket ID 2.19.0; 2.19.0 replaced them with
+	// EmailLoginNotificationMode ("disabled", "always", "ipAndUserAgent" or
+	// "browserRecognition") and EmailVerification ("disabled", "optional" or
+	// "required"), and a 2.19.0 server reports and requires only the new keys.
+	EmailLoginNotificationEnabled *string `json:"emailLoginNotificationEnabled,omitempty"`
+	EmailLoginNotificationMode    *string `json:"emailLoginNotificationMode,omitempty"`
+	EmailVerificationEnabled      *string `json:"emailVerificationEnabled,omitempty"`
+	EmailVerification             *string `json:"emailVerification,omitempty"`
 
 	// Settings below are carried through an update unchanged and are not
 	// exposed as attributes. A pointer is nil when the server did not report

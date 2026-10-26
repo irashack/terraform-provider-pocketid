@@ -42,8 +42,17 @@ resource "pocketid_application_config" "this" {
   smtp_password_wo         = var.smtp_password # can be an ephemeral value
   smtp_password_wo_version = "1"
 
-  email_login_notification_enabled = "true"
-  email_verification_enabled       = "true"
+  # Pocket ID 2.19.0 or later: when users are e-mailed about a sign-in
+  # ("disabled", "always", "ipAndUserAgent" or "browserRecognition") and
+  # whether they verify their address ("disabled", "optional" or "required").
+  email_login_notification_mode = "browserRecognition"
+  email_verification            = "optional"
+
+  # Before Pocket ID 2.19.0, these booleans did the same; they are deprecated
+  # and refused by 2.19.0 or later ("true" is "browserRecognition" and
+  # "optional" there, "false" is "disabled").
+  # email_login_notification_enabled = "true"
+  # email_verification_enabled       = "true"
 }
 
 # On older Terraform and OpenTofu versions, use the plain attribute instead of
@@ -74,10 +83,12 @@ variable "smtp_password" {
 - `cimd_url_allowlist` (String) The Client ID Metadata Document URLs Pocket ID accepts. Accepted values: a JSON array of URL patterns (the syntax of callback URLs, wildcards allowed), such as ["https://*.example.com/*"]; "[]" for none. Each pattern is checked as Pocket ID checks it. Pocket ID's default is "[]"; an empty value is refused, because Pocket ID would store the default instead. When omitted, the server's current value is kept.
 - `disable_animations` (String) Whether to disable UI animations. Accepted values: "true" or "false". Pocket ID's default is "false"; an empty value is refused. When omitted, the server's current value is kept.
 - `email_api_key_expiration_enabled` (String) Whether users are e-mailed before an API key expires. Accepted values: "true" or "false". Pocket ID's default is "false"; an empty value is refused. When omitted, the server's current value is kept.
-- `email_login_notification_enabled` (String) Whether users are e-mailed when they sign in from a new device. Accepted values: "true" or "false". Pocket ID's default is "false"; an empty value is refused. When omitted, the server's current value is kept.
+- `email_login_notification_enabled` (String, Deprecated) Whether users are e-mailed when they sign in from a new device. Pocket ID 2.19.0 replaced it with email_login_notification_mode (true became "browserRecognition", false "disabled"). Accepted values: "true" or "false". Pocket ID's default is "false"; an empty value is refused. Only for Pocket ID before 2.19.0: on 2.19.0 or later this attribute is null and setting it is refused at plan time; use email_login_notification_mode. When omitted, the server's current value is kept.
+- `email_login_notification_mode` (String) When users are e-mailed about a sign-in: never ("disabled"), on every sign-in ("always"), on every sign-in from a new IP address or user agent ("ipAndUserAgent"), or when the browser is not recognized ("browserRecognition"). Accepted values: "disabled", "always", "ipAndUserAgent" or "browserRecognition". Pocket ID's default is "disabled"; an empty value is refused. Requires Pocket ID 2.19.0 or later: on an older server this attribute is null and setting it is refused at plan time. When omitted, the server's current value is kept.
 - `email_one_time_access_as_admin_enabled` (String) Whether administrators can e-mail users a one-time sign-in link. Accepted values: "true" or "false". Pocket ID's default is "false"; an empty value is refused. When omitted, the server's current value is kept.
 - `email_one_time_access_as_unauthenticated_enabled` (String) Whether users can request a one-time sign-in link by e-mail without signing in. Accepted values: "true" or "false". Pocket ID's default is "false"; an empty value is refused. When omitted, the server's current value is kept.
-- `email_verification_enabled` (String) Whether users must verify their e-mail address. Accepted values: "true" or "false". Pocket ID's default is "false"; an empty value is refused. When omitted, the server's current value is kept.
+- `email_verification` (String) Whether users verify their e-mail address: not at all ("disabled"), able to ("optional"), or only after they have ("required"; administrators are exempt, other users who have not verified keep access to their own account only). "required" needs require_user_email "true", emails_verified "false", and smtp_host and smtp_from set; the provider refuses it before any change otherwise. Accepted values: "disabled", "optional" or "required". Pocket ID's default is "disabled"; an empty value is refused. Requires Pocket ID 2.19.0 or later: on an older server this attribute is null and setting it is refused at plan time. When omitted, the server's current value is kept.
+- `email_verification_enabled` (String, Deprecated) Whether users must verify their e-mail address. Pocket ID 2.19.0 replaced it with email_verification (true became "optional", false "disabled"). Accepted values: "true" or "false". Pocket ID's default is "false"; an empty value is refused. Only for Pocket ID before 2.19.0: on 2.19.0 or later this attribute is null and setting it is refused at plan time; use email_verification. When omitted, the server's current value is kept.
 - `emails_verified` (String) Whether user e-mail addresses are considered verified. Accepted values: "true" or "false". Pocket ID's default is "false"; an empty value is refused. When omitted, the server's current value is kept.
 - `home_page_url` (String) Where Pocket ID sends users after they sign in to it directly. Accepted values: a URL or path. Pocket ID's default is "/settings/account"; an empty value is refused. When omitted, the server's current value is kept.
 - `ldap_admin_group_name` (String) The LDAP group whose members are Pocket ID administrators. Empty by default. When omitted, the server's current value is kept.

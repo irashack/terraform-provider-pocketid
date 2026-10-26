@@ -243,6 +243,209 @@ data "pocketid_application_config" "test" {
 	})
 }
 
+// Pocket ID 2.19.0 replaced the boolean e-mail toggles with modes. On 2.19.0
+// or later the mode attributes are read, written and shown by the data
+// source, the boolean attributes are null and configuring one is refused at
+// plan time; before it the booleans work and the modes are refused. Every
+// step is followed by Terraform's own check that the plan is then empty.
+func TestAccResourceApplicationConfig_emailModes(t *testing.T) {
+	resourceName := "pocketid_application_config.test"
+	dataName := "data.pocketid_application_config.test"
+	original := testAccAppConfig(t)
+	t.Cleanup(func() {
+		current := testAccAppConfig(t)
+		for _, key := range []string{"emailLoginNotificationEnabled", "emailLoginNotificationMode", "emailVerificationEnabled", "emailVerification"} {
+			if value, ok := original[key]; ok {
+				current[key] = value
+			}
+		}
+		if status := testAccPutAppConfig(t, current); status != 200 {
+			t.Errorf("restoring the e-mail settings returned HTTP %d", status)
+		}
+	})
+	config := func(settings string) string {
+		return fmt.Sprintf(`
+resource "pocketid_application_config" "test" {
+  app_name = "tf-acc-email-modes"
+%s}
+
+data "pocketid_application_config" "test" {
+  depends_on = [pocketid_application_config.test]
+}
+`, settings)
+	}
+	serverValue := func(key, want string) resource.TestCheckFunc {
+		return func(*terraform.State) error {
+			if got := testAccAppConfig(t)[key]; got != want {
+				return fmt.Errorf("server %s = %q, want %q", key, got, want)
+			}
+			return nil
+		}
+	}
+	serverLacks := func(keys ...string) resource.TestCheckFunc {
+		return func(*terraform.State) error {
+			current := testAccAppConfig(t)
+			for _, key := range keys {
+				if _, ok := current[key]; ok {
+					return fmt.Errorf("server reports %s", key)
+				}
+			}
+			return nil
+		}
+	}
+
+	if !testAccServerAtLeast(t, "2.19.0") {
+		resource.Test(t, resource.TestCase{
+			PreCheck:                 func() { testAccPreCheck(t) },
+			ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+			Steps: []resource.TestStep{
+				{
+					Config: config("  email_login_notification_enabled = \"true\"\n  email_verification_enabled       = \"true\"\n"),
+					Check: resource.ComposeAggregateTestCheckFunc(
+						resource.TestCheckResourceAttr(resourceName, "email_login_notification_enabled", "true"),
+						resource.TestCheckResourceAttr(resourceName, "email_verification_enabled", "true"),
+						resource.TestCheckResourceAttr(dataName, "email_login_notification_enabled", "true"),
+						resource.TestCheckNoResourceAttr(resourceName, "email_login_notification_mode"),
+						resource.TestCheckNoResourceAttr(resourceName, "email_verification"),
+						resource.TestCheckNoResourceAttr(dataName, "email_verification"),
+						serverValue("emailLoginNotificationEnabled", "true"),
+						serverValue("emailVerificationEnabled", "true"),
+						serverLacks("emailLoginNotificationMode", "emailVerification"),
+					),
+				},
+				{
+					Config:      config("  email_login_notification_mode = \"always\"\n"),
+					ExpectError: regexp.MustCompile(`email_login_notification_mode\s+requires\s+Pocket\s+ID\s+2\.19\.0\s+or\s+later`),
+				},
+				{
+					Config:      config("  email_verification = \"optional\"\n"),
+					ExpectError: regexp.MustCompile(`email_verification\s+requires\s+Pocket\s+ID\s+2\.19\.0\s+or\s+later`),
+				},
+				{
+					Config: config("  email_login_notification_enabled = \"false\"\n  email_verification_enabled       = \"false\"\n"),
+					Check: resource.ComposeAggregateTestCheckFunc(
+						serverValue("emailLoginNotificationEnabled", "false"),
+						serverValue("emailVerificationEnabled", "false"),
+					),
+				},
+			},
+		})
+		return
+	}
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: config("  email_login_notification_mode = \"ipAndUserAgent\"\n  email_verification            = \"optional\"\n"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceName, "email_login_notification_mode", "ipAndUserAgent"),
+					resource.TestCheckResourceAttr(resourceName, "email_verification", "optional"),
+					resource.TestCheckResourceAttr(dataName, "email_login_notification_mode", "ipAndUserAgent"),
+					resource.TestCheckResourceAttr(dataName, "email_verification", "optional"),
+					resource.TestCheckNoResourceAttr(resourceName, "email_login_notification_enabled"),
+					resource.TestCheckNoResourceAttr(resourceName, "email_verification_enabled"),
+					resource.TestCheckNoResourceAttr(dataName, "email_login_notification_enabled"),
+					resource.TestCheckNoResourceAttr(dataName, "email_verification_enabled"),
+					serverValue("emailLoginNotificationMode", "ipAndUserAgent"),
+					serverValue("emailVerification", "optional"),
+					serverLacks("emailLoginNotificationEnabled", "emailVerificationEnabled"),
+				),
+			},
+			{
+				// Omitted keeps the server's values.
+				Config: config(""),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceName, "email_login_notification_mode", "ipAndUserAgent"),
+					serverValue("emailVerification", "optional"),
+				),
+			},
+			{
+				Config: config("  email_login_notification_mode = \"browserRecognition\"\n  email_verification            = \"disabled\"\n"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					serverValue("emailLoginNotificationMode", "browserRecognition"),
+					serverValue("emailVerification", "disabled"),
+				),
+			},
+			{
+				ResourceName:            resourceName,
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"smtp_password", "ldap_bind_password"},
+			},
+			{
+				Config:      config("  email_login_notification_enabled = \"true\"\n"),
+				ExpectError: regexp.MustCompile(`email_login_notification_enabled\s+was\s+replaced\s+in\s+Pocket\s+ID\s+2\.19\.0`),
+			},
+			{
+				Config:      config("  email_verification_enabled = \"true\"\n"),
+				ExpectError: regexp.MustCompile(`use\s+email_verification\s+instead`),
+			},
+			{
+				Config:      config("  email_verification = \"sometimes\"\n"),
+				PlanOnly:    true,
+				ExpectError: regexp.MustCompile(`email_verification\s+must\s+be`),
+			},
+			{
+				// Back to Pocket ID's defaults, which other tests expect.
+				Config: config("  email_login_notification_mode = \"disabled\"\n  email_verification            = \"disabled\"\n"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					serverValue("emailLoginNotificationMode", "disabled"),
+					serverValue("emailVerification", "disabled"),
+				),
+			},
+		},
+	})
+}
+
+// email_verification "required" needs require_user_email, an SMTP host and
+// sender, and emails that are not verified by default (Pocket ID 2.19.0): the
+// provider refuses it before any change when the merged configuration lacks
+// one, and the server stores it when they are there.
+func TestAccResourceApplicationConfig_emailVerificationRequired(t *testing.T) {
+	if !testAccServerAtLeast(t, "2.19.0") {
+		t.Skip("email_verification needs Pocket ID 2.19.0")
+	}
+	resourceName := "pocketid_application_config.test"
+	original := testAccAppConfig(t)
+	t.Cleanup(func() {
+		if status := testAccPutAppConfig(t, original); status != 200 {
+			t.Errorf("restoring the application configuration returned HTTP %d", status)
+		}
+	})
+	config := func(settings string) string {
+		return fmt.Sprintf("resource \"pocketid_application_config\" \"test\" {\n  app_name = \"tf-acc-required\"\n%s}\n", settings)
+	}
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      config("  email_verification = \"required\"\n  emails_verified    = \"true\"\n"),
+				PlanOnly:    true,
+				ExpectError: regexp.MustCompile(`emails_verified\s+must\s+be\s+"false"`),
+			},
+			{
+				Config:      config("  email_verification = \"required\"\n  emails_verified    = \"false\"\n  smtp_host          = \"\"\n"),
+				ExpectError: regexp.MustCompile(`smtp_host\s+must\s+be\s+set`),
+			},
+			{
+				Config: config("  email_verification = \"required\"\n  emails_verified    = \"false\"\n  smtp_host          = \"smtp.example.invalid\"\n  smtp_from          = \"tf-acc@example.invalid\"\n"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceName, "email_verification", "required"),
+					func(*terraform.State) error {
+						if got := testAccAppConfig(t)["emailVerification"]; got != "required" {
+							return fmt.Errorf("server emailVerification = %q, want required", got)
+						}
+						return nil
+					},
+				),
+			},
+		},
+	})
+}
+
 // An update of one setting plans every unset setting at its current value
 // (not "known after apply"), and keeps a value changed outside Terraform.
 func TestAccResourceApplicationConfig_unrelatedUpdate(t *testing.T) {

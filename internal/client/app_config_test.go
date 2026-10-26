@@ -172,6 +172,62 @@ func TestApplicationConfigAutoCreateOIDCClientSecret(t *testing.T) {
 	}
 }
 
+// Pocket ID 2.19.0 replaced emailLoginNotificationEnabled and
+// emailVerificationEnabled with emailLoginNotificationMode and
+// emailVerification. Each is read only when the server reports it, and an
+// update sends back exactly the keys the server reported.
+func TestApplicationConfigEmailSettingsByServer(t *testing.T) {
+	for name, tc := range map[string]struct {
+		extra    map[string]string
+		wantKeys []string
+		noKeys   []string
+	}{
+		"before 2.19.0": {
+			map[string]string{"emailLoginNotificationEnabled": "true", "emailVerificationEnabled": "false"},
+			[]string{"emailLoginNotificationEnabled", "emailVerificationEnabled"},
+			[]string{"emailLoginNotificationMode", "emailVerification"},
+		},
+		"2.19.0 or later": {
+			map[string]string{"emailLoginNotificationMode": "always", "emailVerification": "optional"},
+			[]string{"emailLoginNotificationMode", "emailVerification"},
+			[]string{"emailLoginNotificationEnabled", "emailVerificationEnabled"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			reported := appConfigVariables()
+			for key, value := range tc.extra {
+				reported = append(reported, client.AppConfigVariable{Key: key, Value: value})
+			}
+			var sent map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method == http.MethodPut {
+					assert.NoError(t, json.NewDecoder(r.Body).Decode(&sent))
+				}
+				_ = json.NewEncoder(w).Encode(reported)
+			}))
+			defer server.Close()
+			c, err := client.NewClient(server.URL, "test-token", false, 30)
+			require.NoError(t, err)
+
+			cfg, err := c.GetApplicationConfig(context.Background())
+			require.NoError(t, err)
+			for _, key := range tc.wantKeys {
+				assert.True(t, cfg.Reported(key), key)
+				assert.Empty(t, cfg.Additional[key], "%s is a field, not an additional key", key)
+			}
+			_, err = c.UpdateApplicationConfig(context.Background(), cfg)
+			require.NoError(t, err)
+			for _, key := range tc.wantKeys {
+				assert.Equal(t, tc.extra[key], sent[key], key)
+			}
+			for _, key := range tc.noKeys {
+				assert.NotContains(t, sent, key)
+			}
+		})
+	}
+}
+
 // A listed setting whose value is missing, null or not a string is not read
 // as "": the response is refused, a missing or null value as incomplete, a
 // value of another type as undecodable. A key left out is not reported; one

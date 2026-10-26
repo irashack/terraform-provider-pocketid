@@ -3,6 +3,12 @@
 
 Usage: application_config.py TOOL MIRROR TARGET_VERSION [OLD_VERSION]
 
+On Pocket ID 2.19.0 or later the e-mail toggles are the modes
+email_login_notification_mode and email_verification, which only the target
+version knows: an older provider (3.1.x) can import there but cannot apply, so
+its state is taken over by the target version and must plan empty for a
+configuration that uses the modes at the server's own values.
+
 With OLD_VERSION, the older provider imports the configuration and manages the
 SMTP settings with the plain smtp_password, as a configuration written for it
 would; the target version then takes over that state and must plan nothing for
@@ -19,6 +25,11 @@ import sys
 import tempfile
 import urllib.error
 import urllib.request
+
+# 2.4.x stored every password it read, an imported LDAP one included; 3.x tracks
+# a password only when it is configured.
+old_tracks_ldap = len(sys.argv) == 5 and sys.argv[4].startswith("2.")
+from_2_19 = tuple(int(part) for part in os.environ["POCKETID_TEST_VERSION"].split(".")) >= (2, 19, 0)
 
 tool, mirror, target_version = sys.argv[1:4]
 provider_version = sys.argv[4] if len(sys.argv) == 5 else target_version
@@ -154,17 +165,51 @@ data "pocketid_application_config" "test" {
     smtp = {"smtp_host": "smtp.fastmail.com", "smtp_port": "587", "smtp_tls": "starttls",
             "smtp_skip_cert_verify": "false", "smtp_from": "fixture@example.invalid",
             "smtp_user": "fixture@example.invalid", "smtp_password": secrets.token_urlsafe(24),
-            "allow_own_account_edit": "false", "email_login_notification_enabled": "true"}
+            "allow_own_account_edit": "false"}
+    if from_2_19:
+        smtp["email_login_notification_mode"] = "browserRecognition"
+    else:
+        smtp["email_login_notification_enabled"] = "true"
     keys = {"smtp_host": "smtpHost", "smtp_port": "smtpPort", "smtp_tls": "smtpTls",
             "smtp_skip_cert_verify": "smtpSkipCertVerify", "smtp_from": "smtpFrom", "smtp_user": "smtpUser",
             "smtp_password": "smtpPassword", "allow_own_account_edit": "allowOwnAccountEdit",
-            "email_login_notification_enabled": "emailLoginNotificationEnabled"}
+            "email_login_notification_enabled": "emailLoginNotificationEnabled",
+            "email_login_notification_mode": "emailLoginNotificationMode"}
     expected = dict(original)
     expected.update({keys[attr]: value for attr, value in smtp.items()})
     config({})
     run("init", "-input=false")
     run("import", "-input=false", "pocketid_application_config.test", "application-configuration")
-    if upgrading:
+    if upgrading and from_2_19:
+        # 3.1.x wrote this state by importing: it holds its boolean e-mail
+        # attributes and no mode. Terraform's state is plain JSON, so give them
+        # the values 3.1.x held before the server moved to 2.19 (the migrated
+        # false); an OpenTofu state is encrypted and keeps what the import wrote.
+        if tool == "terraform":
+            state_path = root / "terraform.tfstate"
+            state = json.loads(state_path.read_text())
+            for instance in state["resources"][0]["instances"]:
+                instance["attributes"]["email_login_notification_enabled"] = "false"
+                instance["attributes"]["email_verification_enabled"] = "false"
+                assert "email_verification" not in instance["attributes"]
+            state_path.write_text(json.dumps(state))
+        provider_version = target_version
+        modes = {"email_login_notification_mode": original["emailLoginNotificationMode"],
+                 "email_verification": original["emailVerification"]}
+        config(modes)
+        run("init", "-upgrade", "-input=false")
+        run("apply", "-refresh-only", "-auto-approve", "-input=false")
+        run("plan", "-detailed-exitcode", "-input=false")  # the modes at the server's values: no change
+        state = json.loads(run("show", "-json"))
+        for row in state["values"]["root_module"]["resources"]:
+            if row["mode"] == "managed":
+                assert row["values"].get("email_login_notification_enabled") is None
+                assert row["values"].get("email_verification_enabled") is None
+                assert row["values"]["email_login_notification_mode"] == original["emailLoginNotificationMode"]
+        ldap_in_state = original["ldapBindPassword"] if old_tracks_ldap else None
+        config(smtp)
+        run("apply", "-auto-approve", "-input=false")
+    elif upgrading:
         # The older provider writes the state: it stored every password it
         # read, the LDAP one included, and manages SMTP with the plain input.
         config(smtp)
@@ -175,9 +220,9 @@ data "pocketid_application_config" "test" {
         run("plan", "-detailed-exitcode", "-input=false")  # unchanged configuration: no change
         # The data source's stored result still has the removed password
         # attributes, which "show" cannot decode until a refresh rewrites it.
-        run("show", "-json", ok=(1,))
+        run("show", "-json", ok=(0, 1))
         run("apply", "-refresh-only", "-auto-approve", "-input=false")
-        ldap_in_state = original["ldapBindPassword"]
+        ldap_in_state = original["ldapBindPassword"] if old_tracks_ldap else None
     else:
         run("apply", "-refresh-only", "-auto-approve", "-input=false")
         run("plan", "-detailed-exitcode", "-input=false")

@@ -39,10 +39,12 @@ output "ldap_enabled" {
 - `cimd_url_allowlist` (String) JSON array of the Client ID Metadata Document URL patterns Pocket ID accepts.
 - `disable_animations` (String) Whether UI animations are disabled.
 - `email_api_key_expiration_enabled` (String) Whether API key expiration emails are enabled.
-- `email_login_notification_enabled` (String) Whether login notification emails are enabled.
+- `email_login_notification_enabled` (String, Deprecated) Whether login notification emails are enabled. Null on Pocket ID 2.19.0 or later, which replaced the setting with email_login_notification_mode.
+- `email_login_notification_mode` (String) When users are e-mailed about a sign-in: "disabled", "always", "ipAndUserAgent" or "browserRecognition". Null on a server before Pocket ID 2.19.0, which has email_login_notification_enabled instead.
 - `email_one_time_access_as_admin_enabled` (String) Whether admins can use one-time access email links.
 - `email_one_time_access_as_unauthenticated_enabled` (String) Whether unauthenticated users can request one-time access email links.
-- `email_verification_enabled` (String) Whether email verification is enabled.
+- `email_verification` (String) Whether users verify their e-mail address: "disabled", "optional" or "required". Null on a server before Pocket ID 2.19.0, which has email_verification_enabled instead.
+- `email_verification_enabled` (String, Deprecated) Whether email verification is enabled. Null on Pocket ID 2.19.0 or later, which replaced the setting with email_verification.
 - `emails_verified` (String) Whether user emails are considered verified.
 - `home_page_url` (String) URL of the application home page.
 - `id` (String) Fixed identifier of the application configuration singleton.

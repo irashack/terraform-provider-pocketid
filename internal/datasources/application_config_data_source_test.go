@@ -135,6 +135,29 @@ func TestApplicationConfigDataSource_AutoCreateOIDCClientSecret(t *testing.T) {
 	assert.True(t, values["auto_create_oidc_client_secret"].IsNull(), "null on a server without the setting")
 }
 
+// Pocket ID 2.19.0 replaced the two boolean e-mail settings with modes; the
+// data source reports whichever the server has and null for the other.
+func TestApplicationConfigDataSource_EmailSettings(t *testing.T) {
+	str := func(t *testing.T, v tftypes.Value) string {
+		t.Helper()
+		var s string
+		require.NoError(t, v.As(&s))
+		return s
+	}
+
+	values := readApplicationConfigDataSource(t, []client.AppConfigVariable{{Key: "appName", Value: "Fixture"}, {Key: "emailLoginNotificationMode", Value: "ipAndUserAgent"}, {Key: "emailVerification", Value: "required"}})
+	assert.Equal(t, "ipAndUserAgent", str(t, values["email_login_notification_mode"]))
+	assert.Equal(t, "required", str(t, values["email_verification"]))
+	assert.True(t, values["email_login_notification_enabled"].IsNull(), "null on 2.19.0 or later")
+	assert.True(t, values["email_verification_enabled"].IsNull(), "null on 2.19.0 or later")
+
+	values = readApplicationConfigDataSource(t, []client.AppConfigVariable{{Key: "appName", Value: "Fixture"}, {Key: "emailLoginNotificationEnabled", Value: "true"}, {Key: "emailVerificationEnabled", Value: "false"}})
+	assert.Equal(t, "true", str(t, values["email_login_notification_enabled"]))
+	assert.Equal(t, "false", str(t, values["email_verification_enabled"]))
+	assert.True(t, values["email_login_notification_mode"].IsNull(), "null before 2.19.0")
+	assert.True(t, values["email_verification"].IsNull(), "null before 2.19.0")
+}
+
 func TestApplicationConfigDataSource_NoSecrets(t *testing.T) {
 	values := readApplicationConfigDataSource(t, []client.AppConfigVariable{
 		{Key: "appName", Value: "Fixture"},

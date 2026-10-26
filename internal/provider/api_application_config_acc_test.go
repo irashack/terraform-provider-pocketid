@@ -94,6 +94,22 @@ func TestAccAPI_applicationConfigRules(t *testing.T) {
 	if testAccServerAtLeast(t, "2.17.0") {
 		refused = append(refused, struct{ key, value string }{"autoCreateOidcClientSecret", ""})
 	}
+	if testAccServerAtLeast(t, "2.19.0") {
+		refused = append(refused,
+			struct{ key, value string }{"emailLoginNotificationMode", "true"},
+			struct{ key, value string }{"emailLoginNotificationMode", "Always"},
+			struct{ key, value string }{"emailLoginNotificationMode", ""},
+			struct{ key, value string }{"emailVerification", "true"},
+			struct{ key, value string }{"emailVerification", ""},
+			// "required" needs an SMTP host and sender, which the fixture lacks.
+			struct{ key, value string }{"emailVerification", "required"},
+		)
+	} else {
+		refused = append(refused,
+			struct{ key, value string }{"emailLoginNotificationEnabled", "browserRecognition"},
+			struct{ key, value string }{"emailVerificationEnabled", "optional"},
+		)
+	}
 	for _, tc := range refused {
 		assert.Equal(t, http.StatusBadRequest, testAccPutAppConfig(t, with(tc.key, tc.value)), "%s = %q", tc.key, tc.value)
 	}
@@ -142,6 +158,26 @@ func TestAccAPI_applicationConfigRules(t *testing.T) {
 		require.Equal(t, http.StatusOK, testAccPutAppConfig(t, with(key, "tf-acc-synthetic-"+key)), key)
 		require.Equal(t, http.StatusOK, testAccPutAppConfig(t, with(key, "")), key)
 		assert.Equal(t, "", testAccAppConfig(t)[key], "an empty %s is cleared", key)
+	}
+
+	// Pocket ID 2.19.0 replaced the boolean e-mail toggles with modes: a
+	// server reports, and requires, only the keys of its release.
+	if testAccServerAtLeast(t, "2.19.0") {
+		for _, mode := range []string{"disabled", "always", "ipAndUserAgent", "browserRecognition"} {
+			require.Equal(t, http.StatusOK, testAccPutAppConfig(t, with("emailLoginNotificationMode", mode)), mode)
+			assert.Equal(t, mode, testAccAppConfig(t)["emailLoginNotificationMode"])
+		}
+		for _, mode := range []string{"disabled", "optional"} {
+			require.Equal(t, http.StatusOK, testAccPutAppConfig(t, with("emailVerification", mode)), mode)
+			assert.Equal(t, mode, testAccAppConfig(t)["emailVerification"])
+		}
+		for _, key := range []string{"emailLoginNotificationEnabled", "emailVerificationEnabled"} {
+			assert.NotContains(t, original, key)
+		}
+	} else {
+		for _, key := range []string{"emailLoginNotificationMode", "emailVerification"} {
+			assert.NotContains(t, original, key)
+		}
 	}
 
 	// Pocket ID 2.17.0 added autoCreateOidcClientSecret; older servers do

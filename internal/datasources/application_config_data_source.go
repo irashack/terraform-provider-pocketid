@@ -63,9 +63,7 @@ type applicationConfigDataSourceModel struct {
 
 	EmailOneTimeAccessAsAdminEnabled           types.String `tfsdk:"email_one_time_access_as_admin_enabled"`
 	EmailOneTimeAccessAsUnauthenticatedEnabled types.String `tfsdk:"email_one_time_access_as_unauthenticated_enabled"`
-	EmailLoginNotificationEnabled              types.String `tfsdk:"email_login_notification_enabled"`
 	EmailApiKeyExpirationEnabled               types.String `tfsdk:"email_api_key_expiration_enabled"`
-	EmailVerificationEnabled                   types.String `tfsdk:"email_verification_enabled"`
 
 	LdapEnabled                        types.String `tfsdk:"ldap_enabled"`
 	LdapUrl                            types.String `tfsdk:"ldap_url"`
@@ -88,6 +86,13 @@ type applicationConfigDataSourceModel struct {
 	LdapSoftDeleteUsers                types.String `tfsdk:"ldap_soft_delete_users"`
 
 	AutoCreateOIDCClientSecret types.String `tfsdk:"auto_create_oidc_client_secret"`
+
+	// Booleans before Pocket ID 2.19.0, modes from it; each is null on a
+	// server that does not have it.
+	EmailLoginNotificationEnabled types.String `tfsdk:"email_login_notification_enabled"`
+	EmailLoginNotificationMode    types.String `tfsdk:"email_login_notification_mode"`
+	EmailVerificationEnabled      types.String `tfsdk:"email_verification_enabled"`
+	EmailVerification             types.String `tfsdk:"email_verification"`
 }
 
 func computedString(description string, sensitive bool) schema.StringAttribute {
@@ -96,6 +101,14 @@ func computedString(description string, sensitive bool) schema.StringAttribute {
 		Computed:    true,
 		Sensitive:   sensitive,
 	}
+}
+
+// deprecatedComputedString is a computed attribute a newer Pocket ID replaced
+// with the attribute named replacement.
+func deprecatedComputedString(description, replacement string) schema.StringAttribute {
+	attribute := computedString(description, false)
+	attribute.DeprecationMessage = "Pocket ID 2.19.0 replaced this setting with " + replacement + ". Use " + replacement + "; this attribute is null on 2.19.0 or later."
+	return attribute
 }
 
 // Metadata returns the data source type name.
@@ -140,9 +153,7 @@ func (d *applicationConfigDataSource) Schema(_ context.Context, _ datasource.Sch
 
 			"email_one_time_access_as_admin_enabled":           computedString("Whether admins can use one-time access email links.", false),
 			"email_one_time_access_as_unauthenticated_enabled": computedString("Whether unauthenticated users can request one-time access email links.", false),
-			"email_login_notification_enabled":                 computedString("Whether login notification emails are enabled.", false),
 			"email_api_key_expiration_enabled":                 computedString("Whether API key expiration emails are enabled.", false),
-			"email_verification_enabled":                       computedString("Whether email verification is enabled.", false),
 
 			"ldap_enabled":                           computedString("Whether LDAP integration is enabled.", false),
 			"ldap_url":                               computedString("LDAP server URL.", false),
@@ -164,7 +175,11 @@ func (d *applicationConfigDataSource) Schema(_ context.Context, _ datasource.Sch
 			"ldap_admin_group_name":                  computedString("LDAP group name granting admin privileges.", false),
 			"ldap_soft_delete_users":                 computedString("Whether users removed from LDAP are soft-deleted.", false),
 
-			"auto_create_oidc_client_secret": computedString("Whether Pocket ID creates a client secret of its own when a confidential OIDC client is created. Null on a server before Pocket ID 2.17.0, which does not have the setting.", false),
+			"email_login_notification_enabled": deprecatedComputedString("Whether login notification emails are enabled. Null on Pocket ID 2.19.0 or later, which replaced the setting with email_login_notification_mode.", "email_login_notification_mode"),
+			"email_login_notification_mode":    computedString("When users are e-mailed about a sign-in: \"disabled\", \"always\", \"ipAndUserAgent\" or \"browserRecognition\". Null on a server before Pocket ID 2.19.0, which has email_login_notification_enabled instead.", false),
+			"email_verification_enabled":       deprecatedComputedString("Whether email verification is enabled. Null on Pocket ID 2.19.0 or later, which replaced the setting with email_verification.", "email_verification"),
+			"email_verification":               computedString("Whether users verify their e-mail address: \"disabled\", \"optional\" or \"required\". Null on a server before Pocket ID 2.19.0, which has email_verification_enabled instead.", false),
+			"auto_create_oidc_client_secret":   computedString("Whether Pocket ID creates a client secret of its own when a confidential OIDC client is created. Null on a server before Pocket ID 2.17.0, which does not have the setting.", false),
 		},
 	}
 }
@@ -229,9 +244,7 @@ func (d *applicationConfigDataSource) Read(ctx context.Context, _ datasource.Rea
 
 		EmailOneTimeAccessAsAdminEnabled:           types.StringValue(cfg.EmailOneTimeAccessAsAdminEnabled),
 		EmailOneTimeAccessAsUnauthenticatedEnabled: types.StringValue(cfg.EmailOneTimeAccessAsUnauthenticatedEnabled),
-		EmailLoginNotificationEnabled:              types.StringValue(cfg.EmailLoginNotificationEnabled),
 		EmailApiKeyExpirationEnabled:               types.StringValue(cfg.EmailApiKeyExpirationEnabled),
-		EmailVerificationEnabled:                   types.StringValue(cfg.EmailVerificationEnabled),
 
 		LdapEnabled:                        types.StringValue(cfg.LdapEnabled),
 		LdapUrl:                            types.StringValue(cfg.LdapUrl),
@@ -254,6 +267,11 @@ func (d *applicationConfigDataSource) Read(ctx context.Context, _ datasource.Rea
 		LdapSoftDeleteUsers:                types.StringValue(cfg.LdapSoftDeleteUsers),
 
 		AutoCreateOIDCClientSecret: types.StringPointerValue(cfg.AutoCreateOIDCClientSecret),
+
+		EmailLoginNotificationEnabled: types.StringPointerValue(cfg.EmailLoginNotificationEnabled),
+		EmailLoginNotificationMode:    types.StringPointerValue(cfg.EmailLoginNotificationMode),
+		EmailVerificationEnabled:      types.StringPointerValue(cfg.EmailVerificationEnabled),
+		EmailVerification:             types.StringPointerValue(cfg.EmailVerification),
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)

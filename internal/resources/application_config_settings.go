@@ -14,6 +14,7 @@ import (
 
 	"github.com/dunglas/go-urlpattern"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"golang.org/x/mod/semver"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
 )
@@ -51,6 +52,69 @@ type appConfigSetting struct {
 	// minVersion is the first Pocket ID release that has the key; empty for
 	// every supported release.
 	minVersion string
+	// removedIn is the first Pocket ID release that no longer has the key
+	// (it was replaced by the setting named in replacedBy); empty for a key
+	// every supported release has. Setting it on such a release is refused.
+	removedIn string
+	// replacedBy is the attribute that took the place of a removed key.
+	replacedBy string
+}
+
+// versionDependent reports whether only some supported releases have the key.
+// An update neither requires nor sends such a key unless the server reported
+// it.
+func (s appConfigSetting) versionDependent() bool {
+	return s.minVersion != "" || s.removedIn != ""
+}
+
+// supportedOn reports whether a server running version has the key. An empty
+// version is a server before 2.3.0 (no version endpoint), older than every
+// version a setting is introduced or removed in.
+func (s appConfigSetting) supportedOn(version string) bool {
+	if s.minVersion != "" {
+		return version != "" && semver.Compare("v"+version, "v"+s.minVersion) >= 0
+	}
+	if s.removedIn != "" {
+		return version == "" || semver.Compare("v"+version, "v"+s.removedIn) < 0
+	}
+	return true
+}
+
+// deprecation is the schema's deprecation message for a removed key, or "".
+func (s appConfigSetting) deprecation() string {
+	if s.removedIn == "" {
+		return ""
+	}
+	return fmt.Sprintf("Pocket ID %s replaced this setting with %s. Use %s; this attribute only works on older servers and is refused on %s or later.", s.removedIn, s.replacedBy, s.replacedBy, s.removedIn)
+}
+
+// unreportedDetail is the apply error for this setting being configured
+// although the server did not report its key.
+func (s appConfigSetting) unreportedDetail() string {
+	if s.removedIn != "" {
+		return fmt.Sprintf("%s was replaced in Pocket ID %s and this server does not have it. Nothing was changed. Remove %s from the configuration and use %s instead.",
+			s.attribute, s.removedIn, s.attribute, s.replacedBy)
+	}
+	return fmt.Sprintf("%s requires Pocket ID %s or later, and this server does not have the setting. Nothing was changed. Remove %s from the configuration.", s.attribute, s.minVersion, s.attribute)
+}
+
+// unsupportedDetail is the plan or apply error for this setting being set on
+// a server that does not have the key. running is the server's version ("" if
+// unknown); nothingChanged adds that the update did not run.
+func (s appConfigSetting) unsupportedDetail(running string, nothingChanged bool) string {
+	if running == "" {
+		running = "a release before 2.3.0"
+	}
+	tail := ""
+	if nothingChanged {
+		tail = " Nothing was changed."
+	}
+	if s.removedIn != "" {
+		return fmt.Sprintf("%s was replaced in Pocket ID %s and the server runs %s, which no longer has it.%s Remove %s from the configuration and use %s instead.",
+			s.attribute, s.removedIn, running, tail, s.attribute, s.replacedBy)
+	}
+	return fmt.Sprintf("%s requires Pocket ID %s or later; the server runs %s, which does not have this setting.%s Remove %s from the configuration.",
+		s.attribute, s.minVersion, running, tail, s.attribute)
 }
 
 func appConfigOneOf(values ...string) appConfigRule {
@@ -334,8 +398,9 @@ const (
 
 // appConfigSettings lists every attribute of pocketid_application_config
 // except id and the write-only inputs, with Pocket ID's rules for it (Pocket
-// ID 2.17.0 dto/app_config_dto.go and appconfig/model.go; 2.14.0 to 2.16.0
-// differ only by not having autoCreateOidcClientSecret).
+// ID 2.19.1 dto/app_config_dto.go and appconfig/model.go; 2.14.0 to 2.16.0
+// differ by not having autoCreateOidcClientSecret, and before 2.19.0 the two
+// e-mail toggles are booleans, see removedIn).
 var appConfigSettings = []appConfigSetting{
 	{attribute: "app_name", key: "appName", about: "The name of the application.", format: "1 to 30 characters", rule: appConfigLength(1, 30), defaultValue: "Pocket ID", required: true},
 	{attribute: "session_duration", key: "sessionDuration", about: "How long a sign-in session lasts, in minutes.", format: "a whole number of minutes, at least 1", rule: appConfigSessionDuration, defaultValue: "60", required: true},
@@ -364,9 +429,11 @@ var appConfigSettings = []appConfigSetting{
 
 	{attribute: "email_one_time_access_as_admin_enabled", key: "emailOneTimeAccessAsAdminEnabled", about: "Whether administrators can e-mail users a one-time sign-in link.", format: appConfigBooleanFormat, rule: appConfigBoolean, defaultValue: "false", required: true},
 	{attribute: "email_one_time_access_as_unauthenticated_enabled", key: "emailOneTimeAccessAsUnauthenticatedEnabled", about: "Whether users can request a one-time sign-in link by e-mail without signing in.", format: appConfigBooleanFormat, rule: appConfigBoolean, defaultValue: "false", required: true},
-	{attribute: "email_login_notification_enabled", key: "emailLoginNotificationEnabled", about: "Whether users are e-mailed when they sign in from a new device.", format: appConfigBooleanFormat, rule: appConfigBoolean, defaultValue: "false", required: true},
+	{attribute: "email_login_notification_enabled", key: "emailLoginNotificationEnabled", about: "Whether users are e-mailed when they sign in from a new device. Pocket ID 2.19.0 replaced it with email_login_notification_mode (true became \"browserRecognition\", false \"disabled\").", format: appConfigBooleanFormat, rule: appConfigBoolean, defaultValue: "false", required: true, removedIn: "2.19.0", replacedBy: "email_login_notification_mode"},
+	{attribute: "email_login_notification_mode", key: "emailLoginNotificationMode", about: "When users are e-mailed about a sign-in: never (\"disabled\"), on every sign-in (\"always\"), on every sign-in from a new IP address or user agent (\"ipAndUserAgent\"), or when the browser is not recognized (\"browserRecognition\").", format: `"disabled", "always", "ipAndUserAgent" or "browserRecognition"`, rule: appConfigOneOf("disabled", "always", "ipAndUserAgent", "browserRecognition"), defaultValue: "disabled", required: true, minVersion: "2.19.0"},
 	{attribute: "email_api_key_expiration_enabled", key: "emailApiKeyExpirationEnabled", about: "Whether users are e-mailed before an API key expires.", format: appConfigBooleanFormat, rule: appConfigBoolean, defaultValue: "false", required: true},
-	{attribute: "email_verification_enabled", key: "emailVerificationEnabled", about: "Whether users must verify their e-mail address.", format: appConfigBooleanFormat, rule: appConfigBoolean, defaultValue: "false", required: true},
+	{attribute: "email_verification_enabled", key: "emailVerificationEnabled", about: "Whether users must verify their e-mail address. Pocket ID 2.19.0 replaced it with email_verification (true became \"optional\", false \"disabled\").", format: appConfigBooleanFormat, rule: appConfigBoolean, defaultValue: "false", required: true, removedIn: "2.19.0", replacedBy: "email_verification"},
+	{attribute: "email_verification", key: "emailVerification", about: "Whether users verify their e-mail address: not at all (\"disabled\"), able to (\"optional\"), or only after they have (\"required\"; administrators are exempt, other users who have not verified keep access to their own account only). \"required\" needs require_user_email \"true\", emails_verified \"false\", and smtp_host and smtp_from set; the provider refuses it before any change otherwise.", format: `"disabled", "optional" or "required"`, rule: appConfigOneOf("disabled", "optional", "required"), defaultValue: "disabled", required: true, minVersion: "2.19.0"},
 
 	{attribute: "ldap_enabled", key: "ldapEnabled", about: "Whether LDAP synchronization is enabled.", format: appConfigBooleanFormat, rule: appConfigBoolean, defaultValue: "false", required: true},
 	{attribute: "ldap_url", key: "ldapUrl", about: "The LDAP server's URL."},
@@ -410,6 +477,9 @@ func (s appConfigSetting) description() string {
 	}
 	if s.minVersion != "" {
 		fmt.Fprintf(&b, " Requires Pocket ID %s or later: on an older server this attribute is null and setting it is refused at plan time.", s.minVersion)
+	}
+	if s.removedIn != "" {
+		fmt.Fprintf(&b, " Only for Pocket ID before %s: on %s or later this attribute is null and setting it is refused at plan time; use %s.", s.removedIn, s.removedIn, s.replacedBy)
 	}
 	b.WriteString(" When omitted, the server's current value is kept.")
 	return b.String()

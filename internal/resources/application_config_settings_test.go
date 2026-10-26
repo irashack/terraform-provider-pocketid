@@ -59,8 +59,10 @@ func TestAppConfigSettingsMatchModelAndClient(t *testing.T) {
 		}
 		assert.True(t, seenAttributes[tag], "model field %s has no setting", tag)
 	}
-	// Pocket ID 2.17.0's AppConfigUpdateDto has 48 keys.
-	assert.Len(t, appConfigSettings, 48)
+	// Pocket ID 2.17.0's AppConfigUpdateDto has 48 keys; 2.19.0 replaced two
+	// of them with two others, and the two it replaced remain here for older
+	// servers.
+	assert.Len(t, appConfigSettings, 50)
 }
 
 // The patterns that do not compile do parse with net/url: only the
@@ -168,6 +170,24 @@ func TestAppConfigSettingRules(t *testing.T) {
 
 		{"auto_create_oidc_client_secret", "false", true},
 		{"auto_create_oidc_client_secret", "", false},
+
+		{"email_login_notification_mode", "disabled", true},
+		{"email_login_notification_mode", "always", true},
+		{"email_login_notification_mode", "ipAndUserAgent", true},
+		{"email_login_notification_mode", "browserRecognition", true},
+		{"email_login_notification_mode", "true", false},
+		{"email_login_notification_mode", "Always", false},
+		{"email_login_notification_mode", "", false},
+		{"email_verification", "disabled", true},
+		{"email_verification", "optional", true},
+		{"email_verification", "required", true},
+		{"email_verification", "true", false},
+		{"email_verification", "Required", false},
+		{"email_verification", "", false},
+		{"email_login_notification_enabled", "true", true},
+		{"email_login_notification_enabled", "browserRecognition", false},
+		{"email_verification_enabled", "false", true},
+		{"email_verification_enabled", "optional", false},
 	}
 	for _, tc := range cases {
 		setting, ok := settings[tc.attribute]

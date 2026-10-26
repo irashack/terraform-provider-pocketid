@@ -20,95 +20,118 @@ import (
 // This boundary regression exercises the real GET/merge/PUT/response path.
 // Native fixture tests additionally run the full pinned upstream validator.
 func TestApplicationConfigSMTPPreservesSettings(t *testing.T) {
-	for _, omitted := range []types.String{types.StringNull(), types.StringUnknown()} {
-		t.Run(omitted.String(), func(t *testing.T) {
-			current := &client.ApplicationConfig{}
-			value := reflect.ValueOf(current).Elem()
-			for i := 0; i < value.NumField(); i++ {
-				existing := "existing-" + value.Type().Field(i).Name
-				switch value.Field(i).Kind() {
-				case reflect.Pointer:
-					value.Field(i).Set(reflect.ValueOf(&existing))
-				case reflect.String:
-					value.Field(i).SetString(existing)
-				}
+	// before2_19 is a server with the boolean e-mail toggles; the other has
+	// their 2.19.0 replacements, and the update must carry only the keys the
+	// server reported.
+	for _, before2_19 := range []bool{true, false} {
+		for _, omitted := range []types.String{types.StringNull(), types.StringUnknown()} {
+			name := omitted.String()
+			if before2_19 {
+				name = "before 2.19.0 " + name
+			} else {
+				name = "2.19.0 " + name
 			}
-			current.WebauthnUserVerification = "required"
-			current.WebauthnAllowSyncedPasskeys = "false"
-			current.WebauthnAuthenticatorAttachment = "cross-platform"
-			current.CIMDURLAllowlist = `["https://trusted.example.invalid/client.json"]`
-			// Not the server default ("true"): it must round-trip, not reset.
-			autoCreate := "false"
-			current.AutoCreateOIDCClientSecret = &autoCreate
-			body, err := json.Marshal(current)
-			require.NoError(t, err)
-			var expected map[string]string
-			require.NoError(t, json.Unmarshal(body, &expected))
-			vars := func(config map[string]string) []client.AppConfigVariable {
-				result := make([]client.AppConfigVariable, 0, len(config))
-				for key, value := range config {
-					result = append(result, client.AppConfigVariable{Key: key, Value: value})
-				}
-				return result
-			}
-			puts := 0
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				if r.Method == http.MethodGet {
-					require.Equal(t, "/api/application-configuration/all", r.URL.Path)
-					require.NoError(t, json.NewEncoder(w).Encode(vars(expected)))
-					return
-				}
-				require.Equal(t, http.MethodPut, r.Method)
-				require.Equal(t, "/api/application-configuration", r.URL.Path)
-				var payload map[string]string
-				require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
-				// v2.14 AppConfigUpdateDto requires all three WebAuthn strings.
-				for _, key := range []string{"webauthnUserVerification", "webauthnAllowSyncedPasskeys", "webauthnAuthenticatorAttachment"} {
-					if payload[key] == "" {
-						w.WriteHeader(http.StatusBadRequest)
-						return
-					}
-				}
-				// v2.17 adds autoCreateOidcClientSecret, required and boolean.
-				if value := payload["autoCreateOidcClientSecret"]; value != "true" && value != "false" {
-					w.WriteHeader(http.StatusBadRequest)
-					return
-				}
-				puts++
-				want := make(map[string]string, len(expected))
-				for key, value := range expected {
-					want[key] = value
-				}
-				want["smtpHost"] = "smtp.example.invalid"
-				require.Equal(t, want, payload, "SMTP update must preserve every unrelated field")
-				require.NoError(t, json.NewEncoder(w).Encode(vars(payload)))
-			}))
-			defer server.Close()
-			c, err := client.NewClient(server.URL, "synthetic-token", false, 30)
-			require.NoError(t, err)
-			r := &applicationConfigResource{client: c}
-			plan := &applicationConfigModel{}
-			pv := reflect.ValueOf(plan).Elem()
-			for i := 0; i < pv.NumField(); i++ {
-				pv.Field(i).Set(reflect.ValueOf(omitted))
-			}
-			plan.SmtpHost = types.StringValue("smtp.example.invalid")
-			var diags diag.Diagnostics
-			r.applyConfig(context.Background(), plan, plan, nil, &diags)
-			require.False(t, diags.HasError(), "%v", diags)
-			require.Equal(t, 1, puts)
-			want := *current
-			want.SmtpHost = "smtp.example.invalid"
-			var wantModel applicationConfigModel
-			applicationConfigToModel(&want, &wantModel)
-			// Secrets that were not configured stay out of state; they are
-			// still sent back unchanged (checked above).
-			wantModel.SmtpPassword = types.StringNull()
-			wantModel.LdapBindPassword = types.StringNull()
-			require.Equal(t, wantModel, *plan)
-		})
+			t.Run(name, func(t *testing.T) {
+				testApplicationConfigSMTPPreservesSettings(t, omitted, before2_19)
+			})
+		}
 	}
+}
+
+func testApplicationConfigSMTPPreservesSettings(t *testing.T, omitted types.String, before2_19 bool) {
+	current := &client.ApplicationConfig{}
+	value := reflect.ValueOf(current).Elem()
+	for i := 0; i < value.NumField(); i++ {
+		existing := "existing-" + value.Type().Field(i).Name
+		switch value.Field(i).Kind() {
+		case reflect.Pointer:
+			value.Field(i).Set(reflect.ValueOf(&existing))
+		case reflect.String:
+			value.Field(i).SetString(existing)
+		}
+	}
+	if before2_19 {
+		current.EmailLoginNotificationMode, current.EmailVerification = nil, nil
+	} else {
+		current.EmailLoginNotificationEnabled, current.EmailVerificationEnabled = nil, nil
+		// The server's mode must not be reset by the update.
+		mode, verification := "browserRecognition", "optional"
+		current.EmailLoginNotificationMode, current.EmailVerification = &mode, &verification
+	}
+	current.WebauthnUserVerification = "required"
+	current.WebauthnAllowSyncedPasskeys = "false"
+	current.WebauthnAuthenticatorAttachment = "cross-platform"
+	current.CIMDURLAllowlist = `["https://trusted.example.invalid/client.json"]`
+	// Not the server default ("true"): it must round-trip, not reset.
+	autoCreate := "false"
+	current.AutoCreateOIDCClientSecret = &autoCreate
+	body, err := json.Marshal(current)
+	require.NoError(t, err)
+	var expected map[string]string
+	require.NoError(t, json.Unmarshal(body, &expected))
+	vars := func(config map[string]string) []client.AppConfigVariable {
+		result := make([]client.AppConfigVariable, 0, len(config))
+		for key, value := range config {
+			result = append(result, client.AppConfigVariable{Key: key, Value: value})
+		}
+		return result
+	}
+	puts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			require.Equal(t, "/api/application-configuration/all", r.URL.Path)
+			require.NoError(t, json.NewEncoder(w).Encode(vars(expected)))
+			return
+		}
+		require.Equal(t, http.MethodPut, r.Method)
+		require.Equal(t, "/api/application-configuration", r.URL.Path)
+		var payload map[string]string
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		// v2.14 AppConfigUpdateDto requires all three WebAuthn strings.
+		for _, key := range []string{"webauthnUserVerification", "webauthnAllowSyncedPasskeys", "webauthnAuthenticatorAttachment"} {
+			if payload[key] == "" {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+		}
+		// v2.17 adds autoCreateOidcClientSecret, required and boolean.
+		if value := payload["autoCreateOidcClientSecret"]; value != "true" && value != "false" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		puts++
+		want := make(map[string]string, len(expected))
+		for key, value := range expected {
+			want[key] = value
+		}
+		want["smtpHost"] = "smtp.example.invalid"
+		require.Equal(t, want, payload, "SMTP update must preserve every unrelated field")
+		require.NoError(t, json.NewEncoder(w).Encode(vars(payload)))
+	}))
+	defer server.Close()
+	c, err := client.NewClient(server.URL, "synthetic-token", false, 30)
+	require.NoError(t, err)
+	r := &applicationConfigResource{client: c}
+	plan := &applicationConfigModel{}
+	pv := reflect.ValueOf(plan).Elem()
+	for i := 0; i < pv.NumField(); i++ {
+		pv.Field(i).Set(reflect.ValueOf(omitted))
+	}
+	plan.SmtpHost = types.StringValue("smtp.example.invalid")
+	var diags diag.Diagnostics
+	r.applyConfig(context.Background(), plan, plan, nil, &diags)
+	require.False(t, diags.HasError(), "%v", diags)
+	require.Equal(t, 1, puts)
+	want := *current
+	want.SmtpHost = "smtp.example.invalid"
+	var wantModel applicationConfigModel
+	applicationConfigToModel(&want, &wantModel)
+	// Secrets that were not configured stay out of state; they are
+	// still sent back unchanged (checked above).
+	wantModel.SmtpPassword = types.StringNull()
+	wantModel.LdapBindPassword = types.StringNull()
+	require.Equal(t, wantModel, *plan)
 }
 
 func TestApplicationConfigExplicitValues(t *testing.T) {
@@ -224,9 +247,15 @@ func TestApplicationConfigOmitsUnreportedSettings(t *testing.T) {
 // appConfigServerDefaults is a complete configuration as a 2.14 to 2.16
 // server reports it (every key at its default), with overrides applied.
 func appConfigServerDefaults(overrides map[string]string) map[string]string {
+	return appConfigServerDefaultsFor("2.16.0", overrides)
+}
+
+// appConfigServerDefaultsFor is a complete configuration as a server running
+// version reports it: the keys that release has, at their defaults.
+func appConfigServerDefaultsFor(version string, overrides map[string]string) map[string]string {
 	config := map[string]string{}
 	for _, setting := range appConfigSettings {
-		if setting.minVersion == "" {
+		if setting.supportedOn(version) {
 			config[setting.key] = setting.defaultValue
 		}
 	}
@@ -242,7 +271,13 @@ func appConfigServerDefaults(overrides map[string]string) map[string]string {
 // client and a pointer to the last PUT body.
 func appConfigFakeServer(t *testing.T, overrides map[string]string, store func(map[string]string)) (*client.Client, *map[string]string) {
 	t.Helper()
-	config := appConfigServerDefaults(overrides)
+	return appConfigFakeServerFor(t, "2.16.0", overrides, store)
+}
+
+// appConfigFakeServerFor is appConfigFakeServer for a server running version.
+func appConfigFakeServerFor(t *testing.T, version string, overrides map[string]string, store func(map[string]string)) (*client.Client, *map[string]string) {
+	t.Helper()
+	config := appConfigServerDefaultsFor(version, overrides)
 	var lastPut map[string]string
 	toVars := func(values map[string]string) []client.AppConfigVariable {
 		vars := make([]client.AppConfigVariable, 0, len(values))

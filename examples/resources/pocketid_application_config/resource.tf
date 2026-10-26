@@ -27,8 +27,17 @@ resource "pocketid_application_config" "this" {
   smtp_password_wo         = var.smtp_password # can be an ephemeral value
   smtp_password_wo_version = "1"
 
-  email_login_notification_enabled = "true"
-  email_verification_enabled       = "true"
+  # Pocket ID 2.19.0 or later: when users are e-mailed about a sign-in
+  # ("disabled", "always", "ipAndUserAgent" or "browserRecognition") and
+  # whether they verify their address ("disabled", "optional" or "required").
+  email_login_notification_mode = "browserRecognition"
+  email_verification            = "optional"
+
+  # Before Pocket ID 2.19.0, these booleans did the same; they are deprecated
+  # and refused by 2.19.0 or later ("true" is "browserRecognition" and
+  # "optional" there, "false" is "disabled").
+  # email_login_notification_enabled = "true"
+  # email_verification_enabled       = "true"
 }
 
 # On older Terraform and OpenTofu versions, use the plain attribute instead of

@@ -14,9 +14,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
-	"golang.org/x/mod/semver"
 
 	"github.com/irashack/terraform-provider-pocketid/internal/client"
 	"github.com/irashack/terraform-provider-pocketid/internal/valuefree"
@@ -83,9 +83,7 @@ type applicationConfigModel struct {
 
 	EmailOneTimeAccessAsAdminEnabled           types.String `tfsdk:"email_one_time_access_as_admin_enabled"`
 	EmailOneTimeAccessAsUnauthenticatedEnabled types.String `tfsdk:"email_one_time_access_as_unauthenticated_enabled"`
-	EmailLoginNotificationEnabled              types.String `tfsdk:"email_login_notification_enabled"`
 	EmailApiKeyExpirationEnabled               types.String `tfsdk:"email_api_key_expiration_enabled"`
-	EmailVerificationEnabled                   types.String `tfsdk:"email_verification_enabled"`
 
 	// LDAP
 	LdapEnabled      types.String `tfsdk:"ldap_enabled"`
@@ -114,6 +112,13 @@ type applicationConfigModel struct {
 
 	// OIDC (Pocket ID 2.17.0+)
 	AutoCreateOIDCClientSecret types.String `tfsdk:"auto_create_oidc_client_secret"`
+
+	// The two e-mail toggles Pocket ID 2.19.0 turned into modes. The boolean
+	// attributes are null on 2.19.0 and later, the mode attributes before it.
+	EmailLoginNotificationEnabled types.String `tfsdk:"email_login_notification_enabled"`
+	EmailLoginNotificationMode    types.String `tfsdk:"email_login_notification_mode"`
+	EmailVerificationEnabled      types.String `tfsdk:"email_verification_enabled"`
+	EmailVerification             types.String `tfsdk:"email_verification"`
 }
 
 // applicationConfigToModel maps a client.ApplicationConfig onto the framework
@@ -148,9 +153,7 @@ func applicationConfigToModel(cfg *client.ApplicationConfig, m *applicationConfi
 
 	m.EmailOneTimeAccessAsAdminEnabled = types.StringValue(cfg.EmailOneTimeAccessAsAdminEnabled)
 	m.EmailOneTimeAccessAsUnauthenticatedEnabled = types.StringValue(cfg.EmailOneTimeAccessAsUnauthenticatedEnabled)
-	m.EmailLoginNotificationEnabled = types.StringValue(cfg.EmailLoginNotificationEnabled)
 	m.EmailApiKeyExpirationEnabled = types.StringValue(cfg.EmailApiKeyExpirationEnabled)
-	m.EmailVerificationEnabled = types.StringValue(cfg.EmailVerificationEnabled)
 
 	m.LdapEnabled = types.StringValue(cfg.LdapEnabled)
 	m.LdapUrl = types.StringValue(cfg.LdapUrl)
@@ -175,6 +178,13 @@ func applicationConfigToModel(cfg *client.ApplicationConfig, m *applicationConfi
 
 	// Null when the server does not have the setting (before 2.17.0).
 	m.AutoCreateOIDCClientSecret = types.StringPointerValue(cfg.AutoCreateOIDCClientSecret)
+
+	// Each is null on a server that does not have the key: the booleans from
+	// Pocket ID 2.19.0, the modes before it.
+	m.EmailLoginNotificationEnabled = types.StringPointerValue(cfg.EmailLoginNotificationEnabled)
+	m.EmailLoginNotificationMode = types.StringPointerValue(cfg.EmailLoginNotificationMode)
+	m.EmailVerificationEnabled = types.StringPointerValue(cfg.EmailVerificationEnabled)
+	m.EmailVerification = types.StringPointerValue(cfg.EmailVerification)
 }
 
 // mergedString returns the configured value if it is set (known and
@@ -224,9 +234,7 @@ func modelToApplicationConfig(plan *applicationConfigModel, current *client.Appl
 
 	cfg.EmailOneTimeAccessAsAdminEnabled = mergedString(plan.EmailOneTimeAccessAsAdminEnabled, current.EmailOneTimeAccessAsAdminEnabled)
 	cfg.EmailOneTimeAccessAsUnauthenticatedEnabled = mergedString(plan.EmailOneTimeAccessAsUnauthenticatedEnabled, current.EmailOneTimeAccessAsUnauthenticatedEnabled)
-	cfg.EmailLoginNotificationEnabled = mergedString(plan.EmailLoginNotificationEnabled, current.EmailLoginNotificationEnabled)
 	cfg.EmailApiKeyExpirationEnabled = mergedString(plan.EmailApiKeyExpirationEnabled, current.EmailApiKeyExpirationEnabled)
-	cfg.EmailVerificationEnabled = mergedString(plan.EmailVerificationEnabled, current.EmailVerificationEnabled)
 
 	cfg.LdapEnabled = mergedString(plan.LdapEnabled, current.LdapEnabled)
 	cfg.LdapUrl = mergedString(plan.LdapUrl, current.LdapUrl)
@@ -256,7 +264,55 @@ func modelToApplicationConfig(plan *applicationConfigModel, current *client.Appl
 		cfg.AutoCreateOIDCClientSecret = &value
 	}
 
+	// The e-mail toggles and their 2.19.0 replacements are sent only to a
+	// server that reported the key (applyConfig refuses a planned value for
+	// any other), so an old key is never sent to 2.19.0 or later and a new
+	// one never to an older server. A configured value overrides; an unset
+	// one keeps the server's.
+	cfg.EmailLoginNotificationEnabled = mergedPointer(plan.EmailLoginNotificationEnabled, current.EmailLoginNotificationEnabled)
+	cfg.EmailLoginNotificationMode = mergedPointer(plan.EmailLoginNotificationMode, current.EmailLoginNotificationMode)
+	cfg.EmailVerificationEnabled = mergedPointer(plan.EmailVerificationEnabled, current.EmailVerificationEnabled)
+	cfg.EmailVerification = mergedPointer(plan.EmailVerification, current.EmailVerification)
+	if current.EmailLoginNotificationMode != nil {
+		cfg.EmailLoginNotificationEnabled = nil
+	}
+	if current.EmailVerification != nil {
+		cfg.EmailVerificationEnabled = nil
+	}
+
 	return &cfg
+}
+
+// mergedPointer is mergedString for a setting only some servers have: nil
+// (not sent) when the server did not report it and nothing is configured.
+func mergedPointer(planned types.String, current *string) *string {
+	if planned.IsNull() || planned.IsUnknown() {
+		return current
+	}
+	value := planned.ValueString()
+	return &value
+}
+
+// emailVerificationRequiredProblems names what stops email_verification
+// "required" from being stored (Pocket ID's email_verification validator): user
+// e-mail addresses are required, are not trusted as verified by default, and
+// an SMTP host and sender address exist to send the verification link. A nil
+// argument is a value that is not known and so not checked.
+func emailVerificationRequiredProblems(requireUserEmail, emailsVerified, smtpHost, smtpFrom *string) []string {
+	var problems []string
+	if requireUserEmail != nil && *requireUserEmail != "true" {
+		problems = append(problems, `require_user_email must be "true"`)
+	}
+	if emailsVerified != nil && *emailsVerified != "false" {
+		problems = append(problems, `emails_verified must be "false"`)
+	}
+	if smtpHost != nil && *smtpHost == "" {
+		problems = append(problems, "smtp_host must be set")
+	}
+	if smtpFrom != nil && *smtpFrom == "" {
+		problems = append(problems, "smtp_from must be set")
+	}
+	return problems
 }
 
 // appConfigModelValue returns the model's value for a setting's attribute.
@@ -277,7 +333,7 @@ func appConfigModelValue(m *applicationConfigModel, attribute string) types.Stri
 func appConfigUnsupportedSettings(plan *applicationConfigModel, current *client.ApplicationConfig) []appConfigSetting {
 	var unsupported []appConfigSetting
 	for _, setting := range appConfigSettings {
-		if setting.minVersion == "" {
+		if !setting.versionDependent() {
 			continue
 		}
 		value := appConfigModelValue(plan, setting.attribute)
@@ -316,11 +372,12 @@ func (r *applicationConfigResource) Schema(_ context.Context, _ resource.SchemaR
 			}
 		}
 		attributes[setting.attribute] = schema.StringAttribute{
-			Description: description,
-			Optional:    true,
-			Computed:    true,
-			Sensitive:   setting.sensitive,
-			Validators:  validators,
+			Description:        description,
+			Optional:           true,
+			Computed:           true,
+			Sensitive:          setting.sensitive,
+			DeprecationMessage: setting.deprecation(),
+			Validators:         validators,
 			// Unset means "keep the server's value": an update of other
 			// settings plans it unchanged instead of unknown.
 			PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
@@ -369,12 +426,13 @@ func (r *applicationConfigResource) ModifyPlan(ctx context.Context, req resource
 	for _, secret := range appConfigSecrets {
 		resp.Diagnostics.Append(secret.planWriteOnlyMode(ctx, req.Config, &resp.Plan)...)
 	}
+	resp.Diagnostics.Append(planEmailVerificationRequired(ctx, req.Config)...)
 	if resp.Diagnostics.HasError() || r.client == nil {
 		return
 	}
 	version, versionRead := "", false
 	for _, setting := range appConfigSettings {
-		if setting.minVersion == "" {
+		if !setting.versionDependent() {
 			continue
 		}
 		var configured types.String
@@ -390,22 +448,18 @@ func (r *applicationConfigResource) ModifyPlan(ctx context.Context, req resource
 			version, err = r.client.GetCurrentVersion(ctx)
 			if err != nil {
 				resp.Diagnostics.AddAttributeError(path.Root(setting.attribute), "Could not check the Pocket ID version",
-					fmt.Sprintf("%s requires Pocket ID %s or later, and the server's version could not be read: %s", setting.attribute, setting.minVersion, err))
+					fmt.Sprintf("%s depends on the Pocket ID version, and the server's version could not be read: %s", setting.attribute, err))
 				return
 			}
 			versionRead = true
 		}
 		// A server without the version endpoint (before 2.3.0) is older
 		// than every version a setting needs.
-		if version != "" && semver.Compare("v"+version, "v"+setting.minVersion) >= 0 {
+		if setting.supportedOn(version) {
 			continue
 		}
-		running := version
-		if running == "" {
-			running = "a release before 2.3.0"
-		}
 		resp.Diagnostics.AddAttributeError(path.Root(setting.attribute), "Setting not supported by this Pocket ID",
-			fmt.Sprintf("%s requires Pocket ID %s or later; the server runs %s, which does not have this setting. Remove %s from the configuration.", setting.attribute, setting.minVersion, running, setting.attribute))
+			setting.unsupportedDetail(version, false))
 	}
 }
 
@@ -438,7 +492,7 @@ func (r *applicationConfigResource) applyConfig(ctx context.Context, config, pla
 		diags.AddAttributeError(
 			path.Root(setting.attribute),
 			"Setting not supported by this Pocket ID",
-			fmt.Sprintf("%s requires Pocket ID %s or later, and this server does not have the setting. Nothing was changed. Remove %s from the configuration.", setting.attribute, setting.minVersion, setting.attribute),
+			setting.unreportedDetail(),
 		)
 	}
 	if diags.HasError() {
@@ -455,6 +509,13 @@ func (r *applicationConfigResource) applyConfig(ctx context.Context, config, pla
 	}
 
 	payload := modelToApplicationConfig(config, current)
+	if payload.EmailVerification != nil && *payload.EmailVerification == "required" {
+		if problems := emailVerificationRequiredProblems(&payload.RequireUserEmail, &payload.EmailsVerified, &payload.SmtpHost, &payload.SmtpFrom); len(problems) > 0 {
+			diags.AddAttributeError(path.Root("email_verification"), "email_verification \"required\" is not possible",
+				"Pocket ID refuses email_verification \"required\" unless "+strings.Join(problems, ", ")+". Nothing was changed.")
+			return
+		}
+	}
 	for _, secret := range appConfigSecrets {
 		if value, ok := writeOnly[secret.attribute]; ok {
 			*secret.server(payload) = value
@@ -544,7 +605,7 @@ func appConfigSettingName(key string) string {
 func appConfigUnreportedCarried(config *applicationConfigModel, current *client.ApplicationConfig, writeOnly map[string]string) []string {
 	var unread []string
 	for _, setting := range appConfigSettings {
-		if setting.minVersion != "" || current.Reported(setting.key) {
+		if setting.versionDependent() || current.Reported(setting.key) {
 			continue
 		}
 		if _, sent := writeOnly[setting.attribute]; sent {
@@ -673,4 +734,31 @@ func (r *applicationConfigResource) Delete(ctx context.Context, _ resource.Delet
 // ImportState imports the singleton application configuration into Terraform.
 func (r *applicationConfigResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+// planEmailVerificationRequired refuses, at plan time, email_verification
+// "required" together with a configured value that rules it out. Values that
+// are not configured are the server's and are checked before the update.
+func planEmailVerificationRequired(ctx context.Context, config tfsdk.Config) diag.Diagnostics {
+	var diags diag.Diagnostics
+	var mode types.String
+	diags.Append(config.GetAttribute(ctx, path.Root("email_verification"), &mode)...)
+	if diags.HasError() || mode.IsNull() || mode.IsUnknown() || mode.ValueString() != "required" {
+		return diags
+	}
+	configured := func(attribute string) *string {
+		var value types.String
+		diags.Append(config.GetAttribute(ctx, path.Root(attribute), &value)...)
+		if value.IsNull() || value.IsUnknown() {
+			return nil
+		}
+		text := value.ValueString()
+		return &text
+	}
+	problems := emailVerificationRequiredProblems(configured("require_user_email"), configured("emails_verified"), configured("smtp_host"), configured("smtp_from"))
+	if len(problems) > 0 {
+		diags.AddAttributeError(path.Root("email_verification"), "email_verification \"required\" is not possible",
+			"Pocket ID refuses email_verification \"required\" unless "+strings.Join(problems, ", ")+".")
+	}
+	return diags
 }
