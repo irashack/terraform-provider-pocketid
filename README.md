@@ -5,7 +5,7 @@ groups, APIs and instance settings as code. This is an independent provider. It
 began in September 2026 as a maintenance fork of
 [Trozz/terraform-provider-pocketid](https://github.com/Trozz/terraform-provider-pocketid)
 by Michael Leer and has been its own project since 2026-10-02, with its own version
-numbers and no tracking of upstream (see [Attribution](#attribution)). Release **3.2.0** supports Pocket ID **2.14.0 through
+numbers and no tracking of upstream (see [Attribution](#attribution)). Release **3.2.1** supports Pocket ID **2.14.0 through
 2.19.1**, including 2.19's e-mail login notification and verification modes
 (3.0.1 was its first release as an independent project). It is listed on the
 [Terraform Registry](https://registry.terraform.io/providers/irashack/pocketid)
@@ -33,7 +33,7 @@ terraform {
   required_providers {
     pocketid = {
       source  = "irashack/pocketid"
-      version = "3.2.0"
+      version = "3.2.1"
     }
   }
 }
@@ -283,7 +283,7 @@ run with both tools; [TESTING.md](TESTING.md) records the tool versions used.
 | 2.16.0 | As 2.15.0. |
 | 2.17.0 | `backchannel_logout_url` and `auto_create_oidc_client_secret` supported; a new confidential client's server-created secret is revoked by the provider. |
 | 2.18.0 | The icon library: `preset` on `pocketid_client_logo` and the `pocketid_logo_presets` data source. A client with only a dark logo shows it in light mode too. |
-| 2.19.0 | `email_login_notification_mode` and `email_verification` on `pocketid_application_config` (3.2.0), replacing the boolean `email_login_notification_enabled` and `email_verification_enabled`, which are deprecated, work only before 2.19.0 and are refused from it on. |
+| 2.19.0 | `email_login_notification_mode` and `email_verification` on `pocketid_application_config` (3.2.1), replacing the boolean `email_login_notification_enabled` and `email_verification_enabled`, which are deprecated, work only before 2.19.0 and are refused from it on. |
 
 `pocketid_client_secret`, `pocketid_api` and `pocketid_api_client_access` need
 Pocket ID 2.14.0 or later, which every supported server is. A feature that needs a

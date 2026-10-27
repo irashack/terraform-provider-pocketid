@@ -9,7 +9,7 @@ terraform {
   required_providers {
     pocketid = {
       source  = "irashack/pocketid"
-      version = "3.2.0"
+      version = "3.2.1"
     }
   }
 }
@@ -40,14 +40,14 @@ terraform {
   required_providers {
     pocketid = {
       source  = "registry.terraform.io/irashack/pocketid"
-      version = "3.2.0"
+      version = "3.2.1"
     }
   }
 }
 ```
 
 Download the exact version's archive, SHA256SUMS and SHA256SUMS.sig from
-[release v3.2.0](https://github.com/irashack/terraform-provider-pocketid/releases/tag/v3.2.0).
+[release v3.2.1](https://github.com/irashack/terraform-provider-pocketid/releases/tag/v3.2.1).
 Verify the signature with the release key,
 [release-signing-key.asc](release-signing-key.asc) (RSA 4096, fingerprint
 `FE9D 704B 2C1E 6675 46F0 EBB1 E031 C4DE 04D8 19D6`, valid until October 2029),
@@ -58,7 +58,7 @@ are unsigned and have only the digest.
 For example, for `darwin_arm64` (use `linux_amd64` or `linux_arm64` as appropriate):
 
 ```sh
-version=3.2.0
+version=3.2.1
 platform=darwin_arm64
 archive=terraform-provider-pocketid_${version}_${platform}.zip
 sums=terraform-provider-pocketid_${version}_SHA256SUMS
@@ -72,8 +72,8 @@ curl --fail --location --output release-signing-key.asc \
 gpg --show-keys --with-fingerprint release-signing-key.asc
 gpg --import release-signing-key.asc
 gpg --verify "$sums.sig" "$sums"
-# Set this to the literal SHA256SUMS digest from the v3.2.0 release notes:
-expected_manifest_sha256=RECORDED_IN_THE_V3_2_0_RELEASE_NOTES
+# Set this to the literal SHA256SUMS digest from the v3.2.1 release notes:
+expected_manifest_sha256=RECORDED_IN_THE_V3_2_1_RELEASE_NOTES
 printf '%s  %s\n' "$expected_manifest_sha256" "$sums" | shasum -a 256 -c -
 awk -v file="$archive" '$2 == file { print }' "$sums" | shasum -a 256 -c -
 mirror="$HOME/.local/share/pocketid-provider-mirror"
@@ -108,9 +108,9 @@ tofu providers lock -fs-mirror="$mirror" \
 
 Keep the exact version and checksum pins; do not silently select a newer tag.
 
-## Upgrade from 3.1.x to 3.2.0
+## Upgrade from 3.1.x to 3.2.1
 
-3.2.0 adds Pocket ID 2.19 support (servers 2.14.0 through 2.19.1). State written by
+3.2.1 adds Pocket ID 2.19 support (servers 2.14.0 through 2.19.1). State written by
 any 3.1.x release loads without a state upgrade step, with no change to the
 source address. The only configuration that needs editing is
 `pocketid_application_config` when it sets `email_login_notification_enabled` or
@@ -124,7 +124,7 @@ deprecated) and the new attributes are refused.
 
 Order of the upgrade:
 
-1. Switch the provider to `3.2.0` (verify and add the v3.2.0 archive to a
+1. Switch the provider to `3.2.1` (verify and add the v3.2.1 archive to a
    filesystem mirror first), run `tofu init -upgrade` (or `terraform init
    -upgrade`), commit the lockfile and require an empty refreshed plan against
    the server you have. Nothing else changes yet.

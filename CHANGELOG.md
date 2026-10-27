@@ -1,12 +1,16 @@
 # Changelog
 
-## 3.2.0 — 2026-10-26
+## 3.2.1 — 2026-10-26
 
-Pocket ID 2.19 support. State written by 3.1.x loads without a state upgrade
-step; see INSTALL.md ("Upgrade from 3.1.x to 3.2.0") for the order in which to
+Pocket ID 2.19 support, built with Go 1.27.3 (`go.mod` toolchain go1.27.3),
+whose standard library fixes a reachable `crypto/x509` certificate-verification
+vulnerability that go1.27.2 has. The v3.2.0 tag carries the same provider code
+built with go1.27.2; its release run refused it on that finding, so there is no
+3.2.0 release. State written by 3.1.x loads without a state upgrade
+step; see INSTALL.md ("Upgrade from 3.1.x to 3.2.1") for the order in which to
 change configuration and server.
 
-- 3.2.0 supports Pocket ID 2.19.0 and 2.19.1 (the tested range is now 2.14.0
+- 3.2.1 supports Pocket ID 2.19.0 and 2.19.1 (the tested range is now 2.14.0
   through 2.19.1). Pocket ID 2.19.0 replaced two boolean settings with modes.
 - New attributes `email_login_notification_mode` (`disabled`, `always`,
   `ipAndUserAgent` or `browserRecognition`) and `email_verification`

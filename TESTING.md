@@ -191,9 +191,14 @@ renamed binary of this provider. The test uses supported state replacement, chec
 encrypted state/backups and saved-plan encryption, preserves the ID and secret, and
 requires an empty subsequent plan. No development overrides are used.
 
-## Release 3.2.0 evidence — 2026-10-26
+## Release 3.2.1 evidence — 2026-10-26
 
-Pocket ID 2.19 support (CHANGELOG.md, "3.2.0"). Prepared on an aarch64 Linux
+3.2.1 is the v3.2.0 tree with the toolchain raised to go1.27.3 (the v3.2.0 release
+run's `make vuln` reported a reachable `crypto/x509` vulnerability in go1.27.2).
+The evidence below was gathered on the v3.2.0 tree; the 3.2.1 rerun is noted at
+the end of this section.
+
+Pocket ID 2.19 support (CHANGELOG.md, "3.2.1"). Prepared on an aarch64 Linux
 host with the official go1.27.3 linux-arm64 toolchain, golangci-lint 2.14.0,
 govulncheck 1.7.0, tfplugindocs 0.25.0, Terraform 1.16.4, OpenTofu 1.13.1 and
 rootless Podman for the fixture; `make` was not installed, so each target's
@@ -210,7 +215,7 @@ packages. `tfplugindocs generate` leaves `docs/` equal to the checkout (the
 pocketid_version" in this environment, also on the 3.1.4 tree
 (a690969), whose `docs/data-sources/version.md` exists; it is not new here and
 was not investigated. `git ls-remote --tags` of Trozz/terraform-provider-pocketid
-lists no v3.* tag, so v3.2.0 is free.
+lists no v3.* tag, so v3.2.1 is free.
 
 Acceptance (fixture on Podman, `-p 1`): the application-configuration tests
 (`TestAccResourceApplicationConfig*`, `TestAccAPI_applicationConfigRules`)
@@ -223,7 +228,7 @@ fixed in the fixture; the test passed on 2.18.0 throughout. Not run: 2.14.0
 through 2.17.0, `make test-acc-supported` as a whole, `make release-check`
 (GoReleaser) and the release workflow's `make test-acc-matrix`.
 
-Native, with Terraform and OpenTofu, on 2.19.1 and 2.18.0, a 3.2.0-stamped build
+Native, with Terraform and OpenTofu, on 2.19.1 and 2.18.0, a 3.2.1-stamped build
 in a mirror: `lifecycle.py` passed in all four runs. The old provider was the
 published 3.1.4 archive (SHA256SUMS verified): `upgrade.py` passed in all four
 runs (empty plan, kept identity and secret, replay protection, back-channel
