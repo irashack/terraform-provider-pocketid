@@ -244,6 +244,23 @@ changed and are not proof for this release; the state-compatibility claim rests
 on `upgrade.py` and `application_config.py`. Not run: native scripts on
 2.14.0 through 2.17.0 or on a platform other than linux_arm64.
 
+The v3.2.0 tag's release run 40421806779 stopped at `make vuln` (a reachable
+`crypto/x509` vulnerability in go1.27.2); v3.2.0 has no release. 3.2.1 raised
+the toolchain to go1.27.3, after which govulncheck reported no vulnerabilities and
+vet, `go mod tidy -diff` and the unit tests passed locally. Its first release run
+(40423548346) was cancelled at the job's 45-minute limit inside
+`make test-acc-matrix`, which now covers six server versions; the limit is 90
+minutes since `1c8cc03`. Release run 40428810300 (2026-10-27) passed every step,
+the acceptance matrix on 2.14.0 through 2.19.1 included. The published
+`terraform-provider-pocketid_3.2.1_SHA256SUMS` has digest
+`20b824bd6c1ec22d655debcdc79a7b6ee6b277b347a6551fded8c0ae27d48a55`; its `.sig`
+verified in a fresh keyring holding only `release-signing-key.asc`, and the
+downloaded darwin_arm64, linux_amd64, linux_arm64 and manifest files match it.
+`lifecycle.py` passed with OpenTofu 1.13.1 and Terraform 1.16.4 on 2.19.1 using
+the downloaded linux_arm64 archive from a filesystem mirror, with the fixture
+under rootless Podman. The Terraform Registry ingested 3.2.1 with all 33 pages.
+The release was published on 2026-10-27.
+
 ## Release 3.1.4 evidence — 2026-10-16
 
 Documentation only; the provider code and dependencies are the 3.1.3 tree (the
