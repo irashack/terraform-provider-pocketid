@@ -18,7 +18,7 @@ jobs:
   goreleaser:
     if: github.repository == 'irashack/terraform-provider-pocketid' && github.ref == 'refs/heads/main-maintenance'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     permissions:
       contents: write
       id-token: write
