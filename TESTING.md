@@ -53,7 +53,8 @@ address is `0.0.0.0`. No production URL, database, or user input is accepted.
 Credentials pass only through process memory/environment. Failure output is
 suppressed because the acceptance harness may include state in errors; the fixture
 prints only the status lines, the tests that never reported a result, and whether
-the output names a panic, a timeout, a data race or a killed process. For local
+the output names a panic, a timeout, a data race or a killed process, with the Go
+runtime's fatal error, the exit status and the stack's source locations. For local
 diagnosis only, `POCKETID_FIXTURE_FAILURE_LOG` can name a new private file outside
 source; never publish that file. Logs/state are not release assets.
 `make test-scripts` (part of `make check`) runs the fixture script's own unit tests

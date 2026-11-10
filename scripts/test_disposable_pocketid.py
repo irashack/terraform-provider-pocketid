@@ -115,5 +115,14 @@ class StatusLinesTest(unittest.TestCase):
                          ["--- PASS: TestA (0.01s)", "FAIL\tpkg\t0.1s", "Fixture: no result from TestB",
                           "Fixture: the output names a panic"])
 
+    def test_fatal_error_exit_and_stack_locations_are_named_without_arguments(self):
+        text = ("=== RUN   TestB\nfatal error: concurrent map writes\n\ngoroutine 7 [running]:\n"
+                "pkg.Do(0xc000123456, {0xc000abcdef, 0x20})\n\t/src/pkg/do.go:42 +0x1f\n"
+                "fatal error: token=abc\nexit status 2\nFAIL\tpkg\t0.1s\n")
+        self.assertEqual(fixture.status_lines(text),
+                         ["FAIL\tpkg\t0.1s", "Fixture: no result from TestB",
+                          "Fixture: fatal error: concurrent map writes", "Fixture: exit status 2",
+                          "Fixture: stack at /src/pkg/do.go:42"])
+
 if __name__ == "__main__":
     unittest.main()

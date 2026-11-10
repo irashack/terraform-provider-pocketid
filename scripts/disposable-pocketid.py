@@ -7,6 +7,7 @@ or database input is accepted. The temporary container is removed on exit.
 """
 import hashlib
 import os
+import re
 from pathlib import Path
 import secrets
 import sqlite3
@@ -75,6 +76,12 @@ SCIM_ALLOWED_HOSTS = "OUTBOUND_ALLOWED_HOSTS_SCIM=private,loopback,169.254.0.0/1
 # beyond those: test tooling can print state when it fails.
 ABORTS = (("panic:", "a panic"), ("test timed out after", "the go test timeout"),
           ("WARNING: DATA RACE", "a data race"), ("signal: killed", "a killed process"))
+# Lines safe to repeat whole: the Go runtime's own fatal errors (fixed text),
+# how the test binary ended, and the source locations of a stack trace (a
+# file and a line, never the arguments).
+VERBATIM = re.compile(r"fatal error: [a-z][a-z ,'!-]*|exit status \d+|signal: [a-z ()]+")
+FRAME = re.compile(r"\t(\S+\.go:\d+)(?: \+0x[0-9a-f]+)?")
+MAX_FRAMES = 12
 
 
 def status_lines(text):
@@ -91,6 +98,10 @@ def status_lines(text):
             finished.add(stripped.split()[2])
     lines += ["Fixture: no result from " + name for name in dict.fromkeys(started) if name not in finished]
     lines += ["Fixture: the output names " + label for marker, label in ABORTS if marker in text]
+    all_lines = text.splitlines()
+    lines += ["Fixture: " + line for line in dict.fromkeys(all_lines) if VERBATIM.fullmatch(line)]
+    frames = [m.group(1) for m in map(FRAME.fullmatch, all_lines) if m]
+    lines += ["Fixture: stack at " + frame for frame in frames[:MAX_FRAMES]]
     return lines
 
 
