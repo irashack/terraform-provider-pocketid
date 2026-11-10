@@ -82,6 +82,12 @@ ABORTS = (("panic:", "a panic"), ("test timed out after", "the go test timeout")
 VERBATIM = re.compile(r"fatal error: [a-z][a-z ,'!-]*|exit status \d+|signal: [a-z ()]+")
 FRAME = re.compile(r"\t(\S+\.go:\d+)(?: \+0x[0-9a-f]+)?")
 MAX_FRAMES = 12
+# A result line that other output ran into (no newline before it), and where
+# a test reported its failure: the test file and line, and the step number
+# the acceptance framework names, never the message.
+RESULT = re.compile(r"--- (PASS|FAIL|SKIP): (\S+)")
+REPORTED = re.compile(r"\s+(\w+_test\.go:\d+): (Step \d+/\d+ error)?")
+MAX_REPORTS = 20
 
 
 def status_lines(text):
@@ -96,10 +102,18 @@ def status_lines(text):
             started.append(stripped.split()[2])
         elif stripped.startswith(("--- PASS:", "--- FAIL:", "--- SKIP:")):
             finished.add(stripped.split()[2])
+        else:
+            for result, name in RESULT.findall(line):
+                finished.add(name)
+                if result == "FAIL":
+                    lines.append("Fixture: --- FAIL: " + name + " (after other output on its line)")
     lines += ["Fixture: no result from " + name for name in dict.fromkeys(started) if name not in finished]
     lines += ["Fixture: the output names " + label for marker, label in ABORTS if marker in text]
     all_lines = text.splitlines()
     lines += ["Fixture: " + line for line in dict.fromkeys(all_lines) if VERBATIM.fullmatch(line)]
+    reports = [" ".join(filter(None, m.groups())) for m in map(REPORTED.match, all_lines) if m]
+    if any(line.startswith("FAIL") for line in all_lines):
+        lines += ["Fixture: reported at " + report for report in list(dict.fromkeys(reports))[:MAX_REPORTS]]
     frames = [m.group(1) for m in map(FRAME.fullmatch, all_lines) if m]
     lines += ["Fixture: stack at " + frame for frame in frames[:MAX_FRAMES]]
     return lines

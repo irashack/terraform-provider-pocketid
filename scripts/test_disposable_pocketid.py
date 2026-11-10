@@ -124,5 +124,12 @@ class StatusLinesTest(unittest.TestCase):
                           "Fixture: fatal error: concurrent map writes", "Fixture: exit status 2",
                           "Fixture: stack at /src/pkg/do.go:42"])
 
+    def test_glued_result_and_the_place_a_failure_was_reported_are_named(self):
+        text = ("=== RUN   TestA\n    a_test.go:12: Step 2/3 error: token=abc\n        detail token=abc\n"
+                "trailing output--- FAIL: TestA (0.01s)\nFAIL\nFAIL\tpkg\t0.1s\n")
+        self.assertEqual(fixture.status_lines(text),
+                         ["Fixture: --- FAIL: TestA (after other output on its line)", "FAIL", "FAIL\tpkg\t0.1s",
+                          "Fixture: reported at a_test.go:12 Step 2/3 error"])
+
 if __name__ == "__main__":
     unittest.main()
