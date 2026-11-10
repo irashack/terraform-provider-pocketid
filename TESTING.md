@@ -4,7 +4,7 @@ How every check runs, what each native script proves, and the evidence recorded
 for each release. The "Release … evidence" sections are the record of each
 release; the support matrix and tool versions in each belong to that release, not
 to the current one. The current range is Pocket ID **2.14.0 through
-2.19.1**.
+2.19.2**.
 
 ## Reproducible checks
 
@@ -14,15 +14,15 @@ make docs-check             # generated documentation matches the checkout
 make actionlint             # GitHub Actions syntax and expressions
 make vuln                   # reachable Go vulnerabilities
 go vet -tags=acc ./...      # the acceptance tests compile
-make test-acc               # every acceptance test family (TestAcc*) on POCKETID_VERSION (default 2.19.1)
-make test-acc-matrix        # test-acc on 2.14.0, 2.15.0, 2.16.0, 2.17.0, 2.18.0 and 2.19.1
+make test-acc               # every acceptance test family (TestAcc*) on POCKETID_VERSION (default 2.19.2)
+make test-acc-matrix        # test-acc on 2.14.0, 2.15.0, 2.16.0, 2.17.0, 2.18.0 and 2.19.2
 make test-acc-provider      # full provider and data-source suites on POCKETID_VERSION, one fixture
-make test-acc-supported     # the full suites on every supported version, 2.14.0 to 2.19.1
+make test-acc-supported     # the full suites on every supported version, 2.14.0 to 2.19.2
 ```
 
 `make test-acc-supported` runs `make test-acc-provider` once per supported version
 and is the acceptance gate before a release. CI is lighter to keep its run time
-down: the full suites on 2.18.0 and 2.19.1, and `make test-acc` on 2.14.0 to
+down: the full suites on 2.18.0 and 2.19.2, and `make test-acc` on 2.14.0 to
 2.17.0. The release workflow runs `make check`, `make vuln` and
 `make test-acc-matrix` on the tagged source.
 
@@ -33,7 +33,7 @@ behavior is selected inside the tests from `POCKETID_TEST_VERSION`.
 ## The disposable server fixture
 
 `scripts/disposable-pocketid.py VERSION -- COMMAND` is the only way tests get a
-Pocket ID server. VERSION must be one of 2.14.0, 2.15.0, 2.16.0, 2.17.0, 2.18.0 or 2.19.1. The
+Pocket ID server. VERSION must be one of 2.14.0, 2.15.0, 2.16.0, 2.17.0, 2.18.0 or 2.19.2. The
 fixture pulls the official versioned image, creates an isolated container and
 database on a free loopback port, waits for health (HTTP 204 is success), stops the
 server, and seeds one synthetic administrator and a hash of a random API token,

@@ -41,7 +41,7 @@ jobs:
             target: test-acc
           - pocketid: '2.18.0'
             target: test-acc-provider
-          - pocketid: '2.19.1'
+          - pocketid: '2.19.2'
             target: test-acc-provider
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
