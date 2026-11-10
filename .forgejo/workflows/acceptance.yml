@@ -1,0 +1,140 @@
+# The acceptance suites on a Forgejo Actions runner that has a Docker daemon
+# (the `docker-host` label). .github/workflows/ci.yml runs the same Makefile
+# targets on GitHub; this workflow is the gate for work that has not been
+# pushed there yet.
+#
+# A pull request runs what GitHub's CI runs: the full provider and data-source
+# suites on the two newest Pocket ID versions and `make test-acc` on the four
+# older ones. A push to main-maintenance, or a manual run that asks for it,
+# runs the full suites on every supported version, which is
+# `make test-acc-supported`, the acceptance gate before a release.
+#
+# Nothing here is a JavaScript action: the steps check out the source and
+# install the Go toolchain themselves. No secret is used; the fixture creates
+# its own disposable server and credentials for each run.
+name: Acceptance
+
+on:
+  push:
+    branches:
+      - main-maintenance
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      full_suites:
+        description: 'Run the full suites on every supported version'
+        type: boolean
+        default: false
+
+concurrency:
+  group: acceptance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  acceptance:
+    name: Pocket ID ${{ matrix.pocketid }}
+    runs-on: docker-host
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - pocketid: '2.14.0'
+            pr_target: test-acc
+          - pocketid: '2.15.0'
+            pr_target: test-acc
+          - pocketid: '2.16.0'
+            pr_target: test-acc
+          - pocketid: '2.17.0'
+            pr_target: test-acc
+          - pocketid: '2.18.0'
+            pr_target: test-acc-provider
+          - pocketid: '2.19.2'
+            pr_target: test-acc-provider
+    steps:
+      - name: Check out
+        env:
+          SERVER: ${{ github.server_url }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+          RUN_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git init -q .
+          git remote add origin "$SERVER/$REPO.git"
+          # The per-run token goes through the environment, never argv, and is
+          # not written to the repository's config.
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraHeader
+          export "GIT_CONFIG_VALUE_0=Authorization: token ${RUN_TOKEN}"
+          git fetch -q --depth=1 origin "$SHA" || git fetch -q --depth=1 origin "$REF"
+          git checkout -q --detach FETCH_HEAD
+          git log -1 --format='checked out %H'
+
+      - name: Install the Go version go.mod names
+        run: |
+          set -euo pipefail
+          ver=$(awk '$1=="toolchain"{t=$2} $1=="go"{g=$2} END{v=(t!=""?t:g); sub(/^go/,"",v); print v}' go.mod)
+          case "$ver" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "go.mod names '$ver', not an exact X.Y.Z" >&2; exit 1 ;;
+          esac
+          case "$(uname -m)" in
+            x86_64) arch=amd64 ;;
+            aarch64) arch=arm64 ;;
+            *) echo "unsupported architecture $(uname -m)" >&2; exit 1 ;;
+          esac
+          cache="$HOME/ci-cache"
+          root="$cache/go/$ver"
+          if [ ! -x "$root/go/bin/go" ]; then
+            f="go${ver}.linux-${arch}.tar.gz"
+            tmp=$(mktemp -d)
+            curl -fsSL --retry 3 -o "$tmp/$f" "https://dl.google.com/go/$f"
+            want=$(curl -fsSL --retry 3 "https://dl.google.com/go/$f.sha256")
+            echo "$want  $tmp/$f" | sha256sum -c -
+            mkdir -p "$cache/go"
+            rm -rf "$root.partial"
+            mkdir "$root.partial"
+            tar -C "$root.partial" -xzf "$tmp/$f"
+            mv "$root.partial" "$root"
+            rm -rf "$tmp"
+          fi
+          {
+            echo "GOROOT=$root/go"
+            echo "GOTOOLCHAIN=local"
+            echo "GOMODCACHE=$cache/gomod"
+            echo "GOCACHE=$cache/gobuild"
+            echo "GOFLAGS=-modcacherw"
+          } >> "$GITHUB_ENV"
+          echo "$root/go/bin" >> "$GITHUB_PATH"
+
+      - name: Check the tools
+        run: |
+          set -euo pipefail
+          go version
+          python3 --version
+          docker version --format 'server {{.Server.Version}}'
+
+      # Disposable credentials only; never upload acceptance output or state.
+      - name: Acceptance tests
+        env:
+          POCKETID_VERSION: ${{ matrix.pocketid }}
+          TEST_TARGET: ${{ (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.full_suites)) && 'test-acc-provider' || matrix.pr_target }}
+        timeout-minutes: 40
+        # The runner has no make, so these are the Makefile's test-acc and
+        # test-acc-provider recipes; keep the two in step.
+        run: |
+          set -euo pipefail
+          case "$TEST_TARGET" in
+            test-acc) run=(-run '^TestAcc') ;;
+            test-acc-provider) run=() ;;
+            *) echo "unknown target '$TEST_TARGET'" >&2; exit 1 ;;
+          esac
+          python3 scripts/disposable-pocketid.py "$POCKETID_VERSION" -- \
+            go test -v -count=1 -p 1 -timeout 20m ./internal/provider ./internal/datasources -tags=acc "${run[@]}"
+
+      - name: Remove any fixture left behind
+        if: always()
+        run: |
+          docker ps -aq --filter label=pocketid-provider-fixture=true | xargs -r docker rm -f -v || true

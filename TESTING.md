@@ -26,6 +26,11 @@ down: the full suites on 2.18.0 and 2.19.2, and `make test-acc` on 2.14.0 to
 2.17.0. The release workflow runs `make check`, `make vuln` and
 `make test-acc-matrix` on the tagged source.
 
+`.forgejo/workflows/acceptance.yml` runs the same targets on a Forgejo Actions
+runner with a Docker daemon: what CI runs on a pull request, and
+`make test-acc-supported` (one job per version) on a push to `main-maintenance` or
+a manual run with `full_suites`.
+
 The acceptance packages share one fixture and run one after another (`-p 1`), so a
 client created by one package cannot crowd another's list reads. Version-specific
 behavior is selected inside the tests from `POCKETID_TEST_VERSION`.
