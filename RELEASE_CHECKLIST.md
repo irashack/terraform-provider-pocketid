@@ -5,7 +5,7 @@
    fragments. Update README, TESTING and INSTALL (which gets an upgrade section for
    the release). Preserve LICENSE and upstream authors.
 2. Run the checks: `make check`, `make docs-check`, `make actionlint`, `make vuln`,
-   `go vet -tags=acc ./...`, `go mod tidy -diff` and, with GoReleaser 2.18.1
+   `go vet -tags=acc ./...`, `go mod tidy -diff` and, with GoReleaser 2.20.0
    installed, `make release-check`. Record exact tool versions and any failure.
 3. Run the full acceptance suites on every supported server:
    `make test-acc-supported`. It runs `make test-acc-provider` (the provider and
@@ -34,7 +34,7 @@
    tag (`git ls-remote --tags upstream`; upstream has a `release/v3` branch, so a
    3.x tag may appear there) so two different releases are not called the same
    thing. Create a stable version tag after validation.
-7. Build with pinned GoReleaser 2.18.1 using `.goreleaser.yml`:
+7. Build with pinned GoReleaser 2.20.0 using `.goreleaser.yml`:
    `goreleaser release --clean --skip=publish --skip=sign`. Check all expected target
    ZIPs and SHA256SUMS. Signing happens in the release workflow: the `signs` section
    of `.goreleaser.yml` signs SHA256SUMS with the key in `release-signing-key.asc`,

@@ -59,9 +59,9 @@ jobs:
           gpg --batch --with-colons --list-secret-keys | grep -q "^fpr:.*:${GPG_FINGERPRINT}:" \
             || { echo 'the GPG_PRIVATE_KEY secret is not the private half of release-signing-key.asc' >&2; exit 1; }
       - name: Build draft release
-        uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v6
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
-          version: v2.18.1
+          version: v2.20.0
           args: release --clean --draft
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
