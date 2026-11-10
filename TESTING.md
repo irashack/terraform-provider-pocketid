@@ -53,12 +53,21 @@ address is `0.0.0.0`. No production URL, database, or user input is accepted.
 Credentials pass only through process memory/environment. Failure output is
 suppressed because the acceptance harness may include state in errors; the fixture
 prints only the status lines, the tests that never reported a result, and whether
-the output names a panic, a timeout, a data race or a killed process, with the Go
+the output names a panic, a timeout, a data race, a killed process or a Terraform the test framework could not
+find, with the Go
 runtime's fatal error, the exit status and the stack's source locations. For local
 diagnosis only, `POCKETID_FIXTURE_FAILURE_LOG` can name a new private file outside
 source; never publish that file. Logs/state are not release assets.
 `make test-scripts` (part of `make check`) runs the fixture script's own unit tests
 without a container.
+
+## The Terraform the acceptance tests run
+
+The acceptance framework looks for `terraform` on `PATH`, or takes the binary
+`TF_ACC_TERRAFORM_PATH` names. With neither it downloads the latest release
+again for every test and ends the whole run, with no failed test, when one
+download fails. Both CI workflows therefore install one pinned Terraform
+(1.17.1) before the suites; have one on `PATH` for a local run.
 
 ## Native Terraform and OpenTofu scripts
 

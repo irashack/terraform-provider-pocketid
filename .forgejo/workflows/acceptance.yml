@@ -30,6 +30,9 @@ concurrency:
   group: acceptance-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  TERRAFORM_VERSION: '1.17.1'
+
 jobs:
   acceptance:
     name: Pocket ID ${{ matrix.pocketid }}
@@ -108,6 +111,35 @@ jobs:
             echo "GOFLAGS=-modcacherw"
           } >> "$GITHUB_ENV"
           echo "$root/go/bin" >> "$GITHUB_PATH"
+
+      # Without a terraform to use, the test framework downloads the latest
+      # release again for every test, and ends the run when one download fails.
+      - name: Install Terraform
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            x86_64) arch=amd64 ;;
+            aarch64) arch=arm64 ;;
+            *) echo "unsupported architecture $(uname -m)" >&2; exit 1 ;;
+          esac
+          dir="$HOME/ci-cache/terraform/$TERRAFORM_VERSION"
+          if [ ! -x "$dir/terraform" ]; then
+            tmp=$(mktemp -d)
+            base="https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}"
+            zip="terraform_${TERRAFORM_VERSION}_linux_${arch}.zip"
+            curl -fsSL --retry 3 -o "$tmp/$zip" "$base/$zip"
+            curl -fsSL --retry 3 -o "$tmp/SHA256SUMS" "$base/terraform_${TERRAFORM_VERSION}_SHA256SUMS"
+            (cd "$tmp" && grep " ${zip}\$" SHA256SUMS | sha256sum -c -)
+            rm -rf "$dir.partial"
+            mkdir -p "$dir.partial"
+            python3 -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extract("terraform", sys.argv[2])' "$tmp/$zip" "$dir.partial"
+            chmod 755 "$dir.partial/terraform"
+            rm -rf "$dir"
+            mv "$dir.partial" "$dir"
+            rm -rf "$tmp"
+          fi
+          echo "TF_ACC_TERRAFORM_PATH=$dir/terraform" >> "$GITHUB_ENV"
+          "$dir/terraform" version | head -n 1
 
       - name: Check the tools
         run: |

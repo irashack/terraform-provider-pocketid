@@ -75,7 +75,8 @@ SCIM_ALLOWED_HOSTS = "OUTBOUND_ALLOWED_HOSTS_SCIM=private,loopback,169.254.0.0/1
 # and which kind of abort the output names. Never a line of the output itself
 # beyond those: test tooling can print state when it fails.
 ABORTS = (("panic:", "a panic"), ("test timed out after", "the go test timeout"),
-          ("WARNING: DATA RACE", "a data race"), ("signal: killed", "a killed process"))
+          ("WARNING: DATA RACE", "a data race"), ("signal: killed", "a killed process"),
+          ("cannot run Terraform provider tests", "a Terraform the test framework could not find or install"))
 # Lines safe to repeat whole: the Go runtime's own fatal errors (fixed text),
 # how the test binary ended, and the source locations of a stack trace (a
 # file and a line, never the arguments).
