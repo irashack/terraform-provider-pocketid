@@ -69,6 +69,31 @@ def host_reach(platform):
 SCIM_ALLOWED_HOSTS = "OUTBOUND_ALLOWED_HOSTS_SCIM=private,loopback,169.254.0.0/16"
 
 
+# What a failed `go test -v` run may say in a public log: the status lines, the
+# names of failed subtests, the tests that started and never reported a result,
+# and which kind of abort the output names. Never a line of the output itself
+# beyond those: test tooling can print state when it fails.
+ABORTS = (("panic:", "a panic"), ("test timed out after", "the go test timeout"),
+          ("WARNING: DATA RACE", "a data race"), ("signal: killed", "a killed process"))
+
+
+def status_lines(text):
+    lines, started, finished = [], [], set()
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if line.startswith(("ok\t", "FAIL\t", "--- PASS:", "--- FAIL:", "PASS", "FAIL")):
+            lines.append(line)
+        elif stripped.startswith("--- FAIL:"):
+            lines.append(line)
+        if stripped.startswith("=== RUN"):
+            started.append(stripped.split()[2])
+        elif stripped.startswith(("--- PASS:", "--- FAIL:", "--- SKIP:")):
+            finished.add(stripped.split()[2])
+    lines += ["Fixture: no result from " + name for name in dict.fromkeys(started) if name not in finished]
+    lines += ["Fixture: the output names " + label for marker, label in ABORTS if marker in text]
+    return lines
+
+
 def docker_run_command(name, envfile, version, platform):
     return ["docker", "run", "-d", "--name", name, "--label", "pocketid-provider-fixture=true",
             "--env-file", str(envfile), "-p", "127.0.0.1::1411", *host_reach(platform)[0],
@@ -152,9 +177,8 @@ def run(version, command):
             output = result.stdout + result.stderr
             # Test tooling can print state on failure. Redact credentials in memory,
             # and emit only test names/status, never raw command output.
-            for line in output.decode(errors="replace").splitlines():
-                if line.startswith(("ok\t", "FAIL\t", "--- PASS:", "--- FAIL:", "PASS", "FAIL")):
-                    print(line)
+            for line in status_lines(output.decode(errors="replace")):
+                print(line)
             if result.returncode:
                 (root / "failure.log").write_bytes(output)
                 # Optional private log destination for local diagnosis, outside git.

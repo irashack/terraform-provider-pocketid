@@ -97,5 +97,23 @@ class HostReachTest(unittest.TestCase):
             self.assertIn("127.0.0.1::1411", command)  # still published on loopback only
 
 
+class StatusLinesTest(unittest.TestCase):
+    def test_passing_output_keeps_only_status_lines(self):
+        text = "=== RUN   TestA\nsecret state\n--- PASS: TestA (0.01s)\nPASS\nok\tpkg\t0.1s\n"
+        self.assertEqual(fixture.status_lines(text), ["--- PASS: TestA (0.01s)", "PASS", "ok\tpkg\t0.1s"])
+
+    def test_failed_subtest_is_named(self):
+        text = ("=== RUN   TestA\n=== RUN   TestA/case\n    --- FAIL: TestA/case (0.00s)\n"
+                "--- FAIL: TestA (0.01s)\nFAIL\nFAIL\tpkg\t0.1s\n")
+        self.assertEqual(fixture.status_lines(text),
+                         ["    --- FAIL: TestA/case (0.00s)", "--- FAIL: TestA (0.01s)", "FAIL", "FAIL\tpkg\t0.1s"])
+
+    def test_test_without_a_result_and_the_abort_are_named_without_the_output(self):
+        text = ("=== RUN   TestA\n--- PASS: TestA (0.01s)\n=== RUN   TestB\npanic: token=abc\n"
+                "goroutine 1 [running]:\nFAIL\tpkg\t0.1s\n")
+        self.assertEqual(fixture.status_lines(text),
+                         ["--- PASS: TestA (0.01s)", "FAIL\tpkg\t0.1s", "Fixture: no result from TestB",
+                          "Fixture: the output names a panic"])
+
 if __name__ == "__main__":
     unittest.main()

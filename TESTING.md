@@ -51,7 +51,9 @@ serves one). On macOS that name is the runtime's own and loopback is enough; on 
 the fixture adds the name with `--add-host host.docker.internal:host-gateway` and the
 address is `0.0.0.0`. No production URL, database, or user input is accepted.
 Credentials pass only through process memory/environment. Failure output is
-suppressed because the acceptance harness may include state in errors. For local
+suppressed because the acceptance harness may include state in errors; the fixture
+prints only the status lines, the tests that never reported a result, and whether
+the output names a panic, a timeout, a data race or a killed process. For local
 diagnosis only, `POCKETID_FIXTURE_FAILURE_LOG` can name a new private file outside
 source; never publish that file. Logs/state are not release assets.
 `make test-scripts` (part of `make check`) runs the fixture script's own unit tests
