@@ -1,0 +1,189 @@
+# The native Terraform and OpenTofu proofs a release needs (TESTING.md, "Which
+# native proofs a release runs"), on a Forgejo Actions runner that has a Docker
+# daemon. Run it by hand on the commit that will be tagged, before tagging:
+# RELEASE_CHECKLIST.md step 4.
+#
+# The build under test is stamped with the version to release and served from a
+# filesystem mirror. The older provider is the published archive of the last
+# release, downloaded from GitHub and checked against that release's SHA256SUMS
+# (and its signature, where the runner has gpg). On each Pocket ID version, with terraform and with tofu:
+# lifecycle.py, upgrade.py and application_config.py. client_upgrade.py and
+# upgrade_users_groups.py assert a 2.4.104 starting point and are not run.
+name: Release proofs
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, X.Y.Z'
+        required: true
+      old_version:
+        description: 'Last published release, X.Y.Z'
+        required: true
+
+env:
+  TERRAFORM_VERSION: '1.17.1'
+  OPENTOFU_VERSION: '1.13.9'
+
+jobs:
+  native:
+    name: Native proofs on Pocket ID ${{ matrix.pocketid }}
+    runs-on: docker-host
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        pocketid: ['2.18.0', '2.19.2']
+    steps:
+      - name: Check out
+        env:
+          SERVER: ${{ github.server_url }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+          RUN_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git init -q .
+          git remote add origin "$SERVER/$REPO.git"
+          # The per-run token goes through the environment, never argv, and is
+          # not written to the repository's config.
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraHeader
+          export "GIT_CONFIG_VALUE_0=Authorization: token ${RUN_TOKEN}"
+          git fetch -q --depth=1 origin "$SHA" || git fetch -q --depth=1 origin "$REF"
+          git checkout -q --detach FETCH_HEAD
+          git log -1 --format='checked out %H'
+
+      - name: Install the Go version go.mod names
+        run: |
+          set -euo pipefail
+          ver=$(awk '$1=="toolchain"{t=$2} $1=="go"{g=$2} END{v=(t!=""?t:g); sub(/^go/,"",v); print v}' go.mod)
+          case "$ver" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "go.mod names '$ver', not an exact X.Y.Z" >&2; exit 1 ;;
+          esac
+          case "$(uname -m)" in
+            x86_64) arch=amd64 ;;
+            aarch64) arch=arm64 ;;
+            *) echo "unsupported architecture $(uname -m)" >&2; exit 1 ;;
+          esac
+          cache="$HOME/ci-cache"
+          root="$cache/go/$ver"
+          if [ ! -x "$root/go/bin/go" ]; then
+            f="go${ver}.linux-${arch}.tar.gz"
+            tmp=$(mktemp -d)
+            curl -fsSL --retry 3 -o "$tmp/$f" "https://dl.google.com/go/$f"
+            want=$(curl -fsSL --retry 3 "https://dl.google.com/go/$f.sha256")
+            echo "$want  $tmp/$f" | sha256sum -c -
+            mkdir -p "$cache/go"
+            rm -rf "$root.partial"
+            mkdir "$root.partial"
+            tar -C "$root.partial" -xzf "$tmp/$f"
+            mv "$root.partial" "$root"
+            rm -rf "$tmp"
+          fi
+          {
+            echo "GOROOT=$root/go"
+            echo "GOTOOLCHAIN=local"
+            echo "GOMODCACHE=$cache/gomod"
+            echo "GOCACHE=$cache/gobuild"
+            echo "GOFLAGS=-modcacherw"
+          } >> "$GITHUB_ENV"
+          echo "$root/go/bin" >> "$GITHUB_PATH"
+
+      - name: Install Terraform and OpenTofu
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            x86_64) arch=amd64 ;;
+            aarch64) arch=arm64 ;;
+            *) echo "unsupported architecture $(uname -m)" >&2; exit 1 ;;
+          esac
+          install() { # name version zip-url sums-url
+            dir="$HOME/ci-cache/$1/$2"
+            if [ ! -x "$dir/$1" ]; then
+              tmp=$(mktemp -d)
+              zip=$(basename "$3")
+              curl -fsSL --retry 3 -o "$tmp/$zip" "$3"
+              curl -fsSL --retry 3 -o "$tmp/SHA256SUMS" "$4"
+              (cd "$tmp" && grep " ${zip}\$" SHA256SUMS | sha256sum -c -)
+              rm -rf "$dir.partial"
+              mkdir -p "$dir.partial"
+              python3 -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extract(sys.argv[2], sys.argv[3])' "$tmp/$zip" "$1" "$dir.partial"
+              chmod 755 "$dir.partial/$1"
+              rm -rf "$dir"
+              mv "$dir.partial" "$dir"
+              rm -rf "$tmp"
+            fi
+            echo "$dir" >> "$GITHUB_PATH"
+            "$dir/$1" version | head -n 1
+          }
+          tf="https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}"
+          install terraform "$TERRAFORM_VERSION" "$tf/terraform_${TERRAFORM_VERSION}_linux_${arch}.zip" "$tf/terraform_${TERRAFORM_VERSION}_SHA256SUMS"
+          ot="https://github.com/opentofu/opentofu/releases/download/v${OPENTOFU_VERSION}"
+          install tofu "$OPENTOFU_VERSION" "$ot/tofu_${OPENTOFU_VERSION}_linux_${arch}.zip" "$ot/tofu_${OPENTOFU_VERSION}_SHA256SUMS"
+
+      - name: Build the mirror and fetch the last release
+        env:
+          VERSION: ${{ inputs.version }}
+          OLD_VERSION: ${{ inputs.old_version }}
+        run: |
+          set -euo pipefail
+          for v in "$VERSION" "$OLD_VERSION"; do
+            [[ "$v" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "'$v' is not X.Y.Z" >&2; exit 1; }
+          done
+          case "$(uname -m)" in
+            x86_64) arch=amd64 ;;
+            aarch64) arch=arm64 ;;
+          esac
+          work=$(mktemp -d)
+          source="registry.terraform.io/irashack/pocketid"
+          mkdir -p "$work/bin" "$work/dist" "$work/mirror/$source/$VERSION/linux_$arch"
+          go build -trimpath -ldflags "-X main.version=$VERSION" -o "$work/bin/terraform-provider-pocketid" .
+          cp "$work/bin/terraform-provider-pocketid" "$work/mirror/$source/$VERSION/linux_$arch/terraform-provider-pocketid_v$VERSION"
+          release="https://github.com/irashack/terraform-provider-pocketid/releases/download/v$OLD_VERSION"
+          archive="terraform-provider-pocketid_${OLD_VERSION}_linux_${arch}.zip"
+          sums="terraform-provider-pocketid_${OLD_VERSION}_SHA256SUMS"
+          for f in "$archive" "$sums" "$sums.sig"; do
+            curl -fsSL --retry 3 -o "$work/dist/$f" "$release/$f"
+          done
+          (cd "$work/dist" && grep " ${archive}\$" "$sums" | sha256sum -c -)
+          if command -v gpg >/dev/null; then
+            GNUPGHOME=$(mktemp -d)
+            export GNUPGHOME
+            gpg --batch --quiet --import release-signing-key.asc
+            gpg --batch --verify "$work/dist/$sums.sig" "$work/dist/$sums"
+          else
+            echo "gpg is not installed: the SHA256SUMS signature was not checked"
+          fi
+          cp "$work/dist/$archive" "$work/mirror/$source/$archive"
+          {
+            echo "PROOF_MIRROR=$work/mirror"
+            echo "PROOF_NEW_BINARY=$work/bin/terraform-provider-pocketid"
+            echo "PROOF_OLD_ARCHIVE=$work/dist/$archive"
+          } >> "$GITHUB_ENV"
+
+      # Disposable credentials only; never upload output or state.
+      - name: Native proofs
+        env:
+          POCKETID_VERSION: ${{ matrix.pocketid }}
+          VERSION: ${{ inputs.version }}
+          OLD_VERSION: ${{ inputs.old_version }}
+        timeout-minutes: 40
+        run: |
+          set -euo pipefail
+          fixture() { python3 scripts/disposable-pocketid.py "$POCKETID_VERSION" -- python3 "$@"; }
+          for tool in terraform tofu; do
+            echo "lifecycle.py with $tool"
+            fixture tests/native/lifecycle.py "$tool" "$PROOF_MIRROR" "$VERSION"
+            echo "upgrade.py with $tool from $OLD_VERSION"
+            fixture tests/native/upgrade.py "$tool" "$PROOF_OLD_ARCHIVE" "$PROOF_NEW_BINARY"
+            echo "application_config.py with $tool from $OLD_VERSION"
+            fixture tests/native/application_config.py "$tool" "$PROOF_MIRROR" "$VERSION" "$OLD_VERSION"
+          done
+
+      - name: Remove any fixture left behind
+        if: always()
+        run: |
+          docker ps -aq --filter label=pocketid-provider-fixture=true | xargs -r docker rm -f -v || true

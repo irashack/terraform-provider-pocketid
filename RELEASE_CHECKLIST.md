@@ -15,6 +15,10 @@
    acceptance test family (`make test-acc`) on all five versions, and CI runs the full suites only on 2.17.0 and 2.18.0. Record the pass counts per
    version and package.
 4. Run the native proofs from TESTING.md with Terraform **and** OpenTofu:
+   (`.forgejo/workflows/release-proofs.yml` runs `lifecycle.py`, `upgrade.py` and
+   `application_config.py` this way on a Forgejo Actions runner, on the two newest
+   supported versions; start it by hand with the version to release and the last
+   published one)
    - `tests/native/lifecycle.py` against a build stamped with the release version,
      in a mirror.
    - The upgrade proofs run from the **last released version's published archive**
