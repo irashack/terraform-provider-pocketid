@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.2.2 — 2026-11-11
+
+Pocket ID 2.19.2 support and newer Go modules. No resource, attribute or
+default changed; state written by 3.2.1 loads as it is (INSTALL.md, "Upgrade
+from 3.2.1 to 3.2.2").
+
+- Pocket ID 2.19.2 is supported and tested; it takes 2.19.1's place in the
+  acceptance matrix (the tested range is now 2.14.0 through 2.19.2). 2.19.2 is
+  a dependency-only patch of 2.19.1 and needs no configuration change.
+- Built with `golang.org/x/net` 0.62.0, which fixes GO-2026-6866 and
+  GO-2026-6860. The provider did not call the affected code.
+
 ## 3.2.1 — 2026-10-26
 
 Pocket ID 2.19 support, built with Go 1.27.3 (`go.mod` toolchain go1.27.3),
