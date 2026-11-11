@@ -2,7 +2,7 @@ module github.com/irashack/terraform-provider-pocketid
 
 go 1.26.0
 
-toolchain go1.27.3
+toolchain go1.27.4
 
 require (
 	github.com/dunglas/go-urlpattern v1.0.0
