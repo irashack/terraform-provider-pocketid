@@ -252,7 +252,11 @@ host has no gpg; a changed manifest was refused), and all ten downloaded
 archives and the manifest match it. `lifecycle.py` passed with Terraform 1.17.1
 and OpenTofu 1.13.9 on 2.19.2 using the downloaded linux_amd64 archive from a
 filesystem mirror, against Pocket ID's 2.19.2 release binary on loopback (no
-container runtime on that host). The release was published on 2026-11-11.
+container runtime on that host). The release was published on 2026-11-11. The
+Terraform Registry ingested 3.2.2 with all 33 pages, and the OpenTofu Registry
+lists it. The runner has gpg since that day: release-proofs run #60 verified the
+published 3.2.2 SHA256SUMS signature and passed all proofs starting from that
+archive.
 
 After the release, on 2026-11-11, the vulnerability database gained GO-2026-6859
 (an HTTP/1 server crash in `net/http`, fixed in go1.27.4, published that day).
