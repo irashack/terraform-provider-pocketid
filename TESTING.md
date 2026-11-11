@@ -209,6 +209,59 @@ renamed binary of this provider. The test uses supported state replacement, chec
 encrypted state/backups and saved-plan encryption, preserves the ID and secret, and
 requires an empty subsequent plan. No development overrides are used.
 
+## Release 3.2.2 evidence — 2026-11-11
+
+Pocket ID 2.19.2 in place of 2.19.1 in the matrix and newer Go modules
+(CHANGELOG.md, "3.2.2"); no resource, attribute or default changed. The tag is on
+`9d3e6a6`. Everything below ran on that commit unless it says otherwise.
+
+Checks, on `3c70db5` (the commit before; `9d3e6a6` changes only
+`tests/native/application_config.py` and this file), on x86_64 Linux with the
+go.mod toolchain and GoReleaser 2.20.0: `make check`, `make docs-check`,
+`make actionlint`, `make vuln` (no vulnerabilities), `go vet -tags=acc ./...`,
+`go mod tidy -diff` and `make release-check` passed. `git archive` of the tagged
+commit lists 33 pages. `git ls-remote --tags` of
+Trozz/terraform-provider-pocketid lists no v3.2 tag.
+
+Acceptance, on the Forgejo Actions runner (Docker fixture, `-p 1`, Terraform
+1.17.1): the full `./internal/provider ./internal/datasources -tags=acc` suites
+passed on 2.14.0, 2.15.0, 2.16.0, 2.17.0 and 2.18.0 (292 top-level tests each)
+and on 2.19.2 (293), with no failure (run #57). GitHub CI passed on the same
+commit (run 42949342222).
+
+Native (`.forgejo/workflows/release-proofs.yml`, run #56), with Terraform 1.17.1
+and OpenTofu 1.13.9, on 2.18.0 and 2.19.2, a 3.2.2-stamped build in a mirror:
+`lifecycle.py` passed in all four runs. The old provider was the published 3.2.1
+archive (SHA256SUMS verified; the runner has no gpg, so its signature was not
+checked there): `upgrade.py` passed in all four runs, and `application_config.py`
+with `OLD_VERSION` 3.2.1 passed in all four, the new build taking over 3.2.1's
+state with an empty plan. The workflow's first run (#54, on `3c70db5`) failed
+`application_config.py` from 3.2.1 on 2.19.2: the script gave any older provider
+on a 2.19 server the state 3.1.x would have written, and 3.2.1 knows the modes.
+`9d3e6a6` corrects the script; the provider did not change. `client_upgrade.py`
+and `upgrade_users_groups.py` assert a 2.4.104 starting point and were not run.
+Not run: native scripts on 2.14.0 through 2.17.0.
+
+Release run 42949888556 passed every step, `make test-acc-matrix` on 2.14.0
+through 2.19.2 included. That run had no pinned Terraform (the test framework
+downloaded one per test); `release.yml` installs 1.17.1 from the next release
+on. The published `terraform-provider-pocketid_3.2.2_SHA256SUMS` has digest
+`e203564bdef3d268d52f04e5091b2eda96e5fb8978780d486ef8a43c2addd77e`; its `.sig`
+verified against `release-signing-key.asc` alone (an OpenPGP library check: the
+host has no gpg; a changed manifest was refused), and all ten downloaded
+archives and the manifest match it. `lifecycle.py` passed with Terraform 1.17.1
+and OpenTofu 1.13.9 on 2.19.2 using the downloaded linux_amd64 archive from a
+filesystem mirror, against Pocket ID's 2.19.2 release binary on loopback (no
+container runtime on that host). The release was published on 2026-11-11.
+
+After the release, on 2026-11-11, the vulnerability database gained GO-2026-6859
+(an HTTP/1 server crash in `net/http`, fixed in go1.27.4, published that day).
+The release run's `make vuln` (03:01 UTC) reported no vulnerabilities; the same
+check on the same tree an hour later reports this one, by the `net/http`
+symbols the HTTP client uses. The provider and its plugin stack run no HTTP/1
+server and do not call `http.MaxBytesReader`, so 3.2.2 is not exposed. `go.mod`
+names go1.27.4 since, for the next release.
+
 ## Release 3.2.1 evidence — 2026-10-26
 
 3.2.1 is the v3.2.0 tree with the toolchain raised to go1.27.3 (the v3.2.0 release
