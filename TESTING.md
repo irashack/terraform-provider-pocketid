@@ -148,8 +148,9 @@ own API, then proves, in order:
   returned setting is unchanged, the resource and the data source show the same
   values, and the data source has no password attributes. Refresh and an empty plan
   follow.
-- With `OLD_VERSION` on Pocket ID 2.19.0 or later, which an older provider can
-  import but not apply to: the imported state (with the boolean e-mail attributes
+- With an `OLD_VERSION` before 3.2.0 on Pocket ID 2.19.0 or later, which such a
+  provider can import but not apply to (3.2.0 and later know the modes and take
+  the same path there as on an older server): the imported state (with the boolean e-mail attributes
   3.1.x held, written into a Terraform state file; an OpenTofu state is encrypted
   and keeps what the import wrote) is taken over by the target version, and a
   configuration that uses `email_login_notification_mode` and `email_verification`

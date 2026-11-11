@@ -5,9 +5,11 @@ Usage: application_config.py TOOL MIRROR TARGET_VERSION [OLD_VERSION]
 
 On Pocket ID 2.19.0 or later the e-mail toggles are the modes
 email_login_notification_mode and email_verification, which only the target
-version knows: an older provider (3.1.x) can import there but cannot apply, so
-its state is taken over by the target version and must plan empty for a
-configuration that uses the modes at the server's own values.
+version and 3.2.x know: a provider before 3.2.0 can import there but cannot
+apply, so its state is taken over by the target version and must plan empty for
+a configuration that uses the modes at the server's own values. An OLD_VERSION
+of 3.2.0 or later knows the modes and manages the settings there as it does on
+an older server.
 
 With OLD_VERSION, the older provider imports the configuration and manages the
 SMTP settings with the plain smtp_password, as a configuration written for it
@@ -34,6 +36,8 @@ from_2_19 = tuple(int(part) for part in os.environ["POCKETID_TEST_VERSION"].spli
 tool, mirror, target_version = sys.argv[1:4]
 provider_version = sys.argv[4] if len(sys.argv) == 5 else target_version
 upgrading = provider_version != target_version
+# 3.2.0 added the modes Pocket ID 2.19.0 replaced the e-mail booleans with.
+old_lacks_modes = upgrading and tuple(int(part) for part in provider_version.split(".")[:2]) < (3, 2)
 version = os.environ["POCKETID_TEST_VERSION"]
 base = os.environ["POCKETID_BASE_URL"]
 assert base.startswith("http://127.0.0.1:")
@@ -180,7 +184,7 @@ data "pocketid_application_config" "test" {
     config({})
     run("init", "-input=false")
     run("import", "-input=false", "pocketid_application_config.test", "application-configuration")
-    if upgrading and from_2_19:
+    if from_2_19 and old_lacks_modes:
         # 3.1.x wrote this state by importing: it holds its boolean e-mail
         # attributes and no mode. Terraform's state is plain JSON, so give them
         # the values 3.1.x held before the server moved to 2.19 (the migrated
