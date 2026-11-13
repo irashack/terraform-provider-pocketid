@@ -284,3 +284,6 @@ __pycache__/
 # Local development outputs
 /bin/
 .dccache
+
+# Worktrees of agent sessions (the skills beside them are tracked)
+.claude/worktrees/

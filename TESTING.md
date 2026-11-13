@@ -58,8 +58,18 @@ find, with the Go
 runtime's fatal error, the exit status and the stack's source locations. For local
 diagnosis only, `POCKETID_FIXTURE_FAILURE_LOG` can name a new private file outside
 source; never publish that file. Logs/state are not release assets.
-`make test-scripts` (part of `make check`) runs the fixture script's own unit tests
+`make test-scripts` (part of `make check`) runs the fixture scripts' own unit tests
 without a container.
+
+`scripts/local-pocketid.py VERSION -- COMMAND` is the same fixture without a
+container, for local diagnosis: Pocket ID's release binary for the platform
+(checked against that release's `checksums.txt`, kept under the user cache
+directory) on a free loopback port with a fresh, seeded database, and the same
+environment for the command. It passes the command's output through whole, which
+is its purpose and the reason it never runs in CI: read a failure there that the
+container fixture only summarized, and do not publish what it prints.
+`TestAccResourceScimSync` needs `host.docker.internal` and is skipped there
+(`-skip TestAccResourceScimSync`).
 
 ## The Terraform the acceptance tests run
 

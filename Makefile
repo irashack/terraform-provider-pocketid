@@ -4,6 +4,7 @@ POCKETID_VERSION ?= 2.19.2
 GO := go
 LINT := $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
 DOCS := $(GO) run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs@v0.25.0
+GORELEASER_VERSION := 2.20.0
 
 .DEFAULT_GOAL := help
 .PHONY: help build test test-scripts test-coverage fmt fmt-check vet lint check docs docs-check test-acc test-acc-matrix test-acc-provider test-acc-supported vuln actionlint release-check clean
@@ -71,7 +72,8 @@ vuln: ## Check reachable Go vulnerabilities
 actionlint: ## Validate GitHub Actions syntax and expressions
 	$(GO) run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
-release-check: ## Validate GoReleaser configuration (requires GoReleaser 2.20.0)
+release-check: ## Validate GoReleaser configuration (refuses any GoReleaser but $(GORELEASER_VERSION))
+	@goreleaser --version | grep -Eq '^GitVersion: +v?$(subst .,\.,$(GORELEASER_VERSION))$$' || { echo 'release-check needs GoReleaser $(GORELEASER_VERSION) first on PATH' >&2; exit 1; }
 	goreleaser check
 
 clean: ## Remove local build and coverage output

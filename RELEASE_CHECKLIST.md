@@ -1,5 +1,10 @@
 # Release procedure
 
+The mechanical steps have scripts: `scripts/push-public.py` (the only way a ref
+goes to the public repository, step 8), `scripts/release-verify.sh` (steps 8 and
+9) and `scripts/release-registries.py` (step 10). `.claude/skills/release` is the
+short path through this file for an agent session.
+
 1. Integrate the work. Merge each `changelog.d/*.md` fragment into a new
    `CHANGELOG.md` section, keeping every **Breaking** mark, and delete the
    fragments. Update README, TESTING and INSTALL (which gets an upgrade section for
