@@ -219,6 +219,43 @@ renamed binary of this provider. The test uses supported state replacement, chec
 encrypted state/backups and saved-plan encryption, preserves the ID and secret, and
 requires an empty subsequent plan. No development overrides are used.
 
+## Release 3.2.3 evidence — 2026-11-19
+
+The go1.27.4 toolchain in place of go1.27.3 (CHANGELOG.md, "3.2.3"), which fixes
+GO-2026-6859 in `net/http`; no provider code, resource, attribute or default
+changed. The tag is on `c8549df`. Everything below ran on that commit.
+
+Checks, on x86_64 Linux with go1.27.4 and GoReleaser 2.20.0: `make check`,
+`make docs-check`, `make actionlint`, `make vuln` (no vulnerabilities; run again
+right before tagging), `go vet -tags=acc ./...`, `go mod tidy -diff` and
+`make release-check` passed. `git archive` of the tagged commit lists 33 pages.
+`git ls-remote --tags` of Trozz/terraform-provider-pocketid lists no v3.2.3.
+
+Acceptance, on the Forgejo Actions runner (Docker fixture, Terraform 1.17.1):
+the pull request run (#65) and the push run's full suites on 2.14.0, 2.15.0,
+2.16.0, 2.17.0, 2.18.0 and 2.19.2 (#66) passed. GitHub CI passed on the same
+commit (run 44439387118).
+
+Native (`.forgejo/workflows/release-proofs.yml`, run #67), with Terraform 1.17.1
+and OpenTofu 1.13.9, on 2.18.0 and 2.19.2, a 3.2.3-stamped build in a mirror:
+`lifecycle.py`, `upgrade.py` and `application_config.py` (from the published
+3.2.2 archive, `OLD_VERSION` 3.2.2, taken over with an empty plan) passed.
+`client_upgrade.py` and `upgrade_users_groups.py` assert a 2.4.104 starting
+point and were not run. Not run: native scripts on 2.14.0 through 2.17.0.
+
+Release run 44439993181 passed every step, `make test-acc-matrix` on 2.14.0
+through 2.19.2 included. The published `terraform-provider-pocketid_3.2.3_SHA256SUMS`
+has digest `e7e9b882d26511e9e77d4c455234d9f4b2dbadac906333124d127a7388703cbc`;
+`scripts/release-verify.sh 3.2.3` verified its signature against
+`release-signing-key.asc` with gpg and all ten archives and the manifest against
+it, on the draft and again once published. govulncheck finds no vulnerability
+in the published linux_amd64 binary (go1.27.4). `lifecycle.py` passed with
+Terraform 1.17.1 and OpenTofu 1.11.14 (the version on that host, not the
+workflow's 1.13.9) on 2.19.2 using the downloaded linux_amd64 archive from a
+filesystem mirror, against Pocket ID's 2.19.2 release binary on loopback
+(`scripts/local-pocketid.py`). The release was published on 2026-11-19; the
+Terraform Registry ingested 3.2.3 with all 33 pages within minutes.
+
 ## Release 3.2.2 evidence — 2026-11-11
 
 Pocket ID 2.19.2 in place of 2.19.1 in the matrix and newer Go modules
