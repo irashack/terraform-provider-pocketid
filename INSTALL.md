@@ -9,7 +9,7 @@ terraform {
   required_providers {
     pocketid = {
       source  = "irashack/pocketid"
-      version = "3.2.2"
+      version = "3.2.3"
     }
   }
 }
@@ -40,14 +40,14 @@ terraform {
   required_providers {
     pocketid = {
       source  = "registry.terraform.io/irashack/pocketid"
-      version = "3.2.2"
+      version = "3.2.3"
     }
   }
 }
 ```
 
 Download the exact version's archive, SHA256SUMS and SHA256SUMS.sig from
-[release v3.2.2](https://github.com/irashack/terraform-provider-pocketid/releases/tag/v3.2.2).
+[release v3.2.3](https://github.com/irashack/terraform-provider-pocketid/releases/tag/v3.2.3).
 Verify the signature with the release key,
 [release-signing-key.asc](release-signing-key.asc) (RSA 4096, fingerprint
 `FE9D 704B 2C1E 6675 46F0 EBB1 E031 C4DE 04D8 19D6`, valid until October 2029),
@@ -58,7 +58,7 @@ are unsigned and have only the digest.
 For example, for `darwin_arm64` (use `linux_amd64` or `linux_arm64` as appropriate):
 
 ```sh
-version=3.2.2
+version=3.2.3
 platform=darwin_arm64
 archive=terraform-provider-pocketid_${version}_${platform}.zip
 sums=terraform-provider-pocketid_${version}_SHA256SUMS
@@ -72,8 +72,8 @@ curl --fail --location --output release-signing-key.asc \
 gpg --show-keys --with-fingerprint release-signing-key.asc
 gpg --import release-signing-key.asc
 gpg --verify "$sums.sig" "$sums"
-# Set this to the literal SHA256SUMS digest from the v3.2.2 release notes:
-expected_manifest_sha256=e203564bdef3d268d52f04e5091b2eda96e5fb8978780d486ef8a43c2addd77e
+# Set this to the literal SHA256SUMS digest from the v3.2.3 release notes:
+expected_manifest_sha256=RECORDED_IN_THE_V3_2_3_RELEASE_NOTES
 printf '%s  %s\n' "$expected_manifest_sha256" "$sums" | shasum -a 256 -c -
 awk -v file="$archive" '$2 == file { print }' "$sums" | shasum -a 256 -c -
 mirror="$HOME/.local/share/pocketid-provider-mirror"
@@ -107,6 +107,17 @@ tofu providers lock -fs-mirror="$mirror" \
 ```
 
 Keep the exact version and checksum pins; do not silently select a newer tag.
+
+## Upgrade from 3.2.2 to 3.2.3
+
+3.2.3 is built with Go 1.27.4, whose standard library fixes GO-2026-6859; the
+provider code, the tested servers (2.14.0 through 2.19.2), resources, attributes
+and defaults are 3.2.2's. State written by 3.2.2 loads as it is, with no change
+to the source address: switch the provider to `3.2.3` (verify and add the v3.2.3
+archive to a filesystem mirror first), run `tofu init -upgrade` (or
+`terraform init -upgrade`), commit the lockfile and require an empty refreshed
+plan. From 3.2.1 the same steps apply; from 3.1.x, follow the 3.2.1 section with
+`3.2.3` in place of `3.2.1`.
 
 ## Upgrade from 3.2.1 to 3.2.2
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.2.3 — 2026-11-19
+
+A security patch release: only the Go toolchain changed. No resource, attribute
+or default changed; state written by 3.2.2 loads as it is (INSTALL.md, "Upgrade
+from 3.2.2 to 3.2.3").
+
+- Built with Go 1.27.4 (`go.mod` toolchain go1.27.4), whose standard library
+  fixes GO-2026-6859, an HTTP/1 server crash in `net/http`. The provider runs
+  no HTTP/1 server; 3.2.2, built with go1.27.3, is not exposed to it.
+
 ## 3.2.2 — 2026-11-11
 
 Pocket ID 2.19.2 support and newer Go modules. No resource, attribute or
